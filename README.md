@@ -61,6 +61,17 @@ a private repository — `dependency-review` needs GitHub Code Security there
 (confirmed live on PR #1, while this repo was still private: *"Dependency review is
 not supported on this repository"*). This repository is public, so both run.
 
+**New code definition: 30 days** (SonarQube Cloud, inherited from the instance
+default and left there deliberately). This project has no release versions to make
+"previous version" meaningful — it is trunk-based, one developer, continuous
+delivery, which is exactly the case the vendor's guidance points at "number of
+days" for. The coverage threshold in the test contract below is a *new code*
+threshold, so this setting is what defines its scope.
+
+The `sonar` job runs on pushes to `main`, not only on pull requests: without a main
+branch analysis there is no baseline and no quality-gate history, and "new code"
+has nothing to be new against.
+
 One gate depends on account state rather than on code:
 
 - **`sonar` stays red until a SonarCloud project exists and `SONAR_TOKEN` is set**
