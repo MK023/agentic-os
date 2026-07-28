@@ -64,6 +64,11 @@ def test_status_rejects_missing_token():
 def test_status_rejects_wrong_token():
     response = client.get("/status", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
+    # The body is asserted, not just the code: with only the status checked, four
+    # mutants of this rejection survived the 2026-07-28 mutation run (detail=None,
+    # detail removed, detail retyped) — a 401 that says nothing distinguishable is
+    # a rejection nobody can debug.
+    assert response.json() == {"detail": "unauthorized"}
 
 
 @respx.mock
