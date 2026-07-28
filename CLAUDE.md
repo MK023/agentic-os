@@ -73,10 +73,12 @@ To validate the Collector config without a Docker daemon, download the real
 - **No Kubernetes/K3s**, no self-hosted Langfuse, no LangChain. One VPS, one user.
 - **Never put the `prometheus` exporter in a `logs` pipeline** — metrics-only, the
   Collector refuses to start.
-- **Never remove the `attributes/no-pii` processor**, and never assume
-  `resource_to_telemetry_conversion: false` is doing that job: Claude Code sends
-  identity as *data point* attributes, so a real email address reaches Prometheus
-  without it (measured, not theorised).
+- **Never turn the label allow-list into a delete-list**, and never assume
+  `resource_to_telemetry_conversion: false` does that job: Claude Code sends identity
+  as *data point* attributes, so a real email address reaches Prometheus without the
+  processor (measured, not theorised). A delete-list fails open on every attribute a
+  future release invents; the allow-list drops it by default. Adding a producer means
+  adding its labels deliberately.
 - **Never delete `session.id`** along with the identity attributes: the counters are
   cumulative per process, so without it concurrent sessions collapse into one series
   and the last export wins — two sessions read as one.

@@ -29,11 +29,13 @@ Prometheus never gets a Tunnel hostname of its own; the OTLP ingest endpoint is
 authenticated inside the Collector (`bearertokenauth`), because a public Tunnel
 hostname is not an access control (CVE-2026-28798 pattern).
 
-Claude Code's identity attributes (`user.email`, `user.id`, `user.account_id`,
-`user.account_uuid`, `organization.id`) are stripped in the Collector before storage.
-They arrive as data point attributes, so turning `resource_to_telemetry_conversion`
-off does not stop them — that was checked against the real client, and a real email
-address was in the labels until an explicit processor removed it.
+Metric labels are an **allow-list** enforced in the Collector: `model`, `type`,
+`query_source`, `start_type`, `terminal_type`, `session_id` survive, everything else
+is dropped before storage. That is not paranoia — Claude Code sends identity
+(`user.email` with a real address, `user.id`, `user.account_id`, `user.account_uuid`,
+`organization.id`) as *data point* attributes, so `resource_to_telemetry_conversion:
+false` does not stop them. Measured against the real client, not assumed. An
+allow-list also holds when a future release adds an attribute nobody has seen yet.
 
 ## Pipeline level: 1 — and why
 

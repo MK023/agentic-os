@@ -43,10 +43,13 @@ sends them as **data point** attributes. Measured on 2026-07-28 against v2.1.220
 `user_email` arrived as an ordinary Prometheus label carrying a real address, along
 with `user_id`, `user_account_id`, `user_account_uuid` and `organization_id`.
 
-Fixed with an explicit `attributes/no-pii` processor in the Collector, deleting those
-five before batching or export. Verified after the fix: the label set is `model`,
-`type`, `query_source`, `start_type`, `terminal_type`, `session_id`, and grepping the
-whole `/metrics` output for the address returns nothing.
+Fixed in the Collector, and then hardened: the first fix deleted the five known
+attributes, which fails open on the sixth a future release adds. It is now an
+allow-list — `model`, `type`, `query_source`, `start_type`, `terminal_type`,
+`session_id` survive, everything else is dropped. Verified both ways: grepping the
+whole `/metrics` output for the address returns nothing, and attributes no version
+emits today (`user.name`, `user.phone`, `workspace.path`) were dropped without any
+rule naming them.
 
 `session_id` is deliberately kept. Deleting it — the obvious "unbounded cardinality"
 move — silently loses data: the counters are cumulative per process, so without the

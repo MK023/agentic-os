@@ -67,6 +67,15 @@ curl -s localhost:8889/metrics | grep -v '^#' | grep -o '^claude_code[a-z_]*' | 
 # Labels — read them, don't assume them. Nothing identifying may appear here.
 curl -s localhost:8889/metrics | grep claude_code | grep -o '[a-z_]*=' | sort -u
 
+# The allow-list holds against attributes nobody emits yet: send one and check it
+# is gone. This is the check that a delete-list would fail.
+curl -s -X POST localhost:4318/v1/metrics -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $OTLP_INGEST_TOKEN" -d '{"resourceMetrics":[{"resource":{"attributes":[]},
+  "scopeMetrics":[{"metrics":[{"name":"claude_code.session.count","sum":{"aggregationTemporality":2,
+  "isMonotonic":true,"dataPoints":[{"asDouble":1,"timeUnixNano":"1","attributes":[
+  {"key":"user.name","value":{"stringValue":"whoever"}}]}]}}]}]}]}'
+curl -s localhost:8889/metrics | grep -c user_name   # expect 0
+
 # End to end: expect 401, 401, then the three fields
 curl -s -H "Authorization: Bearer $STATUS_API_TOKEN" localhost:8000/status
 ```
