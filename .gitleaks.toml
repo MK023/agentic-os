@@ -1,0 +1,5 @@
+# Extends the default gitleaks ruleset with no local exceptions.
+# Add a [[rules]] override here only in response to a real false positive —
+# see marcobellingeri.dev/.gitleaks.toml for the one precedent in this portfolio.
+[extend]
+useDefault = true
