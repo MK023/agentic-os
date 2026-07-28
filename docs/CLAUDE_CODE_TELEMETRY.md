@@ -50,10 +50,17 @@ sends identity as **data point** attributes, not resource attributes, so
 plain Prometheus labels. What showed up: `user_email` (a real address),
 `user_id`, `user_account_id`, `user_account_uuid`, `organization_id`.
 
-They are deleted in the Collector, before storage, by the `attributes/no-pii`
-processor in `docker/otel-collector-config.yaml`. After the fix the label set is
-`model`, `type`, `query_source`, `start_type`, `terminal_type`, `session_id` — and a
-grep for the address over the whole `/metrics` output returns nothing.
+They never reach storage: the Collector keeps an **allow-list** of labels
+(`transform/label-allowlist` in `docker/otel-collector-config.yaml`) and drops
+everything else. Surviving labels are `model`, `type`, `query_source`, `start_type`,
+`terminal_type`, `session_id`; a grep for the address over the whole `/metrics`
+output returns nothing.
+
+An allow-list rather than a delete-list on purpose. Deleting the five known identity
+attributes works until a release adds a sixth — this telemetry is beta and its
+attribute set is not a contract. Verified by sending attributes no version emits
+today (`user.name`, `user.phone`, `workspace.path`): all three were dropped without
+any rule naming them.
 
 **`session_id` is kept on purpose.** Deleting it looked right (one value per session
 is a cardinality generator) and lost data: Claude Code's counters are cumulative per

@@ -24,37 +24,30 @@ receivers:
           authenticator: bearertokenauth
 
 processors:
-  # PII and unbounded cardinality are stripped HERE, before anything is stored.
+  # Labels are an ALLOW-LIST, not a deny-list, and that is the point.
   #
-  # Turning off `resource_to_telemetry_conversion` is not enough, and assuming it
-  # was is how this nearly shipped: Claude Code sends these as **data point**
-  # attributes, not resource attributes, so they become Prometheus labels no matter
-  # what that setting says. Measured against the real client (v2.1.220) on
-  # 2026-07-28: `user_email` arrived as a plain label carrying a real address.
+  # The first version of this deleted the five identity attributes Claude Code was
+  # measured sending (user.email — carrying a real address — user.id,
+  # user.account_id, user.account_uuid, organization.id). That works only until the
+  # next release adds a sixth: telemetry here is beta, its attribute set is not a
+  # contract, and a deny-list at a privacy boundary fails open on everything it has
+  # not heard of. This keeps what is known-safe and drops the rest, so an unknown
+  # attribute is a missing label rather than a leak.
   #
-  # `session.id` is deliberately KEPT, after deleting it turned out to lose data.
-  # Claude Code's counters are cumulative per process, so two concurrent sessions
-  # write the same series once the id is gone and the last export wins: measured on
-  # 2026-07-28, two sessions in parallel produced one series reading `1`, not `2`.
-  # It is a random per-run UUID, it identifies nothing about a person, and it never
-  # leaves the VPS — the public endpoint only ever returns sums. The cardinality
-  # cost is a few hundred series a month at this usage, not the unbounded growth it
-  # looked like on paper.
+  # Cost of the trade: a new producer (Phase 2) whose labels are not listed here will
+  # see them silently disappear. That is the intended direction of failure — add the
+  # keys deliberately, after looking at what the producer actually sends.
   #
-  # Deliberately kept too: model, type, query_source, start_type, terminal_type —
-  # bounded, none identifying.
-  attributes/no-pii:
-    actions:
-      - key: user.email
-        action: delete
-      - key: user.id
-        action: delete
-      - key: user.account_id
-        action: delete
-      - key: user.account_uuid
-        action: delete
-      - key: organization.id
-        action: delete
+  # `session.id` is on the list, and deleting it is a mistake that looks like a fix:
+  # the counters are cumulative per process, so without it two concurrent sessions
+  # write the same series and the last export wins. Measured 2026-07-28 — two
+  # parallel sessions produced one series reading `1`, not `2`. It is a random
+  # per-run UUID, it never leaves the VPS, and the public endpoint returns only sums.
+  transform/label-allowlist:
+    metric_statements:
+      - context: datapoint
+        statements:
+          - keep_keys(attributes, ["model", "type", "query_source", "start_type", "terminal_type", "session.id"])
 
   batch: {}
 
@@ -92,5 +85,5 @@ service:
       receivers: [otlp]
       # Order matters: strip before batching, so nothing identifying is ever held
       # in a batch buffer or handed to an exporter.
-      processors: [attributes/no-pii, batch]
+      processors: [transform/label-allowlist, batch]
       exporters: [prometheus]
