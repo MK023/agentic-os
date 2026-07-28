@@ -1,0 +1,8 @@
+# Direct dependencies. requirements.txt is generated from this file with
+#   pip-compile --generate-hashes --output-file requirements.txt requirements.in
+# so the Dockerfile can install with --require-hashes (Sonar docker:S8544:
+# unlocked resolved versions are a supply-chain risk — the same reasoning as
+# SHA-pinning GitHub Actions).
+fastapi==0.140.13
+uvicorn==0.51.0
+httpx==0.28.1

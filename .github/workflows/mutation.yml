@@ -20,7 +20,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install -r services/public-status-api/requirements.txt respx pytest mutmut==3.6.0
+      # Split: requirements.txt is hash-locked, and pip applies hash-checking to the
+      # whole command as soon as one requirement carries hashes.
+      # Quoted: an unquoted ":all: " would make YAML read a mapping mid-command.
+      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
+      - run: pip install respx pytest mutmut==3.6.0
       # Blocking scope is `require_valid_token` only — spec §6.2. Coverage says a
       # line ran; only this says an assertion would have noticed it change.
       # sentry.py's survivors (string/dict shape inside the envelope payload) are

@@ -53,7 +53,15 @@ async def _query_one(client: httpx.AsyncClient, query: str) -> float:
     return _parse_value(response.json())
 
 
-@app.get("/status")
+@app.get(
+    "/status",
+    # Documented, not just raised: these two are the endpoint's contract for whoever
+    # reads its OpenAPI (python:S8415).
+    responses={
+        401: {"description": "Missing or invalid bearer token"},
+        502: {"description": "Prometheus unreachable or answering an unexpected shape"},
+    },
+)
 async def status(_: RequireToken) -> dict:
     # KeyError/TypeError/ValueError are caught alongside httpx.HTTPError: a 200
     # response with an unexpected shape (Prometheus mid-restart, a future API
