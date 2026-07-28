@@ -1,0 +1,40 @@
+name: mutation
+
+# Nightly, not per-PR: a full mutation run takes minutes, and what it guards (the
+# only authorization comparison in the project) changes rarely.
+# No ${{ }} expression is interpolated into any `run:` step here — no
+# template-injection surface.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/public-status-api/requirements.txt respx pytest mutmut==3.6.0
+      # Blocking scope is `require_valid_token` only — spec §6.2. Coverage says a
+      # line ran; only this says an assertion would have noticed it change.
+      # sentry.py's survivors (string/dict shape inside the envelope payload) are
+      # deliberately not blocking: asserting the exact wire format of a fail-open
+      # reporter would freeze a detail Sentry owns, not us.
+      - name: mutmut sulla funzione di autorizzazione (blocca sui sopravvissuti)
+        working-directory: services/public-status-api
+        run: |
+          set -uo pipefail
+          mutmut run || true
+          mutmut results > mutation-results.txt
+          sopravvissuti=$(grep -c 'require_valid_token.*survived' mutation-results.txt || true)
+          echo "Mutanti sopravvissuti in require_valid_token: ${sopravvissuti}"
+          if [ "${sopravvissuti}" -ne 0 ]; then
+            grep 'require_valid_token' mutation-results.txt
+            exit 1
+          fi

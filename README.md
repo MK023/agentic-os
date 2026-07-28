@@ -64,8 +64,12 @@ Reference model: `~/GitHub/Atlas/concepts/testing-pyramid.md`.
    100% on `main.py` and `sentry.py`). No repo-wide threshold — most of this
    repo is Terraform/YAML, where line coverage means nothing.
 3. **Blocking mutation score (nightly)**: `require_valid_token` in the status
-   API — the only authorization comparison in the project. *Not yet wired: the
-   nightly job is still to be added.*
+   API — the only authorization comparison in the project.
+   `.github/workflows/mutation.yml` runs mutmut nightly and fails on any
+   surviving mutant *in that function*; survivors elsewhere (the envelope payload
+   in `sentry.py`) are reported, not blocking. The first run found four survivors
+   here even at 100% coverage — all four were the 401's `detail` string, which no
+   test asserted. Now it does.
 4. **Security taxonomy**: OWASP API Security Top 10 for the status API; MITRE
    ATT&CK for the infra surface (Tunnel/Access/VPS). Not MITRE ATLAS and not
    OWASP LLM Top 10 — Phase 1 observes a model's usage, it never calls one.
