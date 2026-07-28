@@ -1,0 +1,72 @@
+# Image tags pinned to a released version, never `:latest` — a mutable tag is a
+# supply-chain risk, not just a reproducibility one. Versions below were the
+# current stable releases on 2026-07-28 (checked against each registry, not from
+# memory); re-check before a much later run.
+# Every service: no-new-privileges + cap_drop ALL — none of them needs a Linux
+# capability beyond default userspace networking.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.3
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - otel-collector
+      - grafana
+      - status-api
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      - OTLP_INGEST_TOKEN=${OTLP_INGEST_TOKEN}
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # No Cloudflare Tunnel route to this service, ever (Task 5) — Prometheus's own
+    # HTTP API has no authentication of its own, so its only safe exposure is
+    # internal-to-the-compose-network, scraped by Grafana and queried by status-api.
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+
+  grafana:
+    image: grafana/grafana:13.1.1
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  status-api:
+    build: ../services/public-status-api
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - STATUS_API_TOKEN=${STATUS_API_TOKEN}
+      - SENTRY_DSN=${SENTRY_DSN}
+
+volumes:
+  prometheus-data:
+  grafana-data:
