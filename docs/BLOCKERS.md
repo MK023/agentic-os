@@ -34,17 +34,19 @@ data type "logs": telemetry type is not supported
 So the `logs`-pipeline bug was real and would have stopped the Collector from
 starting, and the fix is verified rather than reasoned.
 
-### The dependency audit gate
+### Both dependency gates now run
 
 `actions/dependency-review-action` cannot run on a private repository: GitHub's docs
 say it is available *"for all public repositories, as well as private repositories
 that have GitHub Code Security or GitHub Advanced Security enabled"*, and PR #1
 confirmed it live (`Dependency review is not supported on this repository`).
 
-Replaced with **pip-audit**, which needs no licence and no secret and checks the
-whole dependency set instead of only the PR diff. The `dependency-review` job is
-still in the workflow, conditioned on repository visibility, so it turns itself back
-on if the repo ever becomes public. See README, "Pipeline level".
+Two answers, in order. First, **pip-audit** was added as the dependency audit the
+declared Level 1 requires: no licence, no secret, and it checks the whole pinned set
+rather than only a PR's diff. Then Marco made **this repository public** (2026-07-28),
+which unblocks `dependency-review` — so both now run, and they are kept both because
+they see different things: the whole set versus what a single PR introduces. If the
+repo ever goes private again, pip-audit keeps the gate alive on its own.
 
 ---
 
@@ -121,10 +123,12 @@ reason, and the three places to update are listed in
 
 ## Decisions that are Marco's, not the implementation's
 
-1. **Private repo, or public?** Public costs nothing and restores
-   `dependency-review` (diff-scoped, better than pip-audit at catching what a single
-   PR introduces). Private keeps the current shape; the audit gate stays pip-audit.
-   Nothing in the repo blocks either choice — there are no secrets in it.
+1. ~~**Private repo, or public?**~~ **Decided 2026-07-28: public.** Audited first
+   (no secrets, no PII, no private-knowledge-base content); `dependency-review` runs
+   again as a result. Two things do become visible and can still be scrubbed if
+   unwanted: the `~/GitHub/Atlas/...` reference paths in `README.md`/`TASKS.md`
+   (filenames of a private knowledge base, no content), and the project names in the
+   spec's Phase 2 sketch, including `monferrinoAI`.
 2. **Whether the `sonar` gate stays** as a declared blocking gate (then it needs the
    project + token) or is dropped from the contract. Half-measures are what the test
    contract exists to prevent.
@@ -132,7 +136,8 @@ reason, and the three places to update are listed in
    infrastructure. Everything else is already written and verified.
 4. **Where the widget goes on the site**, and whether it ships before the hub exists
    (it degrades to dashes, so it can).
-5. **Whether the site PR merges now.** `main` is production there and deploys on
-   merge; the endpoint is inert until the secrets exist.
+5. ~~**Whether the site PR merges now.**~~ **Decided 2026-07-28: merged** (PR #156,
+   squash, all 12 gates green). `/api/agentic-status` is live and inert — three
+   `null` fields until the hub and its secrets exist.
 6. **Whether the hub stays past the first month** — the original one-month framing
    with a clean `terraform destroy` is still the plan of record.
