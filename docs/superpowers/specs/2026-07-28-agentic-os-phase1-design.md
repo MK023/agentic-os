@@ -88,8 +88,10 @@ flowchart TB
 ## 5. Data flow
 
 1. Marco lavora, Claude Code emette OTLP (batch periodico) verso l'endpoint del
-   Collector attraverso il Tunnel, autenticato via Cloudflare Access (service token
-   nell'header).
+   Collector attraverso il Tunnel. Autenticazione **non** via Cloudflare Access
+   (Claude Code non supporta l'header service-token) ma via `bearertokenauth`
+   dentro il Collector stesso — token condiviso in `OTEL_EXPORTER_OTLP_HEADERS`
+   lato client. Corretto durante la review di sicurezza del 28/7 (vedi §6).
 2. Collector riceve OTLP, converte ed espone `/metrics` in formato Prometheus.
 3. Prometheus scrape ogni 15-30s.
 4. Grafana query Prometheus — dashboard privata, refresh continuo mentre Marco lavora.
@@ -102,16 +104,104 @@ flowchart TB
 ## 6. Sicurezza
 
 - **Zero porte pubbliche** sul VPS: solo `cloudflared` in uscita.
-- **Cloudflare Access** davanti a due superfici private: ingest Collector (token
-  service per-producer, revocabile singolarmente) e Grafana UI (policy email Marco).
+- **Cloudflare Access** davanti a due superfici private: status API (Service Auth,
+  token per-consumer — oggi solo il Worker del sito) e Grafana UI (policy email
+  Marco). L'ingest OTLP **non** passa da Cloudflare Access — Claude Code non
+  supporta l'header service-token — resta dietro un hostname pubblico ma
+  autenticato dentro il Collector stesso (vedi sotto).
+- **Endpoint OTLP autenticato via `bearertokenauth`, non lasciato aperto**: un
+  endpoint dietro un hostname pubblico senza autenticazione propria è lo stesso
+  pattern di CVE-2026-28798 (ZimaOS: proxy interno esposto via Cloudflare Tunnel
+  senza auth → SSRF verso la rete interna), trovato durante un web sweep di
+  sicurezza mirato il 28/7. Chiuso con l'extension `bearertokenauth` dell'OTel
+  Collector — token condiviso generato una volta, mai negli header Access.
 - **Confine pubblico/privato netto** (deciso esplicitamente con Marco): l'endpoint
   pubblico-sicuro espone SOLO campi whitelisted (conteggi/token/costo/stato) —
   mai contenuto di sessione, mai un percorso verso dati grezzi. Questo confine
   esiste anche in previsione della Fase 4 (RAG sessioni archiviate, privato):
   il widget pubblico non deve MAI poter raggiungere quel sistema, oggi o in futuro.
-- Secret (token Access, credenziali Hostinger API) fuori dal repo — variabili
+- **Prometheus non ha mai un hostname Tunnel proprio**: la sua API HTTP non ha
+  autenticazione nativa; l'unica esposizione sicura è interna alla rete Docker,
+  scrapata da Grafana e interrogata dalla status API.
+- **Confronto token a tempo costante**: `secrets.compare_digest`, non `!=`, sulla
+  status API — un confronto stringa normale perde tempo in modo osservabile sul
+  primo byte diverso (side-channel timing, basso rischio a questo traffico ma
+  correzione a costo zero).
+- **Immagini Docker pinnate a versione**, mai `:latest`; `no-new-privileges` +
+  `cap_drop: [ALL]` su ogni servizio — baseline 2026 hardening container, nessuno
+  dei 4 servizi usa capability Linux oltre il default userspace.
+- Secret (token Access/OTLP, credenziali Hostinger API) fuori dal repo — variabili
   locali/gestore secret, mai committati. Nessun secret hardcoded nel
   docker-compose versionato: iniettati a runtime dal provisioning Terraform.
+
+## 6.1 Pipeline CI/CD — livello dichiarato e baseline
+
+Modello di riferimento: `~/GitHub/Atlas/concepts/pipeline-cicd.md`. **Livello 1**
+dichiarato (`PR → Lint → Test → Build → Audit dipendenze`), motivato: progetto
+personale, un solo sviluppatore, rollback immediato (`terraform destroy`/redeploy).
+Livello 4 (canary, progressive delivery) sarebbe teatro qui — nessun traffico da
+misurare in modo statisticamente significativo.
+
+**Baseline copiata da `marcobellingeri.dev` (già oltre Livello 3 su più assi),
+perché è economica indipendentemente dal livello dichiarato**: action pinnate a
+SHA (riusate le stesse già verificate in produzione dove esiste l'equivalente),
+`permissions:` minimo per job, gitleaks a tolleranza zero, zizmor (SAST sui
+workflow), dependency-review-action, SonarCloud come quality gate.
+
+**Deliberatamente non copiato**: SBOM + attestation firmata (3 dipendenze Python,
+nessun artefatto distribuito — sarebbe Livello 4 cargo-cult), approval gate umano,
+canary. Vedi il piano per il dettaglio dei job.
+
+## 6.2 Contratto di test (le 5 righe richieste dal modello)
+
+Modello di riferimento: `~/GitHub/Atlas/concepts/testing-pyramid.md`.
+
+1. **Forma**: analisi statica come piano terra per l'infra (`terraform validate`,
+   `tflint`, `docker compose config`, Checkov); piccola piramide a baricentro
+   *unit* per i due componenti applicativi (status API, widget sito) — la
+   complessità sta dentro la funzione, non nella composizione.
+2. **Soglia coverage nuovo codice**: 100% su status API e widget (piccoli, pochi
+   path) — nessuna soglia globale sul repo, in gran parte Terraform/YAML dove la
+   coverage di riga non significa nulla.
+3. **Mutation score bloccante (notturno)**: la funzione `status()` della status
+   API — unico confronto di autorizzazione del progetto.
+4. **Tassonomia sicurezza**: OWASP API Security Top 10 per la status API (oggi);
+   MITRE ATT&CK per la superficie infra (Tunnel/Access/VPS) — non MITRE ATLAS,
+   che si applica solo quando esiste una componente ML/LLM interrogabile in modo
+   avversario, e la Fase 1 non chiama nessun modello. OWASP LLM Top 10 rimandato
+   alla Fase 4 (RAG) per lo stesso motivo.
+5. **Flaky**: nessuno oggi — solo test deterministici (pytest/vitest con mock) +
+   smoke test bash. `FLAKY.md` non serve finché non nasce un test non
+   deterministico.
+
+**Il monitoraggio in produzione è l'ultimo livello della piramide anche qui — in
+modo letterale**: Grafana/Prometheus non è solo il deliverable del progetto, è
+anche l'ultimo rung di test (osservare il sistema reale che gira). Coincidenza
+architetturale non comune, vale la pena notarla.
+
+## 6.3 Osservabilità del progetto stesso — Sentry, SonarCloud, Langfuse
+
+- **Sentry**: sì, da subito. Status API porta un client zero-dep (envelope API),
+  ricalcato da `marcobellingeri.dev/engine/lib/sentry.mjs` — stesso contratto
+  fail-open (senza DSN è no-op, un invio fallito non rompe mai la richiesta).
+- **SonarCloud**: sì, da subito. Quality gate sulla status API (unico codice
+  applicativo del progetto), stesso schema `sonar-project.properties` del sito
+  (sources/tests espliciti, esclusioni motivate).
+- **Langfuse**: **non** in Fase 1 — non c'è nessuna chiamata a modello da tracciare
+  (il progetto osserva l'uso che Claude Code fa di sé stesso, non chiama un LLM
+  proprio). Resta una decisione permanente per la Fase 4 (RAG), quando esisterà
+  davvero una generazione da tracciare — non un gap di oggi.
+
+## 6.4 LangChain — valutato e scartato
+
+Nessuna fase di Agentic OS ha bisogno di orchestrazione LLM oggi (Fase 1 non
+chiama modelli). Anche per la Fase 4 (RAG) resta sconsigliato: il portfolio ha
+già un pattern collaudato e più leggero — embedding diretto + pgvector + chiamata
+diretta Anthropic (marcobellingeri.dev), zero-dep (llm-council,
+langfuse-devops-lab). LangChain aggiungerebbe superficie di dipendenze e
+storicamente ha avuto CVE/problemi di prompt injection propri — in
+controtendenza con la narrativa "poco codice, tutto auditabile" del
+posizionamento AI×security di Marco.
 
 ## 7. Visione oltre la Fase 1 (non implementata ora)
 
