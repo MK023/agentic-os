@@ -1,0 +1,22 @@
+# Checkov config for Agentic OS. Adapted from langfuse-devops-lab/.checkov.yml
+# on 2026-07-28 — every skip-check entry in that file is Kubernetes/Helm/Supabase
+# specific and none of it applies to this repo's stack (Terraform VPS +
+# Dockerfile + GitHub Actions). Starting from an empty skip-check on purpose:
+# add an entry only in response to a real finding, with a comment saying why.
+
+framework:
+  - terraform
+  - dockerfile
+  - github_actions
+
+skip-path:
+  - .terraform/
+
+skip-check: []
+
+soft-fail-on:
+  - LOW
+  - MEDIUM
+
+compact: true
+quiet: true

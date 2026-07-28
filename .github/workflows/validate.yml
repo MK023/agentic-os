@@ -1,0 +1,128 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+# No `run:` step in this workflow interpolates any ${{ }} expression: the only
+# expressions used are in `if:` conditions and `env:` mappings, so there is no
+# template-injection surface. zizmor (workflow-lint job below) enforces that.
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - run: terraform -chdir=terraform/hostinger-vps fmt -check
+      - run: terraform -chdir=terraform/hostinger-vps init -backend=false
+      - run: terraform -chdir=terraform/hostinger-vps validate
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: docker compose -f docker/docker-compose.yml config --quiet
+        env:
+          CLOUDFLARE_TUNNEL_TOKEN: dummy
+          GRAFANA_ADMIN_PASSWORD: dummy
+          STATUS_API_TOKEN: dummy
+          OTLP_INGEST_TOKEN: dummy
+          SENTRY_DSN: ""
+
+  status-api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/public-status-api/requirements.txt respx pytest pytest-cov
+      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
+
+  # IaC static analysis. Sonar has no meaningful Terraform/Dockerfile coverage
+  # without a paid plugin, so this is what covers the infra half of the repo —
+  # policy lives in .checkov.yml (blocks on HIGH/CRITICAL, soft-fails LOW/MEDIUM).
+  checkov:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        with:
+          directory: .
+          config_file: .checkov.yml
+
+  # Pipeline-as-attack-surface (Atlas pipeline-cicd model v2): zizmor is SAST for
+  # the workflows themselves — template injection, dangerous triggers, overly
+  # broad permissions. Blocks on HIGH, pinned version — a linter that changes its
+  # own rules silently is a non-deterministic gate.
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: zizmor sui workflow (blocca su HIGH)
+        run: |
+          pip install --quiet zizmor==1.28.0
+          zizmor --min-severity=high .github/workflows/
+
+  # Blocks on new HIGH-severity CVEs introduced by this PR's dependency diff —
+  # it does not see what is already on main (Dependabot alerts cover that). Uses
+  # no secrets, so it runs on Dependabot's own PRs too.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # Zero tolerance, full history. Checked against the author of the PR
+  # (`pull_request.user.login`), not `github.actor` — the latter changes on an
+  # `update-branch` push and would silently reopen a check meant to stay closed
+  # for Dependabot. `pull-requests: read` is required by the action itself to
+  # list which commits to scan; without it the job 403s on every PR.
+  gitleaks:
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  # Excluded for Dependabot PRs: GitHub does not pass repository secrets to them,
+  # so SONAR_TOKEN arrives empty and the scan would die with "Not authorized" on
+  # every dependency bump — a gate that structurally cannot pass there, not a
+  # weakened one.
+  sonar:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/public-status-api/requirements.txt respx pytest pytest-cov
+      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
+      - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
