@@ -27,9 +27,13 @@ The public surface is exactly three numbers — sessions, tokens, cost — serve
 content, no free-form PromQL, no path from the public widget to anything else.
 Prometheus never gets a Tunnel hostname of its own; the OTLP ingest endpoint is
 authenticated inside the Collector (`bearertokenauth`), because a public Tunnel
-hostname is not an access control (CVE-2026-28798 pattern). Claude Code's
-`user.email`/`session.id` resource attributes are deliberately not converted into
-Prometheus labels.
+hostname is not an access control (CVE-2026-28798 pattern).
+
+Claude Code's identity attributes (`user.email`, `user.id`, `user.account_id`,
+`user.account_uuid`, `organization.id`) are stripped in the Collector before storage.
+They arrive as data point attributes, so turning `resource_to_telemetry_conversion`
+off does not stop them — that was checked against the real client, and a real email
+address was in the labels until an explicit processor removed it.
 
 ## Pipeline level: 1 — and why
 

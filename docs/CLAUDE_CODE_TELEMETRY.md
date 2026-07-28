@@ -42,10 +42,25 @@ UnderscoreEscapingWithoutSuffixes`, so Prometheus sees them as
 Claude Code's telemetry is beta and its metric names are versioned — re-check
 them against your installed version's docs if a panel goes empty.
 
-## Privacy note
+## Privacy: what actually reaches Prometheus
 
-Claude Code attaches `user.email`, `user.id`, `organization.id` and `session.id`
-as resource attributes. The Collector leaves `resource_to_telemetry_conversion`
-off, so none of them become Prometheus labels: no PII is stored, and `session.id`
-never becomes an unbounded-cardinality label. Don't turn it on to "get more
-detail" without revisiting that trade-off.
+Measured against the real client (v2.1.220) on 2026-07-28, not assumed. Claude Code
+sends identity as **data point** attributes, not resource attributes, so
+`resource_to_telemetry_conversion: false` does **not** keep them out — they arrive as
+plain Prometheus labels. What showed up: `user_email` (a real address),
+`user_id`, `user_account_id`, `user_account_uuid`, `organization_id`.
+
+They are deleted in the Collector, before storage, by the `attributes/no-pii`
+processor in `docker/otel-collector-config.yaml`. After the fix the label set is
+`model`, `type`, `query_source`, `start_type`, `terminal_type`, `session_id` — and a
+grep for the address over the whole `/metrics` output returns nothing.
+
+**`session_id` is kept on purpose.** Deleting it looked right (one value per session
+is a cardinality generator) and lost data: Claude Code's counters are cumulative per
+process, so with the id gone two concurrent sessions write the same series and the
+last export wins — measured, two parallel sessions produced one series reading `1`
+instead of `2`. It is a random per-run UUID, it never leaves the VPS, and the public
+endpoint only ever returns sums.
+
+If you add a producer, check its labels the same way — `curl` the Collector's
+`/metrics` and read them — rather than trusting what its documentation implies.

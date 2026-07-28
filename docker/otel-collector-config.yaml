@@ -24,6 +24,38 @@ receivers:
           authenticator: bearertokenauth
 
 processors:
+  # PII and unbounded cardinality are stripped HERE, before anything is stored.
+  #
+  # Turning off `resource_to_telemetry_conversion` is not enough, and assuming it
+  # was is how this nearly shipped: Claude Code sends these as **data point**
+  # attributes, not resource attributes, so they become Prometheus labels no matter
+  # what that setting says. Measured against the real client (v2.1.220) on
+  # 2026-07-28: `user_email` arrived as a plain label carrying a real address.
+  #
+  # `session.id` is deliberately KEPT, after deleting it turned out to lose data.
+  # Claude Code's counters are cumulative per process, so two concurrent sessions
+  # write the same series once the id is gone and the last export wins: measured on
+  # 2026-07-28, two sessions in parallel produced one series reading `1`, not `2`.
+  # It is a random per-run UUID, it identifies nothing about a person, and it never
+  # leaves the VPS — the public endpoint only ever returns sums. The cardinality
+  # cost is a few hundred series a month at this usage, not the unbounded growth it
+  # looked like on paper.
+  #
+  # Deliberately kept too: model, type, query_source, start_type, terminal_type —
+  # bounded, none identifying.
+  attributes/no-pii:
+    actions:
+      - key: user.email
+        action: delete
+      - key: user.id
+        action: delete
+      - key: user.account_id
+        action: delete
+      - key: user.account_uuid
+        action: delete
+      - key: organization.id
+        action: delete
+
   batch: {}
 
 exporters:
@@ -58,5 +90,7 @@ service:
     # unset for exactly this reason.
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      # Order matters: strip before batching, so nothing identifying is ever held
+      # in a batch buffer or handed to an exporter.
+      processors: [attributes/no-pii, batch]
       exporters: [prometheus]

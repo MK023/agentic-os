@@ -34,6 +34,25 @@ data type "logs": telemetry type is not supported
 So the `logs`-pipeline bug was real and would have stopped the Collector from
 starting, and the fix is verified rather than reasoned.
 
+### PII in the metric labels — found by running it, fixed
+
+The design said no personally identifying data would reach Prometheus, and the
+reasoning was that Claude Code sends identity as *resource* attributes, which
+`resource_to_telemetry_conversion: false` keeps out of the labels. The real client
+sends them as **data point** attributes. Measured on 2026-07-28 against v2.1.220:
+`user_email` arrived as an ordinary Prometheus label carrying a real address, along
+with `user_id`, `user_account_id`, `user_account_uuid` and `organization_id`.
+
+Fixed with an explicit `attributes/no-pii` processor in the Collector, deleting those
+five before batching or export. Verified after the fix: the label set is `model`,
+`type`, `query_source`, `start_type`, `terminal_type`, `session_id`, and grepping the
+whole `/metrics` output for the address returns nothing.
+
+`session_id` is deliberately kept. Deleting it — the obvious "unbounded cardinality"
+move — silently loses data: the counters are cumulative per process, so without the
+id two concurrent sessions write the same series and the last export wins. Measured:
+two parallel sessions produced one series reading `1` instead of `2`.
+
 ### Both dependency gates now run
 
 `actions/dependency-review-action` cannot run on a private repository: GitHub's docs
@@ -107,25 +126,25 @@ gate that disappears together with its credential is `continue-on-error` with ex
 steps, and the whole point of declaring a gate policy is that a gate either blocks
 or is removed on purpose.
 
-### 5. Docker, the parts a binary cannot stand in for
+### ~~5. Docker~~ and ~~6. the metric names~~ — closed 2026-07-28 by running it
 
-Still unproven without a daemon: that the four pinned images pull, that the status
-API image builds, and that the `HEALTHCHECK` behaves as intended at runtime. The
-tags were confirmed to exist on their registries, the Dockerfile avoids `curl`
-(absent from `python:3.12-slim`) in favour of stdlib `urllib`, and the compose file
-resolves — but none of that is the same as running it.
+Both were closed by starting a Docker daemon locally and running the whole stack
+except `cloudflared`, then pointing the **real** Claude Code (v2.1.220) at it. The
+recipe is `docs/LOCAL_DRY_RUN.md`. What that established:
 
-**Needs:** either a Docker daemon on some machine, or the VPS itself.
+- the images pull, the status API image builds with `--require-hashes
+  --only-binary=:all:`, and the container reports `healthy` — so the stdlib-`urllib`
+  healthcheck works and the `curl` question is settled;
+- `bearertokenauth` really rejects: 401 with no token, 401 with a wrong one, 200 with
+  the right one;
+- the metric names Prometheus sees are exactly `claude_code_session_count`,
+  `claude_code_token_usage`, `claude_code_cost_usage` — the names the dashboard and
+  the status API were written against — plus `claude_code_active_time_total`;
+- Grafana provisions its datasource and dashboard with no manual import, and a panel
+  query returns data;
+- the status API answers 401/401/200 end to end against a real Prometheus.
 
-### 6. Claude Code's metric names, against the installed version
-
-The names come from Claude Code's official telemetry documentation, and the
-Collector pins the translation strategy so the Prometheus side is deterministic.
-What cannot be checked without the hub running is whether the *installed* Claude
-Code version still emits those instrument names — they are beta and versioned. The
-first real session against the hub is the check; if a panel is empty, that is the
-reason, and the three places to update are listed in
-`docs/CLAUDE_CODE_TELEMETRY.md`.
+It also found the PII bug that no amount of reading would have surfaced (see below).
 
 ---
 
