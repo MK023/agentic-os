@@ -1,0 +1,62 @@
+# OTel Collector — ingest contract for the hub.
+#
+# Auth: the `otlp` receiver has no authentication of its own, and Task 5 puts a
+# public Cloudflare Tunnel hostname in front of it. An unauthenticated ingest
+# endpoint behind a public tunnel hostname is the CVE-2026-28798 pattern
+# (ZimaOS). `bearertokenauth` closes it: only requests carrying the configured
+# token reach any pipeline.
+extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    tokens:
+      - "${env:OTLP_INGEST_TOKEN}"
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
+
+processors:
+  batch: {}
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Default is 5m: a counter stops being exposed 5 minutes after its last
+    # update, so every series would vanish from /metrics whenever Marco stops
+    # working — and "cost today" would read 0 for most of the day. 25h keeps a
+    # full day of counters alive on the exporter side.
+    metric_expiration: 25h
+    # UnderscoreEscapingWithoutSuffixes: Prometheus metric names come out exactly
+    # as `claude_code_session_count` / `claude_code_token_usage` /
+    # `claude_code_cost_usage`. The default strategy appends type AND unit
+    # suffixes, which would make them `claude_code_token_usage_tokens_total` and
+    # `claude_code_cost_usage_USD_total` — names that depend on Claude Code's unit
+    # metadata rather than on anything we control. Predictable beats conventional
+    # here, since the real names can't be observed until the hub is live.
+    translation_strategy: UnderscoreEscapingWithoutSuffixes
+    # resource_to_telemetry_conversion stays OFF (the default). Claude Code sends
+    # user.email, user.id, organization.id and session.id as resource attributes:
+    # turning them into labels would write PII into Prometheus and make session.id
+    # an unbounded-cardinality label. Per-datapoint attributes (`type`, `model`)
+    # are still labels regardless — those are what the dashboard groups by.
+
+service:
+  extensions: [bearertokenauth]
+  pipelines:
+    # Metrics only. The `prometheus` exporter supports the metrics signal only
+    # (upstream README: "metrics [beta]"), so a `logs` pipeline pointing at it
+    # fails Collector startup. Claude Code's log/event stream has no consumer in
+    # Phase 1 — see docs/CLAUDE_CODE_TELEMETRY.md, which leaves OTEL_LOGS_EXPORTER
+    # unset for exactly this reason.
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

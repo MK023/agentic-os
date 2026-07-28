@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: agentic-os
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      # Deliberately NOT the provisioning directory itself: Grafana's docs keep
+      # dashboard JSON in a path separate from the provider config file.
+      path: /etc/grafana/dashboards

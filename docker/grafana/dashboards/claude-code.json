@@ -1,0 +1,45 @@
+{
+  "uid": "claude-code-live",
+  "title": "Claude Code — Live Usage",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Sessions (rate, 5m)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(claude_code_session_count[5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Tokens in/out (rate, 5m)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(claude_code_token_usage[5m])) by (type)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Cost (USD, cumulative 24h)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "sum(increase(claude_code_cost_usage[24h]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Cache hit rate",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "sum(rate(claude_code_token_usage{type=\"cacheRead\"}[5m])) / sum(rate(claude_code_token_usage[5m]))", "refId": "A" }
+      ]
+    }
+  ]
+}

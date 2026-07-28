@@ -1,0 +1,17 @@
+# Real secrets — never committed (only the .example files are)
+docker/.env
+terraform/hostinger-vps/terraform.tfvars
+
+# Terraform local state and provider cache.
+# .terraform.lock.hcl is deliberately NOT ignored — HashiCorp's docs require it
+# in version control so provider versions/hashes are pinned for everyone.
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+coverage.xml
+.coverage

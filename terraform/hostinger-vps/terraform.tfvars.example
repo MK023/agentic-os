@@ -1,0 +1,2 @@
+data_center_id = 0 # REPLACE: run `terraform console`, then `data.hostinger_vps_data_centers.all`, pick an EU entry's id
+template_id    = 0 # REPLACE: same console, `data.hostinger_vps_templates.all`, pick the Ubuntu 24.04 + Docker entry's id
