@@ -1,0 +1,22 @@
+# Pinned to a patch version, not the moving 3.12-slim tag — same reasoning as the
+# compose file's image pins.
+FROM python:3.12.13-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY main.py sentry.py ./
+
+# Runs unprivileged: nothing here needs root, and the compose stack already drops
+# all capabilities and sets no-new-privileges.
+USER 65534:65534
+
+# Compose has no Kubernetes liveness probe to lean on, so this is the only
+# automatic signal that the container is serving rather than merely running.
+# Shell form, so $STATUS_API_TOKEN is expanded at check time. Uses stdlib urllib
+# instead of curl: python:3.12-slim is Debian-slim and ships no curl, and adding
+# an apt layer just to healthcheck would be a bigger image for no gain.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import os,urllib.request as u; u.urlopen(u.Request('http://localhost:8000/status', headers={'Authorization': 'Bearer ' + os.environ['STATUS_API_TOKEN']}), timeout=4)" || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
