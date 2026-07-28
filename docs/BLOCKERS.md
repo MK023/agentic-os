@@ -132,11 +132,11 @@ reason, and the three places to update are listed in
 ## Decisions that are Marco's, not the implementation's
 
 1. ~~**Private repo, or public?**~~ **Decided 2026-07-28: public.** Audited first
-   (no secrets, no PII, no private-knowledge-base content); `dependency-review` runs
-   again as a result. Two things do become visible and can still be scrubbed if
-   unwanted: the `~/GitHub/Atlas/...` reference paths in `README.md`/`TASKS.md`
-   (filenames of a private knowledge base, no content), and the project names in the
-   spec's Phase 2 sketch, including `monferrinoAI`.
+   (no secrets, no PII, no private-knowledge-base content), which is what unblocked
+   `dependency-review`. Two leftovers were then scrubbed on request: the reference
+   paths into a private knowledge base (filenames only, never content) now read as
+   "my private engineering notes", and the unnamed second producer in the spec's
+   Phase 2 sketch is no longer named. Repos that stay named are the public ones.
 2. **Whether the `sonar` gate stays** as a declared blocking gate (then it needs the
    project + token) or is dropped from the contract. Half-measures are what the test
    contract exists to prevent.

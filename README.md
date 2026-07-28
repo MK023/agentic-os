@@ -33,7 +33,8 @@ Prometheus labels.
 
 ## Pipeline level: 1 — and why
 
-Reference model: `~/GitHub/Atlas/concepts/pipeline-cicd.md`. Declared **Level 1**
+Reference model: my own CI/CD maturity model (four levels, gate policy, the
+pipeline itself as attack surface), kept in private engineering notes. Declared **Level 1**
 (`PR → Lint → Test → Build → Dependency audit`): one developer, personal project,
 rollback is `terraform destroy` + redeploy. Level 4 (canary, progressive
 delivery) would be theatre here — there is no traffic to measure.
@@ -70,7 +71,9 @@ One gate depends on account state rather than on code:
 
 ## Test contract
 
-Reference model: `~/GitHub/Atlas/concepts/testing-pyramid.md`.
+Reference model: my own testing model (shape by architecture, clean-as-you-code
+coverage, mutation testing, security taxonomy by project type), kept in private
+engineering notes.
 
 1. **Shape**: static analysis as the ground floor for infra (`terraform
    validate`, `docker compose config`, Checkov); a small unit-heavy pyramid for
@@ -100,8 +103,14 @@ running system is observed.
 
 ## Status
 
-Code and docs are written and locally verified. Not yet run against real
-infrastructure: `terraform apply`, the Cloudflare Tunnel creation, and filling
-`docker/.env` on the VPS are manual steps, deliberately outside CI. The Hostinger
-account does not exist yet, so `data_center_id`/`template_id` in
-`terraform.tfvars` are still placeholders.
+All eight blocks are written, executed and verified locally; PR #1 carries them.
+The site half already shipped: `marcobellingeri.dev/api/agentic-status` is live and
+answers with three `null` fields, which is the designed degraded state until the hub
+exists.
+
+Not yet run against real infrastructure: `terraform apply`, the Cloudflare Tunnel
+creation, and filling `docker/.env` on the VPS — all manual steps, deliberately
+outside CI. The Hostinger account does not exist yet, so `data_center_id` and
+`template_id` in `terraform.tfvars` are still placeholders, and they cannot be
+looked up without it (the provider's data sources are authenticated; the API answers
+401). Full list of what is blocked on what: `docs/BLOCKERS.md`.

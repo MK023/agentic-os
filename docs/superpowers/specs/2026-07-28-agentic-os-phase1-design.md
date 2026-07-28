@@ -136,7 +136,7 @@ flowchart TB
 
 ## 6.1 Pipeline CI/CD — livello dichiarato e baseline
 
-Modello di riferimento: `~/GitHub/Atlas/concepts/pipeline-cicd.md`. **Livello 1**
+Modello di riferimento: il modello di maturità CI/CD tenuto nelle note private. **Livello 1**
 dichiarato (`PR → Lint → Test → Build → Audit dipendenze`), motivato: progetto
 personale, un solo sviluppatore, rollback immediato (`terraform destroy`/redeploy).
 Livello 4 (canary, progressive delivery) sarebbe teatro qui — nessun traffico da
@@ -154,7 +154,7 @@ canary. Vedi il piano per il dettaglio dei job.
 
 ## 6.2 Contratto di test (le 5 righe richieste dal modello)
 
-Modello di riferimento: `~/GitHub/Atlas/concepts/testing-pyramid.md`.
+Modello di riferimento: il modello dei test tenuto nelle note private.
 
 1. **Forma**: analisi statica come piano terra per l'infra (`terraform validate`,
    `tflint`, `docker compose config`, Checkov); piccola piramide a baricentro
@@ -216,13 +216,14 @@ Marco deciderà di costruirla. Nessun codice previsto qui.
   ingest/generate/advance, invocazioni `ask`, ingest radar). Token Access separato.
   Non sostituisce Sentry (errori) né Langfuse (trace LLM, account proprio del sito)
   — aggiunge la lente operativa "il cron è girato?".
-- **monferrinoAI**: stack noto solo da baseline (Node/Postgres/Checkly) — nessun
+- **Un secondo progetto** (non nominato qui): stack noto solo da baseline (Node/Postgres/Checkly) — nessun
   dettaglio interno assunto. Stesso contratto OTLP, token proprio, dashboard riga
   propria. Checkly resta per uptime/synthetic, non duplicato.
 
 ### Fase 3 — Personal Portal (sketch)
 
-Aggregazione GitHub (attività repo/PR/commit) + Notion (evolutive tracciate) + Atlas
+Aggregazione GitHub (attività repo/PR/commit) + Notion (evolutive tracciate) + la
+knowledge base privata
 (stats knowledge graph) + registro skill/certificazioni curato. Grafana non è lo
 strumento giusto per dati non time-series: portale separato (FastAPI+SQLite, pattern
 md-vault, o Astro/Workers, pattern del sito) che può embeddare un pannello Grafana

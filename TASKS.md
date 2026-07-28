@@ -44,7 +44,8 @@ of them findable by re-reading the plan:
 | 12 | Task 7 written for vitest / `src/pages/api` / TypeScript | That layout does not exist in the site repo (Worker modules + `node:test`) |
 
 Also added because the declared contract required them and no task produced
-them: `README.md` (pipeline level + test contract, per the Atlas MUST model) and
+them: `README.md` (pipeline level + test contract, per the two must-follow models
+in my private engineering notes) and
 the nightly mutation gate from spec §6.2 — which found four surviving mutants in
 `require_valid_token` at 100% coverage (the 401 body was asserted by nobody).
 
@@ -117,7 +118,7 @@ fixed in the plan now (`"agentic-os-hub.local"`, `terraform fmt`-clean
 alignment) — `terraform init`/`fmt -check`/`validate` all pass clean as
 written today.
 
-**Reference doc:** `~/GitHub/Atlas/entities/tools/hostinger.md` (Terraform provider schema, verified against the real README, not memory) and `~/GitHub/Atlas/entities/tools/terraform.md`.
+**Reference docs:** the `hostinger/hostinger` provider README (the schema was verified against it, not from memory) and the Terraform docs.
 
 ---
 
@@ -139,7 +140,7 @@ Checklist:
 - Prometheus **never** gets a Cloudflare Tunnel hostname of its own (no auth of its own) — internal to the Docker network only.
 - `OTLP_INGEST_TOKEN` env var is what the `bearertokenauth` extension checks — generate with `openssl rand -hex 32`, goes in `docker/.env` (Block 4) and Claude Code's local config (Block 6).
 
-**Reference docs:** `~/GitHub/Atlas/entities/tools/opentelemetry.md` (Collector config, `bearertokenauth`), `~/GitHub/Atlas/entities/tools/grafana.md`, `~/GitHub/Atlas/entities/tools/prometheus.md`, `~/GitHub/Atlas/entities/tools/docker.md` (image pinning + hardening baseline).
+**Reference docs:** the OpenTelemetry Collector docs (`bearertokenauth`, the Prometheus exporter's `translation_strategy` and `metric_expiration`), plus the Grafana provisioning, Prometheus and Docker docs.
 
 ---
 
@@ -160,13 +161,13 @@ Checklist:
   1. **Bug fix, confirmed by running it**: the exception handler now catches `KeyError, TypeError, ValueError` in addition to `httpx.HTTPError` — a malformed-but-200 upstream response used to raise an uncaught `KeyError` that became an unhandled 500 with no Sentry capture, breaking this endpoint's "every upstream failure is a controlled 502" promise.
   2. The three Prometheus queries run **concurrently** (`asyncio.gather`), not one at a time in a loop — they're independent, sequential awaiting only triples worst-case latency for no benefit. Explicit `httpx.Timeout(10.0)`.
   3. `secrets.compare_digest` for the token check, not `!=` (timing side-channel fix).
-  4. Auth moved into a proper **FastAPI dependency** (`Annotated[None, Depends(require_valid_token)]`) instead of an inline check in the route body — matches the Annotated-DI pattern already used in JobSearch/TorinoParking (`~/GitHub/Atlas/entities/tools/fastapi.md`).
+  4. Auth moved into a proper **FastAPI dependency** (`Annotated[None, Depends(require_valid_token)]`) instead of an inline check in the route body — matches the Annotated-DI pattern already used in JobSearch/TorinoParking (FastAPI's `Annotated` + `Depends` docs).
   No app-level rate limiter (deliberately — Cloudflare handles that at the edge, see the `ponytail:` comment in the plan).
 - [x] Run tests, confirm **5 passed** (Task 3, Step 7)
 - [x] Write `Dockerfile` (Task 3, Step 8) — includes a `HEALTHCHECK` (shell form, so it can read the runtime `STATUS_API_TOKEN` env var). **Not verified locally on purpose** (would need `docker run` against a real daemon, and this machine is meant to stay light): confirm `curl` exists in `python:3.12-slim` before relying on it — `docker run --rm python:3.12-slim sh -c "which curl"` on the executing machine, add the `apt-get install curl` layer only if missing.
 - [x] Commit (Task 3, Step 9)
 
-**Reference docs:** `~/GitHub/Atlas/entities/tools/fastapi.md`, `~/GitHub/Atlas/entities/tools/sentry.md` (Python port pattern).
+**Reference docs:** FastAPI's dependency-injection docs and Sentry's envelope API (the client here is a port of the one already running in `marcobellingeri.dev`).
 
 ---
 
@@ -224,7 +225,7 @@ Checklist:
 - [x] Confirm tests pass — **2 passed** (Task 7, Step 4)
 - [ ] `wrangler secret put` for the two Access credentials; `AGENTIC_OS_STATUS_URL` as a plain (non-secret) var (Task 7, Step 5)
 - [x] Write `src/components/AgenticOsWidget.astro` (Task 7, Step 6) — styling follows that repo's existing `Newsstand.astro` conventions, not respecified here
-- [x] Commit (Task 7, Step 7) — in the site repo, its own CI applies (already has dependency-review-action etc. per Atlas)
+- [x] Commit (Task 7, Step 7) — in the site repo, its own CI applies (it already runs dependency-review-action and the rest of the same baseline)
 
 ---
 
@@ -251,7 +252,7 @@ Checklist:
 - [x] Write `.checkov.yml` (Task 8, Step 6) — **not a straight `cp` from langfuse-devops-lab** (fixed 2026-07-28: that file's entire `skip-check` list is Kubernetes/Helm/Supabase-specific and none of it applies here — write the trimmed version in the plan directly, `framework: [terraform, dockerfile, github_actions]`, empty `skip-check`)
 - [x] Commit (Task 8, Step 7)
 
-**Reference doc:** `~/GitHub/Atlas/concepts/pipeline-cicd.md` ("Secondo esempio: Agentic OS" section — the declared-Level-1 reasoning) and `~/GitHub/Atlas/concepts/testing-pyramid.md` (the 5-line test contract, in spec §6.2).
+**Reference:** the declared-Level-1 reasoning and the 5-line test contract, both written out in `README.md` and spec §6.1/§6.2.
 
 ---
 

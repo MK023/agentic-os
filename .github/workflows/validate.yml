@@ -60,7 +60,7 @@ jobs:
           directory: .
           config_file: .checkov.yml
 
-  # Pipeline-as-attack-surface (Atlas pipeline-cicd model v2): zizmor is SAST for
+  # Pipeline-as-attack-surface: zizmor is SAST for
   # the workflows themselves — template injection, dangerous triggers, overly
   # broad permissions. Blocks on HIGH, pinned version — a linter that changes its
   # own rules silently is a non-deterministic gate.
