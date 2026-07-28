@@ -22,14 +22,33 @@ separate repo).
 
 ## Before you start
 
-You need, from Marco, before Task 1:
-- A Hostinger account with an API token (`HOSTINGER_API_TOKEN`).
+**Status as of 2026-07-28:** Cloudflare account exists already. Hostinger account
+does not exist yet. Marco's target start date for real execution is **after
+2026-08-10**. This plan was written in full now so it's ready to run when that
+window opens — writing/validating code does not require the Hostinger account to
+exist yet; only two things do (flagged inline where they occur):
+
+- Task 1, Step 6 (look up real `data_center_id`/`template_id`) — needs a live
+  Hostinger account + API token to query the provider's data sources. Everything
+  else in Task 1 (the `.tf` files themselves) can be written and `terraform
+  validate`-checked without it.
+- `terraform apply` (actual VPS creation) and `cloudflared tunnel create` (actual
+  tunnel/DNS routes) — real infrastructure, deliberately not part of this plan's
+  tasks (see "Explicitly not in this plan" at the end). These happen whenever
+  Marco is ready, independent of when the code/tests were written.
+
+You need, from Marco, before Task 1 can fully close out (not before it can start):
+- A Hostinger account with an API token (`HOSTINGER_API_TOKEN`) — not yet open.
 - A Cloudflare account with a zone already on Cloudflare (for the Tunnel) and a
-  `CLOUDFLARE_API_TOKEN` with Tunnel edit permission.
+  `CLOUDFLARE_API_TOKEN` with Tunnel edit permission — **already have this one**.
 - An SSH keypair to use for the VPS (path to the public key).
 
-None of these are placeholders to fill in later — the plan cannot proceed past
-Task 1 without them, so confirm they exist before starting.
+Tasks 2, 3, 4, 6, 8 need none of the above to be written and tested. Task 5 is
+documentation of manual steps Marco runs later, against the Cloudflare account he
+already has, whenever he chooses — not gated by Hostinger. Task 7 (site widget)
+needs no live secrets to write/test; only `wrangler secret put` (Step 5) waits for
+a real Cloudflare Access service token, which doesn't exist until Task 5 is run
+for real.
 
 ---
 
