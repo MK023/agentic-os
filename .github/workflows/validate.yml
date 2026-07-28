@@ -132,12 +132,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
 
-  # Excluded for Dependabot PRs: GitHub does not pass repository secrets to them,
-  # so SONAR_TOKEN arrives empty and the scan would die with "Not authorized" on
+  # Runs on pushes to main as well as on PRs. PR-only was a real gap: SonarQube
+  # Cloud had never analysed the main branch at all (`measures: []`), so the project
+  # had no baseline, no quality-gate history, and nothing for "new code" to be new
+  # *against* — the Clean-as-You-Code model needs the main branch analysed to mean
+  # anything.
+  # Still excluded for Dependabot PRs: GitHub does not pass repository secrets to
+  # them, so SONAR_TOKEN arrives empty and the scan dies with "Not authorized" on
   # every dependency bump — a gate that structurally cannot pass there, not a
-  # weakened one.
+  # weakened one. On a push event `github.event.pull_request` is null, so the first
+  # clause short-circuits and the job runs.
   sonar:
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
