@@ -48,6 +48,14 @@ which unblocks `dependency-review` — so both now run, and they are kept both b
 they see different things: the whole set versus what a single PR introduces. If the
 repo ever goes private again, pip-audit keeps the gate alive on its own.
 
+Going public was not enough by itself: the action then failed with *"Please ensure
+that Dependency graph is enabled"*. There is no REST field for the dependency graph,
+but GitHub's docs say `PUT /repos/{owner}/{repo}/vulnerability-alerts` *"enables
+dependency alerts and the dependency graph"* — that call fixed it, and
+`dependency-review` is green as of the same day. Secret scanning and push protection
+were switched on at the same time (both free on a public repo, and the same baseline
+`marcobellingeri.dev` already runs).
+
 ---
 
 ## Still open — waits on an account or a credential
