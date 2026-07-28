@@ -650,7 +650,7 @@ code on 2026-07-28, not just reading it:
    `RequireToken` type alias, `Annotated[None, Depends(...)]`) instead of an
    inline check in the route body — matches the Annotated-DI pattern already
    used elsewhere in this portfolio (JobSearch, TorinoParking; see
-   `~/GitHub/Atlas/entities/tools/fastapi.md`), separates the auth concern
+   FastAPI's `Annotated`/`Depends` docs), separates the auth concern
    from the business logic, and makes the route itself read as "what this
    endpoint does" without the guard clause in front of it.
 
@@ -1111,7 +1111,7 @@ git commit -m "feat: add Agentic OS live status widget"
 ## Task 8: Smoke test and CI gate (agentic-os repo)
 
 Baseline copied from `marcobellingeri.dev`'s CI (Livello 3 on several axes already
-— see `~/GitHub/Atlas/concepts/pipeline-cicd.md`), scaled down to what a
+— see the maturity model in my private engineering notes), scaled down to what a
 declared-**Livello 1** personal project actually needs: automated gates, no
 approval workflow, no canary. What's kept from that baseline regardless of level,
 because it's cheap and non-negotiable per the security baseline (not gated by
@@ -1221,7 +1221,8 @@ jobs:
       - run: pip install -r services/public-status-api/requirements.txt httpx respx pytest pytest-cov
       - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
 
-  # Pipeline-as-attack-surface (Atlas pipeline-cicd model v2): zizmor is SAST for
+  # Pipeline-as-attack-surface (see the CI/CD maturity model in my private notes):
+  # zizmor is SAST for
   # the workflows themselves — template injection, dangerous triggers, overly
   # broad permissions. Blocks on HIGH, same policy and pinned version as
   # marcobellingeri.dev's site-ci.yml (a linter that changes its own rules
@@ -1397,8 +1398,8 @@ git commit -m "ci: add validate workflow (terraform, compose, status API tests, 
   (Task 3). Also added: Sentry error capture in the status API (zero-dep,
   ported from `marcobellingeri.dev/engine/lib/sentry.mjs`), and the full
   CI gate set from that repo scaled to Livello 1 (zizmor, gitleaks,
-  dependency-review, SonarCloud) — see Atlas `concepts/pipeline-cicd.md` and
-  `concepts/testing-pyramid.md` for the declared level/contract this maps to.
+  dependency-review, SonarCloud) — see the CI/CD maturity model and the testing
+  model in my private engineering notes for  `concepts/testing-pyramid.md` for the declared level/contract this maps to.
 - Langfuse was considered for this phase and deliberately **not** added: Phase 1
   makes no LLM inference call of its own (it only relays Claude Code's own
   reported usage), so there is nothing for Langfuse to trace yet. It's a
@@ -1454,7 +1455,7 @@ git commit -m "ci: add validate workflow (terraform, compose, status API tests, 
 
 - No Kubernetes/K3s anywhere (spec §10).
 - No changes to `langfuse-devops-lab` (separate repo, untouched).
-- No Phase 2 (marcobellingeri.dev agent metrics push, monferrinoAI), Phase 3
+- No Phase 2 (marcobellingeri.dev agent metrics push, the second producer), Phase 3
   (Personal Portal), or Phase 4 (session RAG) work — sketch-only per spec §7, each
   gets its own future spec → plan cycle.
 - No `terraform apply` / actual VPS creation / actual Cloudflare Tunnel creation —
