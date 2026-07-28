@@ -124,13 +124,26 @@ resource "hostinger_vps_post_install_script" "docker_bootstrap" {
 
 resource "hostinger_vps" "hub" {
   plan                   = var.vps_plan
-  data_center_id          = var.data_center_id
-  template_id             = var.template_id
-  hostname                = "agentic-os-hub"
-  ssh_key_ids             = [hostinger_vps_ssh_key.agentic_os.id]
-  post_install_script_id  = hostinger_vps_post_install_script.docker_bootstrap.id
+  data_center_id         = var.data_center_id
+  template_id            = var.template_id
+  hostname               = "agentic-os-hub.local"
+  ssh_key_ids            = [hostinger_vps_ssh_key.agentic_os.id]
+  post_install_script_id = hostinger_vps_post_install_script.docker_bootstrap.id
 }
 ```
+
+**Verified 2026-07-28 by actually running this against the real
+`hostinger/hostinger` v0.1.22 provider** (not just read): two real bugs found
+and fixed here. (1) The `=` alignment above failed `terraform fmt -check`
+(exit 3) — the plan originally promised "no formatting diffs", which was
+false as written; the block above is the corrected, `terraform fmt`-clean
+version. (2) `terraform validate` **rejected** a bare `"agentic-os-hub"`
+hostname with `invalid value for hostname (must be a valid FQDN)` — the
+provider enforces dot-containing FQDN shape even though this hostname never
+needs to resolve on public DNS. `agentic-os-hub.local` passes; any
+dotted value does, this one was picked as a generic default. `terraform
+init` (against the real registry) + `fmt -check` + `validate` all pass
+clean on this exact code as of today.
 
 - [ ] **Step 4: Write `outputs.tf`**
 
@@ -499,6 +512,27 @@ def test_status_reports_upstream_failure_to_sentry_and_returns_502(monkeypatch):
 
     assert response.status_code == 502
     assert sentry_call.called
+
+
+@respx.mock
+def test_status_with_malformed_upstream_json_returns_502_not_500(monkeypatch):
+    # Found 2026-07-28 by actually running this suite against the code below
+    # before this test existed: a 200 response with an unexpected JSON shape
+    # (e.g. Prometheus mid-restart, or a future API contract change) raised a
+    # bare KeyError that FastAPI turned into an unhandled 500 with no Sentry
+    # capture — not the controlled 502 this endpoint promises everywhere else.
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    respx.get("http://prometheus:9090/api/v1/query").mock(
+        return_value=httpx.Response(200, json={"unexpected": "shape"})
+    )
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 502
+    assert sentry_call.called
 ```
 
 - [ ] **Step 2: Write `conftest.py`**
@@ -589,21 +623,60 @@ async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None
 
 - [ ] **Step 6: Write `main.py`**
 
-Token comparison uses `secrets.compare_digest` instead of `!=` — a plain string
-compare short-circuits on the first differing byte, leaking token length/prefix via
-response timing. Low realism at this traffic scale, but a one-line fix.
-Rate limiting is deliberately not built into this app: Cloudflare sits in front of
-every public route (Task 5) and has its own rate-limiting rules, which is where
-this belongs for a single-endpoint personal service — `ponytail: no app-level
-limiter, add one here only if this API ever gets a second, differently-sensitive
-endpoint that Cloudflare's per-hostname rule can't distinguish`.
+Four decisions, the first two are bug fixes found by actually running this
+code on 2026-07-28, not just reading it:
+
+1. **Token check broadens `except httpx.HTTPError` to also catch
+   `KeyError, TypeError, ValueError`.** Confirmed bug: a 200 response with an
+   unexpected JSON shape (Prometheus mid-restart, a future API contract
+   change) raised a bare `KeyError` inside `_parse_value` that was NOT an
+   `httpx.HTTPError` — FastAPI turned it into an unhandled 500 with no Sentry
+   capture, breaking the "every upstream failure is a controlled 502" promise
+   this endpoint makes everywhere else. The new test above
+   (`test_status_with_malformed_upstream_json_returns_502_not_500`) locks
+   this in; it fails against the old exception clause and passes against
+   this one — verified both ways.
+2. **The three Prometheus queries run concurrently (`asyncio.gather`), not
+   sequentially.** They're independent — no query depends on another's
+   result — so awaiting them one at a time in a loop triples the worst-case
+   latency for no benefit. `httpx.Timeout(10.0)` is now explicit (httpx
+   defaults to 5.0s if unset, which was already fine, but leaving it implicit
+   reads as an oversight rather than a decision).
+3. **`secrets.compare_digest` instead of `!=`** for the token comparison — a
+   plain string compare short-circuits on the first differing byte, leaking
+   token length/prefix via response timing. Low realism at this traffic
+   scale, but a one-line fix.
+4. **Auth moved into a FastAPI dependency** (`require_valid_token` +
+   `RequireToken` type alias, `Annotated[None, Depends(...)]`) instead of an
+   inline check in the route body — matches the Annotated-DI pattern already
+   used elsewhere in this portfolio (JobSearch, TorinoParking; see
+   `~/GitHub/Atlas/entities/tools/fastapi.md`), separates the auth concern
+   from the business logic, and makes the route itself read as "what this
+   endpoint does" without the guard clause in front of it.
+
+Rate limiting is still deliberately not built into this app: Cloudflare sits
+in front of every public route (Task 5) and has its own rate-limiting rules,
+which is where this belongs for a single-endpoint personal service —
+`ponytail: no app-level limiter, add one here only if this API ever gets a
+second, differently-sensitive endpoint that Cloudflare's per-hostname rule
+can't distinguish`. One accepted edge case left as-is, not worth the added
+complexity at this scale: if one of the three concurrent queries fails fast
+while the others are still in flight, `asyncio.gather`'s default behavior
+(`return_exceptions=False`) propagates that exception immediately without
+cancelling the still-running ones, which can log a harmless
+"exception never retrieved" warning for whichever query was still pending —
+`ponytail: accepted at this traffic scale, revisit with
+return_exceptions=True + manual result handling if this ever shows up in
+Sentry`.
 
 ```python
+import asyncio
 import os
 import secrets
+from typing import Annotated
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 
 from sentry import capture_exception
 
@@ -611,6 +684,7 @@ app = FastAPI()
 
 PROMETHEUS_URL = os.environ["PROMETHEUS_URL"]
 STATUS_API_TOKEN = os.environ["STATUS_API_TOKEN"]
+REQUEST_TIMEOUT = httpx.Timeout(10.0)
 
 QUERIES = {
     "sessions_today": "sum(claude_code_session_count_total)",
@@ -626,19 +700,27 @@ def _parse_value(payload: dict) -> float:
     return float(result[0]["value"][1])
 
 
-@app.get("/status")
-async def status(authorization: str = Header(default="")) -> dict:
+def require_valid_token(authorization: str = Header(default="")) -> None:
     if not secrets.compare_digest(authorization, f"Bearer {STATUS_API_TOKEN}"):
         raise HTTPException(status_code=401, detail="unauthorized")
 
+
+RequireToken = Annotated[None, Depends(require_valid_token)]
+
+
+async def _query_one(client: httpx.AsyncClient, query: str) -> float:
+    response = await client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query})
+    response.raise_for_status()
+    return _parse_value(response.json())
+
+
+@app.get("/status")
+async def status(_: RequireToken) -> dict:
     try:
-        async with httpx.AsyncClient() as client:
-            values = {}
-            for field, query in QUERIES.items():
-                response = await client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query})
-                response.raise_for_status()
-                values[field] = _parse_value(response.json())
-    except httpx.HTTPError as exc:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            results = await asyncio.gather(*(_query_one(client, q) for q in QUERIES.values()))
+        values = dict(zip(QUERIES.keys(), results))
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         await capture_exception(exc, tags={"endpoint": "status"})
         raise HTTPException(status_code=502, detail="upstream unavailable") from exc
 
@@ -652,9 +734,18 @@ async def status(authorization: str = Header(default="")) -> dict:
 - [ ] **Step 7: Run test to verify it passes**
 
 Run: `pytest test_main.py -v`
-Expected: 4 passed
+Expected: **5 passed** — verified for real on 2026-07-28 against this exact
+code (Python 3.10 locally; the Docker image below targets 3.12, no
+version-specific syntax used).
 
 - [ ] **Step 8: Write `Dockerfile`**
+
+`HEALTHCHECK` added — Docker Compose (Task 2) has no Kubernetes liveness/
+readiness probe to lean on, so this is the only automatic signal that the
+container is actually serving, not just running. It hits the container's own
+`/status` using the runtime `STATUS_API_TOKEN` env var, which is why it's
+shell form (`CMD` string, not exec-array form) — shell form expands
+environment variables at check time, exec form does not.
 
 ```dockerfile
 FROM python:3.12-slim
@@ -664,8 +755,20 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py sentry.py .
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD curl -fsS -H "Authorization: Bearer $STATUS_API_TOKEN" http://localhost:8000/status || exit 1
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
+
+**Not verified locally** (deliberately — this would need `docker run
+python:3.12-slim` against the real daemon, and Marco asked to keep this
+machine light since execution happens on another terminal): confirm `curl` is
+present in `python:3.12-slim` before relying on the `HEALTHCHECK` above —
+`docker run --rm python:3.12-slim sh -c "which curl"` on the executing
+machine. If missing, add
+`RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*`
+before the `HEALTHCHECK` line.
 
 - [ ] **Step 9: Commit**
 
@@ -850,12 +953,17 @@ git commit -m "docs: document local Claude Code telemetry env vars"
 **Repo:** `MK023/marcobellingeri.dev` (not this repo — switch working directory)
 
 **Files:**
-- Create: `src/lib/agenticOsStatus.ts`
-- Modify: `src/pages/api/agentic-status.ts` (new file, Worker API route — follows
+- Create: `src/pages/api/agentic-status.ts` (Worker API route — follows
   the existing `/api/radar`, `/api/ask` pattern in that repo)
 - Create: `src/components/AgenticOsWidget.astro`
 - Test: `test/agentic-status.test.mjs` (follows existing Worker test conventions
   in that repo, e.g. `test/specchi.test.mjs`)
+
+(An earlier draft of this task also listed a `src/lib/agenticOsStatus.ts` file
+with no step that ever created it — found during the 2026-07-28 review pass.
+Removed: the route's fetch/transform/fallback logic is ~15 lines and doesn't
+earn a separate lib file, unlike `lib/sentry.mjs`/`lib/langfuse.mjs` which are
+reused across many scripts. Don't recreate it just to match this old list.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1218,16 +1326,42 @@ positive shows up, same discipline, not preemptively.
 useDefault = true
 ```
 
-- [ ] **Step 6: Copy Checkov config from langfuse-devops-lab**
+- [ ] **Step 6: Write `.checkov.yml`, adapted from langfuse-devops-lab**
 
-```bash
-cp ../langfuse-devops-lab/.checkov.yml .checkov.yml
+Read `../langfuse-devops-lab/.checkov.yml` on 2026-07-28 rather than assuming
+its shape: every one of its `skip-check` entries is Kubernetes/Helm-specific
+(`CKV_K8S_*`, `CKV2_K8S_*`), Supabase-specific (`CKV_SUPABASE_1`), or
+references a `rollback.yml` workflow (`CKV_GHA_7`) that doesn't exist in this
+repo — **none of them apply here**, this repo has no Kubernetes/Helm/Supabase.
+Don't `cp` it — write a fresh file that reuses only the `framework`,
+`skip-path`, `soft-fail-on`, and output settings, trimmed to what this repo
+actually has (Terraform + a Dockerfile + GitHub Actions, no Kubernetes/Helm):
+
+```yaml
+# Checkov config for Agentic OS. Adapted from langfuse-devops-lab/.checkov.yml
+# 2026-07-28 — that file's skip-check entries are all Kubernetes/Helm/Supabase
+# specific and don't apply to this repo's stack (Terraform VPS + Dockerfile +
+# GitHub Actions only). Starting with an empty skip-check, not a copied one:
+# add an entry here only in response to a real finding, with the same
+# comment-per-skip discipline as the source file.
+
+framework:
+  - terraform
+  - dockerfile
+  - github_actions
+
+skip-path:
+  - .terraform/
+
+skip-check: []
+
+soft-fail-on:
+  - LOW
+  - MEDIUM
+
+compact: true
+quiet: true
 ```
-
-Read the copied file and strip any check IDs that reference resources this repo
-doesn't have (it was written for a Helm/Vault/ArgoCD stack; Agentic OS's Terraform
-is a single VPS resource) — keep only what still applies, don't carry over
-suppressions for controls that don't exist here.
 
 - [ ] **Step 7: Commit**
 
@@ -1269,6 +1403,50 @@ git commit -m "ci: add validate workflow (terraform, compose, status API tests, 
   makes no LLM inference call of its own (it only relays Claude Code's own
   reported usage), so there is nothing for Langfuse to trace yet. It's a
   standing decision for Phase 4 (session RAG), not a gap in Phase 1.
+- **Third pass (same day): every code block in this plan actually executed,
+  not just read**, ahead of Marco starting real work on this in the coming
+  days. Reconstructed every file from Tasks 1, 2, 3, 7, 8 in a scratch
+  directory and ran the real tools against them (Terraform v1.14.8 against
+  the real `hostinger/hostinger` v0.1.22 provider, Docker Compose v2 config
+  resolution, pytest 5 tests, vitest 2 tests, `terraform fmt`, YAML/TOML
+  parsing). Found and fixed:
+  - **`terraform fmt -check` failed** (exit 3) on `main.tf`'s manually-aligned
+    `=` signs — the plan claimed "no formatting diffs", which was false as
+    written. Fixed to the actual `terraform fmt` output (Task 1).
+  - **`terraform validate` rejected the hostname** — the provider requires an
+    FQDN-shaped value; `"agentic-os-hub"` (no dot) failed with `invalid value
+    for hostname (must be a valid FQDN)`. This is a real provider-schema
+    constraint no amount of reading would have surfaced without the provider
+    actually installed. Fixed to `"agentic-os-hub.local"` (Task 1).
+  - **Status API let a malformed upstream response become an unhandled 500**
+    — `except httpx.HTTPError` didn't catch the `KeyError` a 200-with-wrong-
+    shape response raises inside `_parse_value`. Confirmed by writing a
+    regression test, watching it fail against the old code, then fixing it
+    (Task 3) — this is the gap Marco asked about directly ("gestione degli
+    errori da aggiungere").
+  - **Orphan file in Task 7's file list**: `src/lib/agenticOsStatus.ts` was
+    listed as a file to create but no step ever wrote it. Removed the
+    reference rather than inventing an unneeded file (Task 7).
+  - **Task 8's Checkov instruction was vague** ("strip what doesn't apply") —
+    reading the actual `langfuse-devops-lab/.checkov.yml` showed *every*
+    existing skip is Kubernetes/Helm/Supabase-specific and none apply here;
+    replaced with a concrete, minimal file instead of a `cp` + hand-wave
+    (Task 8).
+  - Confirmed working, not just written: all 5 pytest cases, both vitest
+    cases, `docker compose config`, all pinned image tags exist on their
+    registries (checked via `docker manifest inspect`), `scripts/verify-hub.sh`
+    produces exactly the two-line-FAIL/exit-1 output the plan promises.
+  - Also applied while in there, matching Marco's ask for FastAPI
+    architectural patterns: the three Prometheus queries now run concurrently
+    (`asyncio.gather`) instead of sequentially, an explicit `httpx.Timeout`
+    replaces the previously-implicit 5s default, and token auth moved into a
+    proper FastAPI dependency (`Annotated[None, Depends(...)]`) matching the
+    DI pattern already used in JobSearch/TorinoParking (Task 3).
+  - **Not fixed, deliberately**: Docker/Dockerfile execution itself wasn't run
+    against a real daemon (`docker run`, image pulls) — Marco asked to keep
+    this machine light since execution happens elsewhere. Everything
+    Docker-related that doesn't need the daemon (`compose config`,
+    `manifest inspect`, YAML parsing) was still verified for real.
 
 ---
 

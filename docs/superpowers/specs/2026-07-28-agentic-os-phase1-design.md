@@ -242,6 +242,21 @@ voyage-3.5). **Vincolo deciso ora, da rispettare quando si costruisce:**
   da questa stessa conversazione) nonostante l'assunzione iniziale che non lo
   facessero — va progettato assumendo che ci siano, non assumendo che non ci siano.
 
+**Pattern architetturali LLM per quando ci si arriva (nota, non costruita ora)**:
+Fase 1 non ha superficie LLM propria (zero chiamate a modello, §6.4 lo dice già).
+Quando la Fase 4 introduce una generazione vera (retrieval + risposta), i pattern
+da applicare — noti già ora così non sono da riscoprire allora — sono quelli del
+resto del portfolio, non nuovi: **output del modello sempre non fidato** (mai in
+un `eval`/query/DOM senza sanitizzazione, stesso principio del terminale `ask`
+di marcobellingeri.dev), **struttura via modelli Pydantic** sulla risposta (non
+JSON libero parsato a mano — coerente con l'idioma FastAPI già in uso qui),
+**timeout/circuit breaker distinti dalle chiamate HTTP normali** (una chiamata a
+modello può impiegare secondi anche in condizioni normali — il timeout di 10s di
+Fase 1 non è il numero giusto per una generazione), **permessi dei tool nel
+codice, mai nel prompt** (se la Fase 4 dà al modello accesso a strumenti, es.
+query sul RAG stesso). Nessuna di queste è codice da scrivere oggi — sono la
+lista di controllo per quando la Fase 4 avrà il suo spec.
+
 ## 8. Testing / validazione (Fase 1)
 
 - `terraform validate` + `tflint` sul modulo — estende il gate `validate` già
