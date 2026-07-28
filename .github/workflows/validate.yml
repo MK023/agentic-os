@@ -73,11 +73,32 @@ jobs:
           pip install --quiet zizmor==1.28.0
           zizmor --min-severity=high .github/workflows/
 
-  # Blocks on new HIGH-severity CVEs introduced by this PR's dependency diff —
-  # it does not see what is already on main (Dependabot alerts cover that). Uses
-  # no secrets, so it runs on Dependabot's own PRs too.
+  # The dependency audit the declared Level 1 requires. pip-audit, not
+  # dependency-review-action, because this repository is PRIVATE: on a private
+  # repo that action needs GitHub Code Security / Advanced Security and dies with
+  # "Dependency review is not supported on this repository" (confirmed on PR #1,
+  # 2026-07-28). pip-audit needs no licence and no secret, and it checks the whole
+  # dependency set rather than only this PR's diff.
+  # Policy: any known advisory against the three pinned dependencies fails the
+  # build. With three dependencies that is a real signal, not noise; if an
+  # advisory that provably does not apply here ever fires, add
+  # `--ignore-vuln <ID>` with a comment saying why — never drop the gate.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit==2.10.1
+      - run: pip-audit -r services/public-status-api/requirements.txt --progress-spinner off
+
+  # Kept, and it activates by itself if this repository is ever made public: the
+  # diff-scoped view is strictly better than pip-audit's whole-set view for
+  # catching what a single PR introduces. On a private repo it cannot run at all,
+  # so it is skipped rather than left permanently red.
   dependency-review:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
     permissions:
       contents: read
     runs-on: ubuntu-latest
