@@ -53,14 +53,15 @@ Checkov blocks on HIGH and above and soft-fails LOW/MEDIUM; `dependency-audit`
 (pip-audit) blocks on any advisory against the three pinned dependencies. Nothing
 runs with `continue-on-error`.
 
-Two gates depend on account state rather than on code:
+**Two dependency gates, on purpose**: `dependency-audit` (pip-audit) checks the
+whole pinned set on every run; `dependency-review` blocks on HIGH CVEs introduced
+by a single PR's diff. They answer different questions, and only the first works on
+a private repository — `dependency-review` needs GitHub Code Security there
+(confirmed live on PR #1, while this repo was still private: *"Dependency review is
+not supported on this repository"*). This repository is public, so both run.
 
-- **`dependency-audit` uses pip-audit, not `dependency-review-action`**, because
-  this repository is private and that action requires GitHub Code Security /
-  Advanced Security there (confirmed live on PR #1: *"Dependency review is not
-  supported on this repository"*). The `dependency-review` job is still in the
-  workflow and turns itself on if the repo is ever made public — its diff-scoped
-  view is better at catching what a single PR introduces.
+One gate depends on account state rather than on code:
+
 - **`sonar` stays red until a SonarCloud project exists and `SONAR_TOKEN` is set**
   as a repository secret. SonarCloud's free tier does cover private projects up to
   50k LoC, so this is a setup step, not a paywall. The job is deliberately *not*
