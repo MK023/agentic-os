@@ -48,9 +48,24 @@ canary. Three Python dependencies and no distributed artifact — that would be
 Level 4 cargo cult.
 
 Gate policy: `terraform`, `compose`, `status-api-tests`, `checkov`,
-`workflow-lint`, `gitleaks`, `dependency-review` and `sonar` all block the merge.
-`dependency-review` and Checkov block on HIGH and above; Checkov soft-fails
-LOW/MEDIUM. Nothing runs with `continue-on-error`.
+`workflow-lint`, `gitleaks`, `dependency-audit` and `sonar` all block the merge.
+Checkov blocks on HIGH and above and soft-fails LOW/MEDIUM; `dependency-audit`
+(pip-audit) blocks on any advisory against the three pinned dependencies. Nothing
+runs with `continue-on-error`.
+
+Two gates depend on account state rather than on code:
+
+- **`dependency-audit` uses pip-audit, not `dependency-review-action`**, because
+  this repository is private and that action requires GitHub Code Security /
+  Advanced Security there (confirmed live on PR #1: *"Dependency review is not
+  supported on this repository"*). The `dependency-review` job is still in the
+  workflow and turns itself on if the repo is ever made public — its diff-scoped
+  view is better at catching what a single PR introduces.
+- **`sonar` stays red until a SonarCloud project exists and `SONAR_TOKEN` is set**
+  as a repository secret. SonarCloud's free tier does cover private projects up to
+  50k LoC, so this is a setup step, not a paywall. The job is deliberately *not*
+  made to skip when the secret is missing: a quality gate that disappears when its
+  credential does is the `continue-on-error` antipattern with extra steps.
 
 ## Test contract
 
