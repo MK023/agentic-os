@@ -187,14 +187,31 @@ git commit -m "feat(terraform): add Hostinger VPS provisioning module"
 
 - [ ] **Step 1: Write `docker/otel-collector-config.yaml`**
 
+The `otlp` receiver on a Docker network with no external route would be safe as-is,
+but Task 5 puts a Cloudflare Tunnel hostname in front of it — an unauthenticated
+ingest endpoint behind a public tunnel hostname is exactly the pattern behind
+CVE-2026-28798 (ZimaOS: unauthenticated internal endpoint exposed via Cloudflare
+Tunnel → SSRF into the internal network). The `bearertokenauth` extension closes
+this: only requests carrying the configured token are accepted.
+
 ```yaml
+extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    tokens:
+      - "${env:OTLP_INGEST_TOKEN}"
+
 receivers:
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth
       http:
         endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
 
 processors:
   batch: {}
@@ -206,6 +223,7 @@ exporters:
       enabled: true
 
 service:
+  extensions: [bearertokenauth]
   pipelines:
     metrics:
       receivers: [otlp]
@@ -311,11 +329,22 @@ update this dashboard's `expr` fields to match, same file, same panels.
 
 - [ ] **Step 6: Write `docker/docker-compose.yml`**
 
+Image tags are pinned to a specific released version, never `:latest` — same
+reasoning as SHA-pinning GitHub Actions (a mutable tag is a supply-chain risk, not
+just a reproducibility one). **Before running this for real**, check each image's
+current stable release tag (Docker Hub / GHCR) and update the four version numbers
+below — they were current at spec time but this file will be executed months later.
+Every service gets `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`
+(2026 Docker hardening baseline); none of these four services need any Linux
+capability beyond default userspace networking.
+
 ```yaml
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2025.10.1
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     command: tunnel run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
@@ -325,15 +354,24 @@ services:
       - status-api
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.116.0
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      - OTLP_INGEST_TOKEN=${OTLP_INGEST_TOKEN}
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.0.1
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # No Cloudflare Tunnel route to this service, ever (Task 5) — Prometheus's own
+    # HTTP API has no authentication of its own, so its only safe exposure is
+    # internal-to-the-compose-network, scraped by Grafana and queried by status-api.
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
@@ -342,8 +380,10 @@ services:
       - --storage.tsdb.retention.time=30d
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.4.0
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_AUTH_ANONYMOUS_ENABLED=false
@@ -354,18 +394,24 @@ services:
   status-api:
     build: ../services/public-status-api
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - STATUS_API_TOKEN=${STATUS_API_TOKEN}
+      - SENTRY_DSN=${SENTRY_DSN}
 
 volumes:
   prometheus-data:
   grafana-data:
 ```
 
-`CLOUDFLARE_TUNNEL_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `STATUS_API_TOKEN` come from a
-local `.env` file next to this compose file, never committed (Task 4 wires the
-`.gitignore`).
+`CLOUDFLARE_TUNNEL_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `STATUS_API_TOKEN`,
+`OTLP_INGEST_TOKEN`, `SENTRY_DSN` come from a local `.env` file next to this compose
+file, never committed (Task 4 wires the `.gitignore`). `SENTRY_DSN` is optional —
+Task 3's status API follows the same fail-open pattern as
+`marcobellingeri.dev/engine/lib/sentry.mjs`: without a DSN it's a no-op, not an
+error.
 
 - [ ] **Step 7: Validate the compose file syntax**
 
@@ -385,6 +431,8 @@ git commit -m "feat(docker): add OTel Collector + Prometheus + Grafana compose s
 
 **Files:**
 - Create: `services/public-status-api/main.py`
+- Create: `services/public-status-api/sentry.py`
+- Create: `services/public-status-api/conftest.py`
 - Create: `services/public-status-api/requirements.txt`
 - Create: `services/public-status-api/Dockerfile`
 - Test: `services/public-status-api/test_main.py`
@@ -437,14 +485,40 @@ def test_status_rejects_missing_token():
 def test_status_rejects_wrong_token():
     response = client.get("/status", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
+
+
+@respx.mock
+def test_status_reports_upstream_failure_to_sentry_and_returns_502(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 502
+    assert sentry_call.called
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Write `conftest.py`**
+
+```python
+# services/public-status-api/conftest.py
+# main.py reads these at import time; pytest loads conftest.py before test
+# modules, so this must set them before `from main import app` runs anywhere.
+import os
+
+os.environ.setdefault("PROMETHEUS_URL", "http://prometheus:9090")
+os.environ.setdefault("STATUS_API_TOKEN", "test-token")
+```
+
+- [ ] **Step 3: Run test to verify it fails**
 
 Run: `cd services/public-status-api && pip install -r requirements.txt httpx respx pytest && pytest test_main.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'main'`
 
-- [ ] **Step 3: Write `requirements.txt`**
+- [ ] **Step 4: Write `requirements.txt`**
 
 ```
 fastapi==0.115.0
@@ -452,13 +526,86 @@ uvicorn==0.32.0
 httpx==0.27.2
 ```
 
-- [ ] **Step 4: Write `main.py`**
+- [ ] **Step 5: Write `sentry.py`**
+
+Zero-dependency Sentry envelope client, ported from
+`marcobellingeri.dev/engine/lib/sentry.mjs` — same fail-open contract: no DSN is a
+no-op, and a failed delivery never raises past this module.
+
+```python
+# services/public-status-api/sentry.py
+import json
+import os
+import re
+import time
+import uuid
+
+import httpx
+
+_DSN_RE = re.compile(r"^https://([a-f0-9]+)@([^/]+)/(\d+)$")
+
+
+def _endpoint(dsn: str | None) -> str | None:
+    if not dsn:
+        return None
+    match = _DSN_RE.match(dsn)
+    return f"https://{match.group(2)}/api/{match.group(3)}/envelope/" if match else None
+
+
+async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None:
+    url = _endpoint(os.environ.get("SENTRY_DSN"))
+    if not url:
+        return
+
+    event_id = uuid.uuid4().hex
+    event = {
+        "event_id": event_id,
+        "timestamp": time.time(),
+        "platform": "python",
+        "level": "error",
+        "environment": "public-status-api",
+        "tags": tags or {},
+        "exception": {"values": [{"type": type(exc).__name__, "value": str(exc)}]},
+    }
+    envelope = "\n".join(
+        json.dumps(part)
+        for part in (
+            {"event_id": event_id, "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"), "dsn": os.environ["SENTRY_DSN"]},
+            {"type": "event"},
+            event,
+        )
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                url,
+                content=envelope,
+                headers={"Content-Type": "application/x-sentry-envelope"},
+                timeout=3.0,
+            )
+    except httpx.HTTPError:
+        pass  # fail-open: a Sentry delivery failure must never break the request
+```
+
+- [ ] **Step 6: Write `main.py`**
+
+Token comparison uses `secrets.compare_digest` instead of `!=` — a plain string
+compare short-circuits on the first differing byte, leaking token length/prefix via
+response timing. Low realism at this traffic scale, but a one-line fix.
+Rate limiting is deliberately not built into this app: Cloudflare sits in front of
+every public route (Task 5) and has its own rate-limiting rules, which is where
+this belongs for a single-endpoint personal service — `ponytail: no app-level
+limiter, add one here only if this API ever gets a second, differently-sensitive
+endpoint that Cloudflare's per-hostname rule can't distinguish`.
 
 ```python
 import os
+import secrets
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
+
+from sentry import capture_exception
 
 app = FastAPI()
 
@@ -481,14 +628,19 @@ def _parse_value(payload: dict) -> float:
 
 @app.get("/status")
 async def status(authorization: str = Header(default="")) -> dict:
-    if authorization != f"Bearer {STATUS_API_TOKEN}":
+    if not secrets.compare_digest(authorization, f"Bearer {STATUS_API_TOKEN}"):
         raise HTTPException(status_code=401, detail="unauthorized")
 
-    async with httpx.AsyncClient() as client:
-        values = {}
-        for field, query in QUERIES.items():
-            response = await client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query})
-            values[field] = _parse_value(response.json())
+    try:
+        async with httpx.AsyncClient() as client:
+            values = {}
+            for field, query in QUERIES.items():
+                response = await client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query})
+                response.raise_for_status()
+                values[field] = _parse_value(response.json())
+    except httpx.HTTPError as exc:
+        await capture_exception(exc, tags={"endpoint": "status"})
+        raise HTTPException(status_code=502, detail="upstream unavailable") from exc
 
     return {
         "sessions_today": int(values["sessions_today"]),
@@ -497,12 +649,12 @@ async def status(authorization: str = Header(default="")) -> dict:
     }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 7: Run test to verify it passes**
 
 Run: `pytest test_main.py -v`
-Expected: 3 passed
+Expected: 4 passed
 
-- [ ] **Step 6: Write `Dockerfile`**
+- [ ] **Step 8: Write `Dockerfile`**
 
 ```dockerfile
 FROM python:3.12-slim
@@ -510,16 +662,16 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py .
+COPY main.py sentry.py .
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add services/public-status-api/
-git commit -m "feat(status-api): add whitelisted public status endpoint with token auth"
+git commit -m "feat(status-api): whitelisted status endpoint, token auth, Sentry error capture"
 ```
 
 ---
@@ -630,12 +782,16 @@ Run these from your local machine, with `cloudflared` installed and logged in
      marcobellingeri.dev's Worker sends as `CF-Access-Client-Id` /
      `CF-Access-Client-Secret` headers (Task 7).
 
-Leave `otel.yourdomain.com` without a Cloudflare Access application for now —
+Leave `otel.yourdomain.com` without a Cloudflare Access **application** —
 Claude Code's OTLP exporter doesn't support the Access service-token header
-today, so ingestion auth is the `STATUS_API_TOKEN`-style bearer check inside the
-Collector's own config being deferred to Phase 2 when a second real producer
-needs it; today it is a single trusted producer (you) on a non-guessable
-subdomain, which is the accepted risk for a one-month experiment.
+today. This does **not** mean the endpoint is unauthenticated: an unauthenticated
+endpoint behind a public Tunnel hostname is exactly the pattern behind
+CVE-2026-28798 (ZimaOS, found during the Phase 1 security review). Auth here is
+the `bearertokenauth` extension inside the Collector itself (Task 2, Step 1) —
+`OTLP_INGEST_TOKEN` is a random value you generate once
+(`openssl rand -hex 32`) and put in both `docker/.env` (Task 4) and Claude Code's
+local `OTEL_EXPORTER_OTLP_HEADERS` (Task 6). A request without the matching
+bearer token is rejected by the Collector before it reaches any pipeline.
 ```
 
 - [ ] **Step 2: Commit**
@@ -665,7 +821,13 @@ block) on any machine you want observed:
     OTEL_LOGS_EXPORTER=otlp
     OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.yourdomain.com
     OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+    OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <the same OTLP_INGEST_TOKEN from docker/.env>
     OTEL_METRICS_EXPORTER_OTLP_TEMPORALITY_PREFERENCE=cumulative
+
+The `OTEL_EXPORTER_OTLP_HEADERS` line is what the Collector's `bearertokenauth`
+extension (Task 2) checks — without it every export is rejected with 401, not
+silently dropped, so a typo here is easy to notice (check
+`docker compose logs otel-collector` on the VPS if metrics never appear).
 
 Before relying on these, check Claude Code's current OTel telemetry
 documentation for your installed version — the metric names referenced in
@@ -840,9 +1002,22 @@ git commit -m "feat: add Agentic OS live status widget"
 
 ## Task 8: Smoke test and CI gate (agentic-os repo)
 
+Baseline copied from `marcobellingeri.dev`'s CI (Livello 3 on several axes already
+— see `~/GitHub/Atlas/concepts/pipeline-cicd.md`), scaled down to what a
+declared-**Livello 1** personal project actually needs: automated gates, no
+approval workflow, no canary. What's kept from that baseline regardless of level,
+because it's cheap and non-negotiable per the security baseline (not gated by
+maturity level): SHA-pinned actions, minimal per-job `permissions:`, gitleaks
+(zero tolerance), zizmor (workflow SAST), dependency-review, SonarCloud. What's
+explicitly **not** copied: approval gates, canary/progressive delivery, SBOM +
+attestation (3 Python dependencies, no distributed artifact — would be Livello 4
+cargo-cult on a project this size, the exact antipattern the model warns against).
+
 **Files:**
 - Create: `scripts/verify-hub.sh`
 - Create: `.github/workflows/validate.yml`
+- Create: `sonar-project.properties`
+- Create: `.gitleaks.toml`
 
 - [ ] **Step 1: Write `scripts/verify-hub.sh`**
 
@@ -881,6 +1056,15 @@ that port yet — this is the expected-fail check before the hub exists).
 
 - [ ] **Step 3: Write `.github/workflows/validate.yml`**
 
+`actions/checkout`, `actions/dependency-review-action`, `gitleaks/gitleaks-action`
+and `SonarSource/sonarqube-scan-action` are pinned to the exact SHAs already
+verified live in `marcobellingeri.dev`'s workflows — reusing a pin that's already
+running in production beats trusting a freshly-typed one.
+`actions/setup-python` and `hashicorp/setup-terraform` have **no verified pin from
+an existing repo** (marcobellingeri.dev is Node-only) — look up each action's
+current release SHA on its GitHub Releases page before running this for real, the
+same way Task 1 looks up Hostinger's data center/template IDs. Do not invent one.
+
 ```yaml
 name: validate
 
@@ -888,13 +1072,21 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: hashicorp/setup-terraform@REPLACE_WITH_LOOKED_UP_SHA # look up current release before running
       - run: terraform -chdir=terraform/hostinger-vps fmt -check
       - run: terraform -chdir=terraform/hostinger-vps init -backend=false
       - run: terraform -chdir=terraform/hostinger-vps validate
@@ -902,29 +1094,146 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: docker compose -f docker/docker-compose.yml config --quiet
         env:
           CLOUDFLARE_TUNNEL_TOKEN: dummy
           GRAFANA_ADMIN_PASSWORD: dummy
           STATUS_API_TOKEN: dummy
+          OTLP_INGEST_TOKEN: dummy
+          SENTRY_DSN: ""
 
   status-api-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@REPLACE_WITH_LOOKED_UP_SHA # look up current release before running
         with:
           python-version: "3.12"
-      - run: pip install -r services/public-status-api/requirements.txt httpx respx pytest
-      - run: pytest services/public-status-api/test_main.py -v
+      - run: pip install -r services/public-status-api/requirements.txt httpx respx pytest pytest-cov
+      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
+
+  # Pipeline-as-attack-surface (Atlas pipeline-cicd model v2): zizmor is SAST for
+  # the workflows themselves — template injection, dangerous triggers, overly
+  # broad permissions. Blocks on HIGH, same policy and pinned version as
+  # marcobellingeri.dev's site-ci.yml (a linter that changes its own rules
+  # silently is a non-deterministic gate).
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: zizmor sui workflow (blocca su HIGH)
+        run: |
+          pip install --quiet zizmor==1.25.0
+          zizmor --min-severity=high .github/workflows/
+
+  # Blocks on new HIGH-severity CVEs introduced by this PR's dependency diff —
+  # does not see what's already on main (Dependabot alerts cover that). No
+  # secrets used, so it runs on Dependabot's own PRs too — same as
+  # marcobellingeri.dev's site-ci.yml.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # Zero tolerance, full history. Checked against the author of the PR
+  # (`pull_request.user.login`), not `github.actor` — the latter changes on an
+  # `update-branch` push and would silently reopen a check meant to stay closed
+  # for Dependabot. `pull-requests: read` is required by the action itself to
+  # list which commits to scan; without it the job 403s on every PR.
+  gitleaks:
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  # Excluded for Dependabot PRs: GitHub doesn't pass repository secrets to them,
+  # so SONAR_TOKEN arrives empty and the scan would die with "Not authorized" on
+  # every single dependency bump — not a weakened gate, a gate that structurally
+  # cannot pass there. Same policy as marcobellingeri.dev's site-ci.yml.
+  sonar:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@REPLACE_WITH_LOOKED_UP_SHA # look up current release before running
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/public-status-api/requirements.txt httpx respx pytest pytest-cov
+      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
+      - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Write `sonar-project.properties`**
+
+Sonar has no meaningful Terraform analysis without a paid plugin — IaC static
+analysis for this repo is Checkov's job (Step 6 below), reused from
+`langfuse-devops-lab/.checkov.yml`. Sonar's scope here is the one real
+application-logic component: the status API.
+
+```
+sonar.projectKey=MK023_agentic-os
+sonar.organization=mk023
+
+sonar.sources=services/public-status-api
+sonar.tests=services/public-status-api
+sonar.test.inclusions=services/public-status-api/test_main.py,services/public-status-api/conftest.py
+sonar.exclusions=services/public-status-api/test_main.py,services/public-status-api/conftest.py,**/.terraform/**
+
+sonar.python.version=3.12
+sonar.python.coverage.reportPaths=services/public-status-api/coverage.xml
+```
+
+- [ ] **Step 5: Write `.gitleaks.toml`**
+
+Start from gitleaks' own default ruleset — no exceptions yet, unlike
+`marcobellingeri.dev` which needed exactly one (a non-secret Sonar project key
+that pattern-matched a rule). Add an exception here only when a real false
+positive shows up, same discipline, not preemptively.
+
+```toml
+# Empty extends the default gitleaks ruleset with no local exceptions.
+# Add a [[rules]] override here only in response to a real false positive —
+# see marcobellingeri.dev/.gitleaks.toml for the one precedent in this portfolio.
+[extend]
+useDefault = true
+```
+
+- [ ] **Step 6: Copy Checkov config from langfuse-devops-lab**
 
 ```bash
-git add scripts/verify-hub.sh .github/workflows/validate.yml
-git commit -m "ci: add validate workflow (terraform, compose config, status API tests)"
+cp ../langfuse-devops-lab/.checkov.yml .checkov.yml
+```
+
+Read the copied file and strip any check IDs that reference resources this repo
+doesn't have (it was written for a Helm/Vault/ArgoCD stack; Agentic OS's Terraform
+is a single VPS resource) — keep only what still applies, don't carry over
+suppressions for controls that don't exist here.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add scripts/verify-hub.sh .github/workflows/validate.yml sonar-project.properties .gitleaks.toml .checkov.yml
+git commit -m "ci: add validate workflow (terraform, compose, status API tests, zizmor, gitleaks, dependency-review, SonarCloud)"
 ```
 
 ---
@@ -943,6 +1252,23 @@ git commit -m "ci: add validate workflow (terraform, compose config, status API 
 - Metric names in the Grafana dashboard JSON (Task 2, Step 5) and the status API's
   `QUERIES` dict (Task 3, Step 4) must stay in sync if Claude Code's telemetry names
   change — flagged explicitly in Task 6 rather than assumed stable.
+- **Second pass (same day), after adopting marcobellingeri.dev's CI as baseline
+  and a web sweep for anything missed:** three real gaps found and closed —
+  (1) the OTLP ingest endpoint behind a public Tunnel hostname with no auth was
+  the exact pattern behind CVE-2026-28798, closed with the Collector's
+  `bearertokenauth` extension (Task 2, Task 5, Task 6); (2) Docker images pinned
+  to `:latest` and containers with default privileges, closed with version pins
+  + `no-new-privileges` + `cap_drop: [ALL]` (Task 2); (3) status API's token
+  check used `!=` (timing side-channel) instead of `secrets.compare_digest`
+  (Task 3). Also added: Sentry error capture in the status API (zero-dep,
+  ported from `marcobellingeri.dev/engine/lib/sentry.mjs`), and the full
+  CI gate set from that repo scaled to Livello 1 (zizmor, gitleaks,
+  dependency-review, SonarCloud) — see Atlas `concepts/pipeline-cicd.md` and
+  `concepts/testing-pyramid.md` for the declared level/contract this maps to.
+- Langfuse was considered for this phase and deliberately **not** added: Phase 1
+  makes no LLM inference call of its own (it only relays Claude Code's own
+  reported usage), so there is nothing for Langfuse to trace yet. It's a
+  standing decision for Phase 4 (session RAG), not a gap in Phase 1.
 
 ---
 
