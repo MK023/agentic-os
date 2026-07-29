@@ -46,6 +46,17 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Anche il compose locale pinna le stesse immagini dei Dockerfile Railway: senza
+  # questa voce un bump Dependabot aggiornerebbe solo i Dockerfile e locale e
+  # produzione girerebbero immagini diverse in silenzio — esattamente il drift che
+  # "una copia di ogni configurazione" esiste per impedire.
+  - package-ecosystem: "docker-compose"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+
   # Le action sono pinnate a SHA: senza questa voce resterebbero ferme per sempre,
   # ed è il modo in cui un pin passa da protezione a debito.
   - package-ecosystem: "github-actions"
