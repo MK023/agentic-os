@@ -1,0 +1,56 @@
+version: 2
+updates:
+  # Le tre dipendenze Python della status API. requirements.txt è generato da
+  # pip-compile --generate-hashes a partire da requirements.in: Dependabot lo
+  # riconosce e rigenera il lock con gli hash, quindi gli aggiornamenti arrivano
+  # già nella forma che il Dockerfile pretende (--require-hashes).
+  - package-ecosystem: "pip"
+    directory: "/services/public-status-api"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Le immagini base sono pinnate a versione, mai :latest — che è una scelta di
+  # supply chain, non di riproducibilità. Il prezzo del pin è che invecchia in
+  # silenzio: queste voci sono ciò che lo rende rumoroso invece.
+  - package-ecosystem: "docker"
+    directory: "/railway/otel-collector"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker"
+    directory: "/railway/prometheus"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker"
+    directory: "/railway/grafana"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker"
+    directory: "/railway/cloudflared"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker"
+    directory: "/services/public-status-api"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Le action sono pinnate a SHA: senza questa voce resterebbero ferme per sempre,
+  # ed è il modo in cui un pin passa da protezione a debito.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"

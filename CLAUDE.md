@@ -107,4 +107,5 @@ this before reopening anything) · `railway/README.md` (how production is deploy
 `README.md` (pipeline level, test contract, gate policy) · `docs/BLOCKERS.md` (what is
 left) · `docs/CLOUDFLARE_TUNNEL_SETUP.md` · `docs/CLAUDE_CODE_TELEMETRY.md` ·
 `docs/LOCAL_DRY_RUN.md` (how to verify behaviour instead of assuming it) ·
-`docs/superpowers/specs/` (the design, realigned to Railway).
+`docs/superpowers/specs/` (the design, realigned to Railway) · `SECURITY.md`
+(what is exposed and what is not) · `CONTRIBUTING.md` (the loop and the gates).

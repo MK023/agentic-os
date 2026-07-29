@@ -1,0 +1,9 @@
+# Doppler — mappatura repo → progetto/config. NESSUN segreto qui, solo nomi.
+# I segreti di produzione vivono come variabili di servizio su Railway; Doppler è
+# la fonte di verità da cui provengono, e da cui si ripescano quando il progetto
+# si ricrea. Il token di ingest OTLP sta anche nel Keychain locale, perché la
+# shell lo legge a ogni terminale e una chiamata di rete lì dentro fallirebbe
+# offline (vedi docs/CLAUDE_CODE_TELEMETRY.md).
+setup:
+  project: agentic-os
+  config: prd

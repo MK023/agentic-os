@@ -131,6 +131,22 @@ In this project, production monitoring is literally both the deliverable and the
 top rung of the pyramid: Grafana/Prometheus is what the repo builds *and* how the
 running system is observed.
 
+## Repository hygiene
+
+Same baseline as `marcobellingeri.dev`, because it is cheap and does not scale with
+project size: MIT `LICENSE`, `SECURITY.md` (private disclosure, and what the system
+deliberately does not expose), `CONTRIBUTING.md` (the loop, and the house rule about
+three layers of verification), a `pre-commit` hook that runs gitleaks before a push
+rather than after, and `.github/dependabot.yml`.
+
+Dependabot covers three ecosystems here, and the Docker one earns its place: every
+base image is pinned to a version rather than `:latest`, which is a supply-chain
+decision, but a pin ages silently. These entries are what make it noisy instead.
+
+```bash
+git config core.hooksPath .githooks   # once per clone
+```
+
 ## Status
 
 All eight blocks are written, executed and verified locally; PR #1 carries them.
