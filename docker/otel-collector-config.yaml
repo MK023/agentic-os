@@ -70,11 +70,13 @@ exporters:
     # metadata rather than on anything we control. Predictable beats conventional
     # here, since the real names can't be observed until the hub is live.
     translation_strategy: UnderscoreEscapingWithoutSuffixes
-    # resource_to_telemetry_conversion stays OFF (the default). Claude Code sends
-    # user.email, user.id, organization.id and session.id as resource attributes:
-    # turning them into labels would write PII into Prometheus and make session.id
-    # an unbounded-cardinality label. Per-datapoint attributes (`type`, `model`)
-    # are still labels regardless — those are what the dashboard groups by.
+    # resource_to_telemetry_conversion stays OFF (the default). It is defence in
+    # depth, not the primary control: identity (user.email with a real address,
+    # user.id, organization.id, ...) arrives as *data point* attributes — measured
+    # against v2.1.220, see docs/CLAUDE_CODE_TELEMETRY.md — so what actually drops
+    # it is the allow-list above. Keeping the conversion off means resource
+    # attributes never become labels either. Per-datapoint attributes on the list
+    # (`type`, `model`) are still labels — those are what the dashboard groups by.
 
 service:
   extensions: [bearertokenauth]
