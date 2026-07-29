@@ -17,7 +17,9 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    command: tunnel run
+    # --no-autoupdate come nel Dockerfile Railway: l'immagine è pinnata, un
+    # connettore che si aggiorna da solo la spinnerebbe in silenzio.
+    command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
