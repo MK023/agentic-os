@@ -68,6 +68,10 @@ so that the local run keeps the stronger posture. If this ever needs revisiting,
 alternative is an entrypoint that chowns the mount and drops privileges — more moving
 parts inside the one service that has none today.
 
+A CI gate keeps that exception single: `scripts/check-image-users.sh` fails the build
+if any Dockerfile here lacks a `USER` or declares root. A written exception stays an
+exception; a copied one becomes the norm, and the copying is what the gate stops.
+
 ## Metrics semantics
 
 **Metric names are pinned, not inherited.** `translation_strategy:

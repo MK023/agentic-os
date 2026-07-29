@@ -76,6 +76,17 @@ jobs:
           done
           costruisci -t agentic-status-api:ci services/public-status-api
 
+  # Guardia sulla deroga. Il servizio prometheus gira come root SU RAILWAY, via
+  # RAILWAY_RUN_UID=0, perché il volume montato è di proprietà di root — deroga
+  # unica, misurata e scritta in docs/DECISIONS.md. Questo job impedisce che
+  # diventi un'abitudine: un Dockerfile nuovo senza USER, o un USER 0 messo per
+  # far sparire un errore di permessi, fallisce qui.
+  image-users:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: bash scripts/check-image-users.sh
+
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
   # the infrastructure this repo has now that deployment is Railway's config-as-code.
   # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,

@@ -63,7 +63,7 @@ Deliberately **not** adopted: SBOM + signed attestation, human approval gates,
 canary. Three Python dependencies and no distributed artifact — that would be
 Level 4 cargo cult.
 
-Gate policy: `compose`, `images`, `status-api-tests`, `checkov`,
+Gate policy: `compose`, `images`, `image-users`, `status-api-tests`, `checkov`,
 `workflow-lint`, `gitleaks`, `dependency-audit` and `sonar` all block the merge.
 Checkov blocks on HIGH and above and soft-fails LOW/MEDIUM; `dependency-audit`
 (pip-audit) blocks on any advisory against the three pinned dependencies. Nothing
