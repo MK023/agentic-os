@@ -119,9 +119,13 @@ engineering notes.
    ATT&CK for the infra surface (Tunnel, Access, the Railway project). Not MITRE ATLAS and not
    OWASP LLM Top 10 — Phase 1 observes a model's usage, it never calls one.
    Those apply from Phase 4 (session RAG).
-5. **Flaky policy**: none today, every test is deterministic (pytest/vitest with
-   mocks) plus one bash smoke test. `FLAKY.md` gets created when the first
-   non-deterministic test does.
+5. **Flaky policy**: every *test* is deterministic (pytest with mocks) plus one bash
+   smoke test. The first non-deterministic failure this pipeline ever had was not a
+   test but a gate — the `images` job timing out against Docker Hub's token endpoint
+   on 2026-07-29. It retries three times now; if it recurs, the next step is
+   mirroring the base images to GHCR rather than depending on an anonymous pull.
+   A gate that fails at random stops being a signal, so it gets fixed or removed —
+   never re-run until green.
 
 In this project, production monitoring is literally both the deliverable and the
 top rung of the pyramid: Grafana/Prometheus is what the repo builds *and* how the

@@ -53,13 +53,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: build delle immagini Railway
+      # Ritenta: il primo fallimento non deterministico di questa pipeline è stato un
+      # `TLS handshake timeout` verso auth.docker.io mentre si scaricava un'immagine
+      # base (29-07). Non è il nostro codice, ma un gate che fallisce a caso smette
+      # di essere un segnale — o si rende resiliente o si toglie.
+      # Tre tentativi con attesa crescente. Se diventasse frequente, il passo
+      # successivo è specchiare le immagini base su GHCR e smettere di dipendere dal
+      # rate limit anonimo di Docker Hub.
+      - name: build delle immagini (con ritentata sui fallimenti di rete)
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          costruisci() {
+            for tentativo in 1 2 3; do
+              if docker build "$@"; then return 0; fi
+              echo "tentativo ${tentativo} fallito, riprovo tra $((tentativo * 15))s" >&2
+              sleep $((tentativo * 15))
+            done
+            return 1
+          }
           for servizio in otel-collector prometheus grafana cloudflared; do
-            docker build -f "railway/${servizio}/Dockerfile" -t "agentic-${servizio}:ci" .
+            costruisci -f "railway/${servizio}/Dockerfile" -t "agentic-${servizio}:ci" .
           done
-      - run: docker build -t agentic-status-api:ci services/public-status-api
+          costruisci -t agentic-status-api:ci services/public-status-api
 
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
   # the infrastructure this repo has now that deployment is Railway's config-as-code.
