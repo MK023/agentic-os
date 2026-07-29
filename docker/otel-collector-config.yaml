@@ -47,7 +47,10 @@ processors:
     metric_statements:
       - context: datapoint
         statements:
-          - keep_keys(attributes, ["model", "type", "query_source", "start_type", "terminal_type", "session.id"])
+          # `datapoint.attributes`, not `attributes`: the Collector rewrites the bare
+          # form to this and logs "please rewrite them accordingly" — an implicit
+          # correction is a thing that changes silently on an upgrade.
+          - keep_keys(datapoint.attributes, ["model", "type", "query_source", "start_type", "terminal_type", "session.id"])
 
   batch: {}
 
