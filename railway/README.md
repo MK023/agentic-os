@@ -55,6 +55,14 @@ Volume size depends on the plan: **Trial caps volumes at 0.5 GB**, Hobby at 5 GB
 Either is generous for a hub storing a handful of series at a 15s scrape — start at
 the trial cap and raise it later if a Phase 2 producer arrives.
 
+### Restart policy
+
+`ON_FAILURE` on every service, for two reasons that agree. The Trial plan does not
+offer `ALWAYS` at all — the dashboard says so plainly — and `ALWAYS` is the wrong
+semantics here anyway: these are daemons, so a clean exit is not a normal event. If
+one of them ever exits zero, the honest response is to notice it, not to restart it
+forever and never find out.
+
 ### Starting on the Trial plan
 
 Per service the Trial gives 1 GB RAM, 2 vCPU and 4 GB image size — comfortably above
