@@ -114,6 +114,30 @@ processes. `deltatocumulative` is alpha, accumulates in memory (every redeploy r
 the counters), and drops streams after 5 minutes idle by default. Not a good trade
 for a verified setup at this size.
 
+## CI
+
+**Two dependency gates, on purpose.** `dependency-audit` (pip-audit) checks the whole
+pinned set on every run; `dependency-review` blocks on HIGH CVEs introduced by a
+single PR's diff. They answer different questions — and only the first works on a
+private repository: `dependency-review` needs GitHub Code Security there (confirmed
+live on PR #1, while this repo was still private: *"Dependency review is not
+supported on this repository"*). This repository is public, so both run.
+
+**Sonar's "new code" definition is 30 days**, inherited from the instance default and
+left there deliberately: trunk-based, one developer, continuous delivery, no release
+versions to make "previous version" meaningful — exactly the case the vendor's
+guidance points at "number of days" for. The status API's 100%-on-new-code coverage
+threshold is scoped by this setting.
+
+**The `sonar` job runs on pushes to `main`, not only on PRs.** Without a main-branch
+analysis there is no baseline and no quality-gate history, and "new code" has nothing
+to be new against — measured: the project had `measures: []` until the first main
+analysis.
+
+**A gate whose credential is missing stays red instead of skipping** (`sonar` before
+`SONAR_TOKEN` existed): a quality gate that disappears when its credential does is
+the `continue-on-error` antipattern with extra steps.
+
 ## Logs
 
 **No logs pipeline today.** The Prometheus exporter supports the metrics signal only,
