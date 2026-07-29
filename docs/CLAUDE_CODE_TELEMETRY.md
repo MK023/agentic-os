@@ -71,3 +71,23 @@ endpoint only ever returns sums.
 
 If you add a producer, check its labels the same way — `curl` the Collector's
 `/metrics` and read them — rather than trusting what its documentation implies.
+
+### Why not delta temporality, which would remove `session_id` entirely
+
+The OTel data model says delta temporality "unburdens the client from keeping
+high-cardinality state" and suits short-lived processes — which is exactly what a
+Claude Code session is, and exactly why `session_id` has to be a label here. Sending
+delta and converting in the Collector (`deltatocumulative`) would sum the sessions
+into one stream and make the label unnecessary. It is the more correct architecture
+on paper.
+
+Not adopted, for three reasons that are all about this deployment rather than about
+the idea: the processor is **alpha**; it keeps its accumulation **in memory**, so
+every redeploy resets the counters; and its `max_stale` default drops a stream after
+5 minutes of inactivity — the same class of trap as the exporter's
+`metric_expiration`, which already cost us a day's worth of zeroes. Trading a
+verified setup for an alpha component that forgets on restart is not a good trade at
+this size.
+
+Revisit if it reaches beta, or if Phase 2 brings enough producers that the session
+label actually costs something.

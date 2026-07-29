@@ -29,7 +29,12 @@ Checklist: `TASKS.md`
 ## Security boundary
 
 The public surface is exactly three numbers — sessions, tokens, cost — served by
-`services/public-status-api` behind a Cloudflare Access service token. No session
+`services/public-status-api` behind a Cloudflare Access service token. They are
+**indicative, not accounting**: Prometheus's own documentation says it outright — *"If
+you need 100% accuracy, such as for per-request billing, Prometheus is not a good
+choice"* — and measurement agrees, since `increase()` extrapolates to the window
+edges (real growth of 23787 tokens read as 27956 with sparse samples). The widget
+says what the day looked like, not what the invoice will say. No session
 content, no free-form PromQL, no path from the public widget to anything else.
 Prometheus never gets a Tunnel hostname of its own; the OTLP ingest endpoint is
 authenticated inside the Collector (`bearertokenauth`), because a public Tunnel
