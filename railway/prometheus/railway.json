@@ -9,6 +9,6 @@
     ]
   },
   "deploy": {
-    "restartPolicyType": "ALWAYS"
+    "restartPolicyType": "ON_FAILURE"
   }
 }
