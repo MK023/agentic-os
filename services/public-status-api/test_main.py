@@ -120,6 +120,21 @@ def test_without_sentry_dsn_capture_is_a_noop(monkeypatch):
 
 
 @respx.mock
+def test_malformed_sentry_dsn_is_reported_not_swallowed(monkeypatch, capsys):
+    # A DSN that is set but unparseable means someone believes error reporting
+    # works. Silence there is the same failure this endpoint exists to avoid.
+    monkeypatch.setenv("SENTRY_DSN", "questo-non-e-un-dsn")
+    respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 502  # fail-open still holds
+    errori = capsys.readouterr().err
+    assert "does not parse" in errori
+    assert "questo-non-e-un-dsn" not in errori  # mai il valore nei log
+
+
+@respx.mock
 def test_sentry_delivery_failure_does_not_change_the_response(monkeypatch):
     # Fail-open contract, ported from marcobellingeri.dev/engine/lib/sentry.mjs:
     # a broken Sentry must never turn a controlled 502 into an unhandled 500.
