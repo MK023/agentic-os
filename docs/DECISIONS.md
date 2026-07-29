@@ -86,11 +86,26 @@ metadata. Measured against the real client, Prometheus sees
 five minutes after its last update, so "cost today" would read zero for most of a day
 in which someone stopped working for lunch.
 
-**The three public numbers are indicative, not accounting.** They are `increase()`
-over 24h, and Prometheus extrapolates to the window edges: measured, real growth of
-23787 tokens read as 27956 with sparse samples. This is not a workaround, it is the
-tool's stated scope — *"If you need 100% accuracy, such as for per-request billing,
-Prometheus is not a good choice"*.
+**The three public numbers are plain sums, and they are indicative, not
+accounting.** The shape of the data decides the query: Claude Code emits **one series
+per session** (`session_id` is a label), each a cumulative counter for that process
+alone — born, growing while the session runs, flat forever after.
+
+`increase(...[24h])` was the original choice and it was **wrong**, structurally.
+On `claude_code_session_count`, incremented exactly once at session start, the series
+appears at 1 and never moves: growth inside the window is zero, always. Measured in
+production on 2026-07-29 with two real sessions — and invisible before that, because
+the local test that "verified" it re-sent the same `session_id` with a higher value,
+manufacturing exactly the growth that never happens in reality. A synthetic payload
+can confirm a query and still be lying about the shape of the data.
+
+Summing the current value of every live series is right instead: each carries its own
+session's total, and the Collector's `metric_expiration: 25h` supplies the window by
+dropping series a day after their last update. So "today" means "the last ~25 hours of
+activity", which is what the numbers are honestly able to say.
+
+They stay indicative either way — that is the tool's stated scope: *"If you need 100%
+accuracy, such as for per-request billing, Prometheus is not a good choice"*.
 
 **Delta temporality: evaluated, refused, revisit at beta.** It would let the
 Collector sum sessions and remove the `session_id` label entirely — the better

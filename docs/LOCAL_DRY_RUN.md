@@ -91,9 +91,14 @@ and the datasource arrive by provisioning, nothing to import.
 
 ## 4. Two behaviours that look like bugs and are not
 
-- **The three numbers read `0` right after startup.** They are `increase()` over 24h,
-  which measures growth *inside* the window; a series that has just appeared has not
-  grown yet. Run a second session and they move.
+- **The three numbers read `0` right after startup**, until a session has actually
+  reported. They are sums over the series the Collector still exposes, so the window
+  is `metric_expiration` (25h), not a PromQL range.
+- **A synthetic payload can lie about the shape of the data.** Re-sending the same
+  `session.id` with a higher value manufactures growth that real sessions never
+  produce — each real session is its own series, born and then flat. That is how an
+  `increase()`-based query passed a local test and returned zero in production. When
+  testing a query, send *two different* session ids rather than one twice.
 - **`increase()` over-reports on sparse data.** Prometheus extrapolates to the window
   edges: measured here, real growth of 23787 tokens was reported as 27956 (+17%) with
   only two samples in the window. With continuous 15s scrapes the error is small, but

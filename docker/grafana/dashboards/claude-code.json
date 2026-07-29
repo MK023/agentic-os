@@ -1,45 +1,78 @@
 {
   "uid": "claude-code-live",
-  "title": "Claude Code — Live Usage",
+  "title": "Claude Code \u2014 Live Usage",
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "10s",
   "panels": [
     {
       "id": 1,
-      "title": "Sessions (rate, 5m)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "title": "Sessions (ultime ~25h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
-        { "expr": "sum(rate(claude_code_session_count[5m]))", "refId": "A" }
+        {
+          "expr": "sum(claude_code_session_count)",
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 2,
       "title": "Tokens in/out (rate, 5m)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "targets": [
-        { "expr": "sum(rate(claude_code_token_usage[5m])) by (type)", "refId": "A" }
+        {
+          "expr": "sum(rate(claude_code_token_usage[5m])) by (type)",
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 3,
-      "title": "Cost (USD, cumulative 24h)",
+      "title": "Cost USD (ultime ~25h)",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
-        { "expr": "sum(increase(claude_code_cost_usage[24h]))", "refId": "A" }
+        {
+          "expr": "sum(claude_code_cost_usage)",
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 4,
-      "title": "Cache hit rate",
+      "title": "Cache hit rate (ultime ~25h)",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "targets": [
-        { "expr": "sum(rate(claude_code_token_usage{type=\"cacheRead\"}[5m])) / sum(rate(claude_code_token_usage[5m]))", "refId": "A" }
+        {
+          "expr": "sum(claude_code_token_usage{type=\"cacheRead\"}) / sum(claude_code_token_usage)",
+          "refId": "A"
+        }
       ]
     }
-  ]
+  ],
+  "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il valore corrente invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra temporale la da' il metric_expiration del Collector (25h). Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori."
 }

@@ -21,14 +21,30 @@ PROMETHEUS_URL = os.environ["PROMETHEUS_URL"]
 STATUS_API_TOKEN = os.environ["STATUS_API_TOKEN"]
 REQUEST_TIMEOUT = httpx.Timeout(10.0)
 
-# 24h windows, not all-time sums: these fields are named "today". `increase()`
-# also handles the counter resets that happen on every Claude Code restart.
+# Plain sums, not `increase()` over a range — and that is not a shortcut, it is what
+# the data shape requires. Claude Code emits ONE SERIES PER SESSION (`session_id` is
+# a label), and each series is a cumulative counter for that process alone. It is
+# born, it grows while the session runs, and it stays flat forever after.
+#
+# `increase(...[24h])` measures growth *inside* the window, so on
+# claude_code_session_count — incremented exactly once, at session start — it is
+# structurally zero: the series appears at 1 and never moves again. Measured against
+# production on 2026-07-29 with two real sessions, which is the only way this shows
+# up; a synthetic payload that re-sends the same session_id with a higher value
+# hides it perfectly, and that is exactly what an earlier local test did.
+#
+# Summing the current value of every live series gives the right number instead:
+# each series carries its own session's total. The time window comes from the
+# Collector's `metric_expiration: 25h`, which stops exposing a series a day after its
+# last update — so "today" here means "the last ~25 hours of activity", not a
+# calendar day. Honest, and stable when nothing is running.
+#
 # Metric names assume the Collector's UnderscoreEscapingWithoutSuffixes strategy
 # (docker/otel-collector-config.yaml) — keep the two files in sync.
 QUERIES = {
-    "sessions_today": "sum(increase(claude_code_session_count[24h]))",
-    "tokens_today": "sum(increase(claude_code_token_usage[24h]))",
-    "cost_usd_today": "sum(increase(claude_code_cost_usage[24h]))",
+    "sessions_today": "sum(claude_code_session_count)",
+    "tokens_today": "sum(claude_code_token_usage)",
+    "cost_usd_today": "sum(claude_code_cost_usage)",
 }
 
 
