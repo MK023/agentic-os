@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Guardia sui segreti, prima del commit.
+# gitleaks gira comunque in CI su tutta la storia: questo hook serve ad accorgersene
+# 5 minuti prima invece che dopo un push. Attivalo con:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --redact --no-banner
+  exit $?
+fi
+
+echo "gitleaks non installato: uso guardia grep di ripiego (installa gitleaks per copertura reale)." >&2
+if git diff --cached -U0 --no-color \
+   | grep -nEi "(api[_-]?key|secret|token|passwd|password|bearer)[[:space:]]*[:=][[:space:]]*['\"]?[A-Za-z0-9_/+.=-]{20,}" ; then
+  echo "" >&2
+  echo "✖ Possibile secret nelle modifiche staged (vedi sopra). Commit bloccato." >&2
+  echo "  Falso positivo? Bypassa con:  git commit --no-verify" >&2
+  exit 1
+fi
+exit 0

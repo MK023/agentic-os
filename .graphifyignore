@@ -1,0 +1,9 @@
+# Worktree effimeri degli agenti: copie del repo, generano nodi fantasma
+.claude/
+
+# Copia di lavoro di mutmut: cloni mutati di main.py e sentry.py
+mutants/
+
+# Cache di test e coverage
+.pytest_cache/
+__pycache__/
