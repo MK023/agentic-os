@@ -97,7 +97,10 @@ and the datasource arrive by provisioning, nothing to import.
 - **`increase()` over-reports on sparse data.** Prometheus extrapolates to the window
   edges: measured here, real growth of 23787 tokens was reported as 27956 (+17%) with
   only two samples in the window. With continuous 15s scrapes the error is small, but
-  these numbers are indicative, not accounting.
+  these numbers are indicative, not accounting — and that is not a workaround, it is
+  what the tool is for. Prometheus's own overview: *"If you need 100% accuracy, such
+  as for per-request billing, Prometheus is not a good choice, as the collected data
+  will likely not be detailed and complete enough."*
 
 ## 5. Leave the laptop as you found it
 
