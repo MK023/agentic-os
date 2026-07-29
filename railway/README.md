@@ -82,6 +82,7 @@ Neither blocks a first deploy. They decide when the Hobby plan stops being optio
 |---|---|
 | `cloudflared` | `TUNNEL_TOKEN` |
 | `otel-collector` | `OTLP_INGEST_TOKEN` |
+| `prometheus` | `RAILWAY_RUN_UID=0` (see "volume ownership" below — not a secret, and not optional) |
 | `grafana` | `GF_SECURITY_ADMIN_PASSWORD`, `GF_AUTH_ANONYMOUS_ENABLED=false` |
 | `status-api` | `PROMETHEUS_URL=http://prometheus.railway.internal:9090`, `STATUS_API_TOKEN`, `SENTRY_DSN` (optional) |
 
@@ -105,11 +106,31 @@ These are the places where a platform behaves differently from a laptop, and non
 them can be verified without an account. Check them deliberately rather than
 discovering them from an empty dashboard.
 
-1. **Prometheus and its volume's ownership.** The image runs as `nobody` (65534). If
-   Railway presents the volume owned by root, Prometheus exits with a permission
-   error on `/prometheus` at startup. The fallback is a `USER 0` line in
-   `railway/prometheus/Dockerfile` — a real loss (it is the only service that would
-   then run as root), so try it as written first and read the logs.
+1. ~~**Prometheus and its volume's ownership.**~~ **Answered on 2026-07-29 by the
+   first deploy, and the answer was no.** With the volume attached, Prometheus
+   exited immediately:
+
+   ```
+   Error opening query log file file=/prometheus/queries.active
+   err="open /prometheus/queries.active: permission denied"
+   ```
+
+   The image runs as `nobody` (65534) and Railway presents the volume owned by root.
+   Railway documents exactly one supported answer: *"Docker images that run as a
+   non-root UID by default will have permissions issues when performing operations
+   within an attached volume. If you are affected by this, you can set
+   `RAILWAY_RUN_UID=0` environment variable in your service."*
+
+   So the `prometheus` service — and only that one — carries `RAILWAY_RUN_UID=0` and
+   runs as root. The cost is stated plainly: it is the single service in this project
+   without the non-root property, in a container that (unlike the local compose run)
+   has no `cap_drop`. What limits the exposure is that Prometheus has no public
+   domain, no authentication surface of its own, and is reachable only from inside
+   the project's private network.
+
+   The variable, not `USER 0` in the Dockerfile, on purpose: the weakening then
+   applies only where it is needed. Locally, Docker gives a named volume the image
+   user's ownership, so `docs/LOCAL_DRY_RUN.md` keeps running Prometheus unprivileged.
 2. **Whether the built image's `CMD` survives.** Every Dockerfile here states its
    command explicitly instead of relying on Railway's `startCommand`, precisely so
    this is one thing rather than two. If a service starts with the wrong arguments,
