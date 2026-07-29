@@ -80,9 +80,20 @@ reaches any pipeline.
 ## 6. Verify
 
 ```bash
+export CF_ACCESS_CLIENT_ID=...      # the Service Token from step 3
+export CF_ACCESS_CLIENT_SECRET=...
 bash scripts/verify-hub.sh https://grafana.marcobellingeri.dev https://status.marcobellingeri.dev "$STATUS_API_TOKEN"
 ```
 
-Note that the status check goes through Access, so it only passes from a context
-that carries valid Access credentials — from your laptop, expect the Access login
-redirect rather than a 200.
+The script knows it is running behind Access and checks each hostname for what it
+should actually do:
+
+- **Grafana** must answer with an Access challenge (302/401/403). A plain `200`
+  there is treated as a **failure**, not a success — it would mean the dashboard is
+  reachable without logging in.
+- **the status API** must return the three fields, using both credentials at once:
+  the Access service token *and* its own bearer token. That is exactly the pair the
+  site's Worker sends, so a pass here means the Worker will work too.
+
+Without the two `CF_ACCESS_*` variables the status check fails on purpose, and says
+why.
