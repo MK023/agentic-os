@@ -105,7 +105,7 @@ engineering notes.
    config`, an image build of every service, Checkov); a small unit-heavy pyramid for
    the two application components (status API here, widget in the site repo).
    The complexity is inside the functions, not in the composition.
-2. **Coverage on new code**: 100% on the status API (currently met: 8 tests,
+2. **Coverage on new code**: 100% on the status API (currently met: 9 tests,
    100% on `main.py` and `sentry.py`). No repo-wide threshold — most of this
    repo is Dockerfiles and YAML, where line coverage means nothing.
 3. **Blocking mutation score (nightly)**: `require_valid_token` in the status
@@ -149,13 +149,11 @@ git config core.hooksPath .githooks   # once per clone
 
 ## Status
 
-All eight blocks are written, executed and verified locally; PR #1 carries them.
-The site half already shipped: `marcobellingeri.dev/api/agentic-status` is live and
-answers with three `null` fields, which is the designed degraded state until the hub
-exists.
+**Live since 2026-07-29.** The five services run on Railway, the Tunnel serves the
+three hostnames, and `marcobellingeri.dev/api/agentic-status` answers with real
+numbers (verified the same day: sessions, tokens and cost from actual usage).
+`scripts/verify-hub.sh` is the post-deploy check; `railway/README.md` records how
+the deploy went, including the three platform behaviours the first deploy settled.
 
-Not yet run against real infrastructure: creating the Railway project and its five
-services, and the Cloudflare Tunnel sequence — both manual, deliberately outside CI.
-`railway/README.md` is the deployment guide and lists the three platform behaviours
-that only a first deploy can settle. Full list of what is blocked on what:
-`docs/BLOCKERS.md`.
+What remains open — one volume check worth doing a day after go-live, and the
+things that are still a judgement call — is in `docs/BLOCKERS.md`.

@@ -1,49 +1,15 @@
 # What is not done yet
 
-Current as of 2026-07-29, kept short on purpose: everything already settled lives in
-`DECISIONS.md`, and everything already verified lives in the commit that verified it.
-This file is only what stands between the repository and a working hub.
+Current as of 2026-07-29, **post go-live**: the Railway project exists, the Tunnel
+serves its three hostnames, the Worker secrets are set, and the public endpoint
+answers with real numbers. Everything settled lives in `DECISIONS.md`; everything
+verified lives in the commit that verified it. This file is only what is still open.
 
-## 1. The Railway project does not exist
+## 1. The Prometheus volume, a day after go-live
 
-Five services to create, with the Root Directory, config path, variables and volume
-listed per service in `../railway/README.md`. Starting on the Trial plan: $5 of
-one-time credit, which is roughly a fortnight at this footprint, and volumes capped
-at 0.5 GB. Nothing about the first deploy needs Hobby.
-
-## 2. The Cloudflare Tunnel and the two Access applications
-
-Manual, against the account that already exists, in `CLOUDFLARE_TUNNEL_SETUP.md`.
-Needs the services deployed first, since the ingress points at their internal DNS
-names. This was always a human step and still is.
-
-## 3. The site's Worker secrets
-
-`wrangler secret put` for `AGENTIC_OS_ACCESS_CLIENT_ID`,
-`AGENTIC_OS_ACCESS_CLIENT_SECRET` and `AGENTIC_OS_STATUS_TOKEN`, plus
-`AGENTIC_OS_STATUS_URL` as a plain variable. All three values only exist after step
-2. Until then `/api/agentic-status` answers with three `null` fields and the widget
-shows dashes — a tested path, not a broken one.
-
-## 4. Three things only the first deploy can settle
-
-Written out in `../railway/README.md` rather than left to be discovered from an empty
-dashboard: whether Prometheus can write its volume as `nobody`, whether a stale
-dashboard `startCommand` overrides the image's, and the fact that Railway ignores the
-Dockerfile `HEALTHCHECK` — which is why `scripts/verify-hub.sh` stays the real
-post-deploy check.
-
-## 5. Claude Code's metric names, against a future version
-
-The names are measured, not assumed — but this telemetry is beta and versioned. If a
-panel goes empty after a Claude Code upgrade, that is the first thing to check, and
-`LOCAL_DRY_RUN.md` is how to check it in five minutes.
-
-## Worth checking once, a day after go-live
-
-The Prometheus volume reported `0.0 MB` right after the first successful mount —
-consistent with a TSDB that had just started (a few KB of WAL round to zero), but
-worth a second look rather than an assumption:
+The volume reported `0.0 MB` right after the first successful mount — consistent
+with a TSDB that had just started (a few KB of WAL round to zero), but worth a
+second look rather than an assumption:
 
 ```bash
 railway volume list --json | python3 -c "import sys,json;v=json.load(sys.stdin)['volumes'][0];print(v['currentSizeMB'],'MB')"
@@ -54,9 +20,18 @@ the volume and the retention promise is empty. The log line that settles it is
 `filesystem information`: `EXT4_SUPER_MAGIC` is the volume, `OVERLAYFS_SUPER_MAGIC`
 is ephemeral storage.
 
+## 2. Claude Code's metric names, against a future version
+
+The names are measured, not assumed — but this telemetry is beta and versioned. If a
+panel goes empty after a Claude Code upgrade, that is the first thing to check, and
+`LOCAL_DRY_RUN.md` is how to check it in five minutes. The same dry run is also the
+only check the label allow-list gets against a *new* client version: no CI gate sees
+what a future release starts sending.
+
 ## Still Marco's call
 
-- Where the widget goes on the site page (the endpoint is live and degrades cleanly).
+- Where the widget goes on the site page (the endpoint is live and returns real
+  numbers; the degraded path stays tested).
 - Whether the hub stays past the first month.
 - Grafana Loki as a Phase 1.5, with its own spec — evaluated and recommended, but
   after a week of actually using Phase 1 (see `DECISIONS.md`).
