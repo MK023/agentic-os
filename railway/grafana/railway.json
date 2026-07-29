@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "railway/grafana/Dockerfile",
+    "watchPatterns": [
+      "docker/grafana/**",
+      "railway/grafana/**"
+    ]
+  },
+  "deploy": {
+    "restartPolicyType": "ALWAYS"
+  }
+}

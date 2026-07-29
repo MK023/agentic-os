@@ -53,6 +53,23 @@ jobs:
       - run: pip install respx pytest pytest-cov
       - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
 
+  # Builds every image the platform will build. The four Railway Dockerfiles copy
+  # configuration out of docker/, so a moved or renamed config file breaks them —
+  # and that breakage would otherwise surface as a failed deploy rather than a
+  # failed check. Also builds the status API image, which is where the hash-locked
+  # install actually gets exercised.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: build delle immagini Railway
+        run: |
+          set -euo pipefail
+          for servizio in otel-collector prometheus grafana cloudflared; do
+            docker build -f "railway/${servizio}/Dockerfile" -t "agentic-${servizio}:ci" .
+          done
+      - run: docker build -t agentic-status-api:ci services/public-status-api
+
   # IaC static analysis. Sonar has no meaningful Terraform/Dockerfile coverage
   # without a paid plugin, so this is what covers the infra half of the repo —
   # policy lives in .checkov.yml (blocks on HIGH/CRITICAL, soft-fails LOW/MEDIUM).

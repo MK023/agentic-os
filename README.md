@@ -1,10 +1,15 @@
 # Agentic OS — Phase 1: Claude Code Observability Hub
 
 Personal platform to observe (and later orchestrate) AI-assisted work across
-projects. Phase 1 is a single Hostinger VPS, Terraform-provisioned, running an
-OTel Collector + Prometheus + Grafana behind a Cloudflare Tunnel, so Claude Code
-usage is visible live in a private dashboard and as a sanitized public widget on
-marcobellingeri.dev.
+projects. Phase 1 is an OTel Collector + Prometheus + Grafana + a small status API,
+running on **Railway** behind a Cloudflare Tunnel, so Claude Code usage is visible
+live in a private dashboard and as a sanitized public widget on marcobellingeri.dev.
+
+The deployment target changed on 2026-07-29, after the VPS variant was written and
+validated: for four small services used by one person, a PaaS costs the same and
+removes the machine to maintain. `terraform/hostinger-vps/` is kept as a working,
+documented alternative — the move cost five files, which is the useful part of the
+story.
 
 Design: `docs/superpowers/specs/2026-07-28-agentic-os-phase1-design.md` ·
 Plan: `docs/superpowers/plans/2026-07-28-phase1-observability-hub.md` ·
@@ -14,8 +19,9 @@ Checklist: `TASKS.md`
 
 | Path | What |
 |---|---|
-| `terraform/hostinger-vps/` | VPS provisioning (`hostinger/hostinger` provider) |
-| `docker/` | Compose stack: cloudflared, OTel Collector, Prometheus, Grafana, status API |
+| `railway/` | Production: one Dockerfile + one config per service, and the deployment guide |
+| `docker/` | The local environment, same images and same config files (see `docs/LOCAL_DRY_RUN.md`) |
+| `terraform/hostinger-vps/` | The VPS alternative, written and validated, not the deployment target |
 | `services/public-status-api/` | FastAPI service exposing three whitelisted aggregate numbers |
 | `scripts/` | `bootstrap.sh` (runs on the VPS at first boot), `verify-hub.sh` (post-deploy smoke test) |
 | `docs/` | Cloudflare Tunnel setup, Claude Code telemetry configuration |

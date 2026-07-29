@@ -1,3 +1,10 @@
+# Questo file è l'ambiente LOCALE (prova a mano, CI). La produzione è Railway —
+# vedi railway/README.md. I due condividono gli stessi file di configurazione, e
+# gli `aliases` qui sotto sono il trucco che lo rende possibile: in locale ogni
+# container risponde anche al nome DNS che avrà su Railway
+# (`<servizio>.railway.internal`), così prometheus.yml e il datasource di Grafana
+# non esistono in due versioni destinate a divergere.
+#
 # Image tags pinned to a released version, never `:latest` — a mutable tag is a
 # supply-chain risk, not just a reproducibility one. Versions below were the
 # current stable releases on 2026-07-28 (checked against each registry, not from
@@ -21,6 +28,9 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.157.0
     restart: unless-stopped
+    networks:
+      default:
+        aliases: ["otel-collector.railway.internal"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
@@ -32,6 +42,9 @@ services:
   prometheus:
     image: prom/prometheus:v3.13.1
     restart: unless-stopped
+    networks:
+      default:
+        aliases: ["prometheus.railway.internal"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     # No Cloudflare Tunnel route to this service, ever (Task 5) — Prometheus's own
@@ -63,7 +76,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
-      - PROMETHEUS_URL=http://prometheus:9090
+      - PROMETHEUS_URL=http://prometheus.railway.internal:9090
       - STATUS_API_TOKEN=${STATUS_API_TOKEN}
       - SENTRY_DSN=${SENTRY_DSN}
 

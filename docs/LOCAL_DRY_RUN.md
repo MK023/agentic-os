@@ -38,6 +38,12 @@ docker compose -f docker-compose.yml -f /tmp/ports.yml up -d --build \
 `cloudflared` is deliberately not started: without a real tunnel token it would only
 restart-loop.
 
+The compose file gives each container a network alias matching its Railway internal
+DNS name, so `prometheus.yml` and Grafana's datasource — which name
+`otel-collector.railway.internal` and `prometheus.railway.internal` — are correct
+here too. That is why there is one copy of each config rather than a local one and a
+production one drifting apart.
+
 ## 2. Feed it the real client
 
 ```bash
