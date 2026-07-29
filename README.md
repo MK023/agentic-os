@@ -5,15 +5,14 @@ projects. Phase 1 is an OTel Collector + Prometheus + Grafana + a small status A
 running on **Railway** behind a Cloudflare Tunnel, so Claude Code usage is visible
 live in a private dashboard and as a sanitized public widget on marcobellingeri.dev.
 
-The deployment target changed on 2026-07-29, after the VPS variant was written and
-validated: for four small services used by one person, a PaaS costs the same and
-removes the machine to maintain. `terraform/hostinger-vps/` is kept as a working,
-documented alternative — the move cost five files, which is the useful part of the
-story.
+A VPS variant was written and validated first; it was dropped on 2026-07-29, because
+for four small services used by one person a PaaS costs the same and removes the
+machine to maintain. Moving cost five files, which is the part of the story worth
+remembering — see `docs/DECISIONS.md`.
 
-Design: `docs/superpowers/specs/2026-07-28-agentic-os-phase1-design.md` ·
-Plan: `docs/superpowers/plans/2026-07-28-phase1-observability-hub.md` ·
-Checklist: `TASKS.md`
+Design and reasoning: `docs/superpowers/specs/2026-07-28-agentic-os-phase1-design.md` ·
+Closed decisions: `docs/DECISIONS.md` · Deployment: `railway/README.md` ·
+What is left: `docs/BLOCKERS.md`
 
 ## Layout
 
@@ -21,9 +20,8 @@ Checklist: `TASKS.md`
 |---|---|
 | `railway/` | Production: one Dockerfile + one config per service, and the deployment guide |
 | `docker/` | The local environment, same images and same config files (see `docs/LOCAL_DRY_RUN.md`) |
-| `terraform/hostinger-vps/` | The VPS alternative, written and validated, not the deployment target |
 | `services/public-status-api/` | FastAPI service exposing three whitelisted aggregate numbers |
-| `scripts/` | `bootstrap.sh` (runs on the VPS at first boot), `verify-hub.sh` (post-deploy smoke test) |
+| `scripts/` | `verify-hub.sh`, the post-deploy smoke test |
 | `docs/` | Cloudflare Tunnel setup, Claude Code telemetry configuration |
 
 ## Security boundary
@@ -53,7 +51,7 @@ allow-list also holds when a future release adds an attribute nobody has seen ye
 Reference model: my own CI/CD maturity model (four levels, gate policy, the
 pipeline itself as attack surface), kept in private engineering notes. Declared **Level 1**
 (`PR → Lint → Test → Build → Dependency audit`): one developer, personal project,
-rollback is `terraform destroy` + redeploy. Level 4 (canary, progressive
+rollback is a redeploy of the previous image. Level 4 (canary, progressive
 delivery) would be theatre here — there is no traffic to measure.
 
 The **security baseline is not graduated by level** and is applied in full,
@@ -65,7 +63,7 @@ Deliberately **not** adopted: SBOM + signed attestation, human approval gates,
 canary. Three Python dependencies and no distributed artifact — that would be
 Level 4 cargo cult.
 
-Gate policy: `terraform`, `compose`, `status-api-tests`, `checkov`,
+Gate policy: `compose`, `images`, `status-api-tests`, `checkov`,
 `workflow-lint`, `gitleaks`, `dependency-audit` and `sonar` all block the merge.
 Checkov blocks on HIGH and above and soft-fails LOW/MEDIUM; `dependency-audit`
 (pip-audit) blocks on any advisory against the three pinned dependencies. Nothing
@@ -103,13 +101,13 @@ Reference model: my own testing model (shape by architecture, clean-as-you-code
 coverage, mutation testing, security taxonomy by project type), kept in private
 engineering notes.
 
-1. **Shape**: static analysis as the ground floor for infra (`terraform
-   validate`, `docker compose config`, Checkov); a small unit-heavy pyramid for
+1. **Shape**: static analysis as the ground floor for infra (`docker compose
+   config`, an image build of every service, Checkov); a small unit-heavy pyramid for
    the two application components (status API here, widget in the site repo).
    The complexity is inside the functions, not in the composition.
 2. **Coverage on new code**: 100% on the status API (currently met: 8 tests,
    100% on `main.py` and `sentry.py`). No repo-wide threshold — most of this
-   repo is Terraform/YAML, where line coverage means nothing.
+   repo is Dockerfiles and YAML, where line coverage means nothing.
 3. **Blocking mutation score (nightly)**: `require_valid_token` in the status
    API — the only authorization comparison in the project.
    `.github/workflows/mutation.yml` runs mutmut nightly and fails on any
@@ -118,7 +116,7 @@ engineering notes.
    here even at 100% coverage — all four were the 401's `detail` string, which no
    test asserted. Now it does.
 4. **Security taxonomy**: OWASP API Security Top 10 for the status API; MITRE
-   ATT&CK for the infra surface (Tunnel/Access/VPS). Not MITRE ATLAS and not
+   ATT&CK for the infra surface (Tunnel, Access, the Railway project). Not MITRE ATLAS and not
    OWASP LLM Top 10 — Phase 1 observes a model's usage, it never calls one.
    Those apply from Phase 4 (session RAG).
 5. **Flaky policy**: none today, every test is deterministic (pytest/vitest with
@@ -136,9 +134,8 @@ The site half already shipped: `marcobellingeri.dev/api/agentic-status` is live 
 answers with three `null` fields, which is the designed degraded state until the hub
 exists.
 
-Not yet run against real infrastructure: `terraform apply`, the Cloudflare Tunnel
-creation, and filling `docker/.env` on the VPS — all manual steps, deliberately
-outside CI. The Hostinger account does not exist yet, so `data_center_id` and
-`template_id` in `terraform.tfvars` are still placeholders, and they cannot be
-looked up without it (the provider's data sources are authenticated; the API answers
-401). Full list of what is blocked on what: `docs/BLOCKERS.md`.
+Not yet run against real infrastructure: creating the Railway project and its five
+services, and the Cloudflare Tunnel sequence — both manual, deliberately outside CI.
+`railway/README.md` is the deployment guide and lists the three platform behaviours
+that only a first deploy can settle. Full list of what is blocked on what:
+`docs/BLOCKERS.md`.

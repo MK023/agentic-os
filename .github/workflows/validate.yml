@@ -17,15 +17,6 @@ concurrency:
 # expressions used are in `if:` conditions and `env:` mappings, so there is no
 # template-injection surface. zizmor (workflow-lint job below) enforces that.
 jobs:
-  terraform:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-      - run: terraform -chdir=terraform/hostinger-vps fmt -check
-      - run: terraform -chdir=terraform/hostinger-vps init -backend=false
-      - run: terraform -chdir=terraform/hostinger-vps validate
-
   compose:
     runs-on: ubuntu-latest
     steps:
@@ -70,9 +61,10 @@ jobs:
           done
       - run: docker build -t agentic-status-api:ci services/public-status-api
 
-  # IaC static analysis. Sonar has no meaningful Terraform/Dockerfile coverage
-  # without a paid plugin, so this is what covers the infra half of the repo —
-  # policy lives in .checkov.yml (blocks on HIGH/CRITICAL, soft-fails LOW/MEDIUM).
+  # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
+  # the infrastructure this repo has now that deployment is Railway's config-as-code.
+  # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,
+  # soft-fails LOW/MEDIUM).
   checkov:
     runs-on: ubuntu-latest
     steps:

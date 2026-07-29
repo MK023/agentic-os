@@ -4,15 +4,14 @@ Production runs on Railway (Hobby plan). `docker/docker-compose.yml` stays as th
 local environment — same images, same configuration files, so what runs on a laptop
 and what runs in production do not drift.
 
-## Why Railway rather than a VPS
+## Why Railway
 
-Decided 2026-07-29, after the VPS variant was already written (it still is, in
-`terraform/hostinger-vps/`, kept as a documented alternative). The hub is four small
-co-located services for one user: on a VPS that costs ~10-12 €/month plus a server to
-patch, harden and back up — maintenance that has nothing to do with the goal. Railway
-costs about the same for this footprint, gives private networking by default, and
-removes the machine entirely. The infrastructure-practice argument belongs to a
-different project; this one is meant to be *used*, not demonstrated.
+Decided 2026-07-29, after a VPS variant had already been written and validated. The
+hub is five small services for one user: a VPS costs about the same and adds a server
+to patch, harden and back up — maintenance that has nothing to do with the goal.
+Railway gives private networking by default and no machine at all. The
+infrastructure-practice argument belongs to a different project; this one is meant to
+be *used*, not demonstrated. Reasoning in full: `../docs/DECISIONS.md`.
 
 ## Topology
 
@@ -52,8 +51,22 @@ their Dockerfiles copy configuration out of `docker/`, so they need the whole re
 The status API is the exception — its Dockerfile uses paths relative to its own
 directory.
 
-1 GB for Prometheus is generous: this hub stores a handful of series at a 15s scrape.
-Hobby caps volumes at 5 GB, so there is room if a Phase 2 producer arrives.
+Volume size depends on the plan: **Trial caps volumes at 0.5 GB**, Hobby at 5 GB.
+Either is generous for a hub storing a handful of series at a 15s scrape — start at
+the trial cap and raise it later if a Phase 2 producer arrives.
+
+### Starting on the Trial plan
+
+Per service the Trial gives 1 GB RAM, 2 vCPU and 4 GB image size — comfortably above
+what any of these five need (the largest sits around 300 MB). Two limits will be felt
+before the resources are:
+
+- **$5 of one-time credit.** At this footprint the project runs somewhere around
+  $10/month, so the trial is roughly a fortnight of real use, not a free tier.
+- **Images are kept 24 hours.** Rolling back to a build older than that is not
+  possible; redeploying from the commit is.
+
+Neither blocks a first deploy. They decide when the Hobby plan stops being optional.
 
 ## Variables
 
@@ -101,10 +114,11 @@ discovering them from an empty dashboard.
    when it serves. `scripts/verify-hub.sh` is what actually confirms the hub works,
    and it stays a manual step after deploying.
 
-## What did not change moving off the VPS
+## What the move actually cost
 
-Everything except the deployment target: the Collector configuration and its label
-allow-list, the dashboards, the status API and its tests, the CI gates, the site
-widget, the Cloudflare Tunnel design and every security decision behind it. That was
-the point of checking, before choosing, how much of the work was actually tied to
-Hostinger — it was five Terraform files.
+Five files. Everything else survived unchanged: the Collector configuration and its
+label allow-list, the dashboards, the status API and its tests, the CI gates, the
+site widget, the Cloudflare Tunnel design and every security decision behind it.
+Measuring that *before* choosing is what made the decision cheap instead of
+agonising — and it is the reason this repo now has no second deployment path to keep
+in sync.
