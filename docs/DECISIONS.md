@@ -53,9 +53,20 @@ authentication; the only safe exposure is the project's private network.
 in, so the platform's own hostnames stay unused rather than sitting unprotected
 beside the front door.
 
-**Every image runs as a non-root user.** Three of the four base images already did,
-invisibly to a scanner reading a `FROM`; `cloudflared` did not, and now does — a
-connector making only outbound connections needs no privilege.
+**Every image runs as a non-root user, with one documented exception.** Three of the
+four base images already did, invisibly to a scanner reading a `FROM`; `cloudflared`
+did not, and now does — a connector making only outbound connections needs no
+privilege.
+
+The exception is **Prometheus on Railway**, which carries `RAILWAY_RUN_UID=0`. Its
+attached volume is presented owned by root, so as `nobody` it cannot even create
+`/prometheus/queries.active` and exits at startup — measured, not anticipated.
+Railway documents running as root as the supported answer. The exposure is bounded
+by the fact that Prometheus has no public domain and no authentication surface of
+its own; the weakening is applied as a Railway variable rather than a `USER 0` line
+so that the local run keeps the stronger posture. If this ever needs revisiting, the
+alternative is an entrypoint that chowns the mount and drops privileges — more moving
+parts inside the one service that has none today.
 
 ## Metrics semantics
 
