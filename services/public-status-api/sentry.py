@@ -8,6 +8,7 @@ without a DSN it is a no-op, and a failed delivery never raises past this module
 import json
 import os
 import re
+import sys
 import time
 import uuid
 
@@ -16,11 +17,32 @@ import httpx
 _DSN_RE = re.compile(r"^https://([a-f0-9]+)@([^/]+)/(\d+)$")
 
 
+_dsn_malformato_segnalato = False
+
+
 def _endpoint(dsn: str | None) -> str | None:
+    """DSN -> envelope endpoint, or None if there is nothing usable.
+
+    No DSN is a deliberate no-op. A DSN that is *set but unparseable* is not: it
+    means someone configured error reporting and believes it works. Fail-open is
+    the right contract for a failed delivery, not for a configuration mistake —
+    so that case says so on stderr, once, instead of disappearing.
+    """
+    global _dsn_malformato_segnalato
     if not dsn:
         return None
     match = _DSN_RE.match(dsn)
-    return f"https://{match.group(2)}/api/{match.group(3)}/envelope/" if match else None
+    if not match:
+        if not _dsn_malformato_segnalato:
+            _dsn_malformato_segnalato = True
+            # Never print the DSN itself: it is an ingest key, and logs travel.
+            print(
+                "sentry: SENTRY_DSN is set but does not parse as https://<key>@<host>/<project>"
+                " — error reporting is OFF",
+                file=sys.stderr,
+            )
+        return None
+    return f"https://{match.group(2)}/api/{match.group(3)}/envelope/"
 
 
 async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None:
