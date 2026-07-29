@@ -82,7 +82,24 @@ were switched on at the same time (both free on a public repo, and the same base
 
 ## Still open — waits on an account or a credential
 
-### 1. Hostinger data centre and template IDs (Task 1, Step 6)
+### 0. The deployment target moved to Railway (2026-07-29)
+
+Items 1 and 2 below were written when the target was a Hostinger VPS. Marco chose
+Railway instead — same cost for this footprint, no machine to maintain, and a
+platform he already knows. `railway/README.md` is the deployment guide;
+`terraform/hostinger-vps/` stays as the validated alternative.
+
+What that changes here: the Hostinger account is **no longer a blocker at all**, and
+the two items below are kept only as the record of what the VPS route required. What
+is still needed is a Railway account (Hobby, $5/month) plus the Cloudflare Tunnel,
+which was always manual.
+
+Three things cannot be checked without deploying, all listed in `railway/README.md`:
+whether Prometheus can write to its volume as `nobody`, whether a stale dashboard
+`startCommand` overrides the image's, and the fact that Railway ignores the
+Dockerfile `HEALTHCHECK` (so `scripts/verify-hub.sh` stays the real check).
+
+### ~~1. Hostinger data centre and template IDs~~ (was Task 1, Step 6)
 
 The plan says to read them from the provider's data sources. Those data sources call
 the Hostinger API, which is authenticated — verified directly:
@@ -99,7 +116,7 @@ provisions in the wrong region (a data-residency decision, not a cosmetic one).
 **Needs:** a Hostinger account + `HOSTINGER_API_TOKEN`. Everything else in the
 Terraform module is written and passes `fmt -check` and `validate` today.
 
-### 2. `terraform apply`, the Tunnel, and the Access applications
+### 2. The Tunnel and the Access applications
 
 Deliberately outside CI in the original plan and still correct that way. The tunnel
 and the two Access applications are dashboard work against the Cloudflare account
@@ -108,7 +125,9 @@ and was corrected to the remotely-managed model (the planned `cloudflared tunnel
 create` produces a *locally*-managed tunnel, which never prints the `TUNNEL_TOKEN`
 the compose file expects).
 
-**Needs:** the VPS to exist first, then a human at the dashboard.
+**Needs:** the services deployed first, then a human at the dashboard. Unchanged by
+the move — the ingress design is the same, only the hostnames behind it are now
+`*.railway.internal`.
 
 ### 3. The site's Worker secrets
 
@@ -162,8 +181,9 @@ It also found the PII bug that no amount of reading would have surfaced (see bel
 2. **Whether the `sonar` gate stays** as a declared blocking gate (then it needs the
    project + token) or is dropped from the contract. Half-measures are what the test
    contract exists to prevent.
-3. **When to open the Hostinger account**, which is the only thing gating real
-   infrastructure. Everything else is already written and verified.
+3. ~~**When to open the Hostinger account**~~ — superseded 2026-07-29: the target is
+   Railway. What gates real infrastructure now is a Railway project plus the manual
+   Cloudflare Tunnel sequence.
 4. **Where the widget goes on the site**, and whether it ships before the hub exists
    (it degrades to dashes, so it can).
 5. ~~**Whether the site PR merges now.**~~ **Decided 2026-07-28: merged** (PR #156,

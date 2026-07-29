@@ -20,18 +20,20 @@ shows; that value goes into the VPS's `docker/.env` as `CLOUDFLARE_TUNNEL_TOKEN`
 ## 2. Add three public hostnames
 
 In the tunnel's **Routes** tab, add a published-application route per hostname,
-pointing at the container's Docker-network service name (not `localhost` —
-`cloudflared` runs as its own container on the same compose network, so each
-service is reachable by its compose service name):
+pointing at Railway's internal DNS name (not `localhost` — `cloudflared` is its own
+service, reaching the others over the project's private network):
 
 | Hostname | Service |
 |---|---|
-| `grafana.yourdomain.com` | `http://grafana:3000` |
-| `status.yourdomain.com` | `http://status-api:8000` |
-| `otel.yourdomain.com` | `http://otel-collector:4318` |
+| `grafana.yourdomain.com` | `http://grafana.railway.internal:3000` |
+| `status.yourdomain.com` | `http://status-api.railway.internal:8000` |
+| `otel.yourdomain.com` | `http://otel-collector.railway.internal:4318` |
+
+None of these services takes a public Railway domain: the tunnel is the only way in,
+so there is no platform hostname sitting unprotected beside it.
 
 Prometheus deliberately gets **no** hostname: its HTTP API has no authentication
-of its own, so its only safe exposure is internal to the compose network.
+of its own, so its only safe exposure is the project's private network.
 
 ## 3. Two Access applications
 

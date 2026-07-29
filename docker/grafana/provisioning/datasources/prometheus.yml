@@ -4,5 +4,6 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    # Stesso hostname in locale e su Railway (vedi gli alias di rete nel compose).
+    url: http://prometheus.railway.internal:9090
     isDefault: true

@@ -14,9 +14,12 @@ three aggregate numbers are public, everything else never leaves the VPS.
 
 ## Layout
 
-- `terraform/hostinger-vps/` — VPS provisioning. **Start here** for infra.
-- `docker/` — the whole runtime: collector config, Prometheus, Grafana provisioning,
-  compose file. `docker/.env` is real secrets on the VPS, never in git.
+- `railway/` — production: one Dockerfile and one `railway.json` per service, plus
+  `railway/README.md`, which is the deployment guide. **Start here** for infra.
+- `docker/` — the local environment and the single source of every configuration
+  file the Railway images copy in. `docker/.env` is local fake secrets, never in git.
+- `terraform/hostinger-vps/` — the VPS alternative. Written, validated, not deployed;
+  kept deliberately, do not delete it as dead code.
 - `services/public-status-api/` — the only application code (and the only place
   coverage/mutation thresholds apply).
 - `scripts/` — `bootstrap.sh` (runs on the VPS at first boot), `verify-hub.sh`
@@ -59,6 +62,12 @@ To validate the Collector config without a Docker daemon, download the real
   change all three.
 - Every image and action is pinned to a version or SHA. Never `:latest`.
 - Comments say *why*, and name the failure they prevent.
+
+One rule holds both environments together: **there is exactly one copy of every
+configuration file**, in `docker/`. The Railway images copy them at build time, the
+compose file mounts them, and compose gives each container a network alias equal to
+its Railway internal DNS name (`<service>.railway.internal`) so hostnames inside
+those files are correct in both places. Never fork a config to "fix it for local".
 
 ## Security (non-negotiable)
 
