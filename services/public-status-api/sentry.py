@@ -61,6 +61,19 @@ async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None
         "tags": tags or {},
         "exception": {"values": [{"type": type(exc).__name__, "value": str(exc)}]},
     }
+    # Which deploy an error came from, with no step anyone has to remember.
+    # RAILWAY_GIT_COMMIT_SHA is injected by the platform on every deployment
+    # (Railway, "Runtime variables"), so it cannot drift from what is actually
+    # running the way a hand-bumped version string does — and a release that has
+    # to be updated by hand is a release that will be wrong. Sentry accepts a
+    # commit SHA as a release name and needs no API call to create it first.
+    #
+    # Absent means omitted, not empty: locally and under `docker compose` the
+    # variable does not exist, and an empty release would file those errors under
+    # a version that does not exist rather than under none.
+    release = os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+    if release:
+        event["release"] = release
     envelope = "\n".join(
         json.dumps(part)
         for part in (

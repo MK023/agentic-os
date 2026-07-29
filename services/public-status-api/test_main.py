@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import respx
 from fastapi.testclient import TestClient
@@ -147,3 +149,52 @@ def test_sentry_delivery_failure_does_not_change_the_response(monkeypatch):
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 502
+
+
+def _evento_inviato(sentry_call) -> dict:
+    """The event out of the envelope Sentry actually received.
+
+    An envelope is newline-delimited JSON — header, item header, payload — so
+    these assertions read what went over the wire instead of trusting the dict
+    built in sentry.py. The payload is found by shape rather than by line number:
+    the envelope layout is ours, and a test pinned to an index would fail for a
+    reordering that broke nothing.
+    """
+    righe = sentry_call.calls.last.request.content.decode().splitlines()
+    return next(json.loads(riga) for riga in righe if riga and '"exception"' in riga)
+
+
+@respx.mock
+def test_sentry_event_carries_the_deploy_sha_as_release(monkeypatch):
+    # Without a release every error in Sentry belongs to the same unnamed
+    # version, and "is this still happening after the fix?" has no answer.
+    SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", SHA)
+    respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 502
+    assert _evento_inviato(sentry_call)["release"] == SHA
+
+
+@respx.mock
+def test_sentry_event_omits_release_when_the_deploy_sha_is_absent(monkeypatch):
+    # Local runs and `docker compose` have no RAILWAY_GIT_COMMIT_SHA. Sending an
+    # empty release would file those errors under a version that does not exist,
+    # which is worse than sending none — the key must be missing, not blank.
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 502
+    assert "release" not in _evento_inviato(sentry_call)
