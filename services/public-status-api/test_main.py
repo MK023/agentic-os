@@ -6,13 +6,13 @@ from main import app
 
 client = TestClient(app)
 
-# Query strings must stay in sync with main.QUERIES. All three are 24h windows:
-# the field names promise "today", so an all-time `sum()` would be the wrong
-# number, and `increase()` also survives the counter resets that happen every
-# time Claude Code restarts.
-SESSIONS_Q = "sum(increase(claude_code_session_count[24h]))"
-TOKENS_Q = "sum(increase(claude_code_token_usage[24h]))"
-COST_Q = "sum(increase(claude_code_cost_usage[24h]))"
+# Query strings must stay in sync with main.QUERIES. Plain sums, because Claude Code
+# emits one series per session and each is a counter that never grows again once the
+# session ends — `increase()` over those is structurally zero. See the comment in
+# main.py; it was measured in production, not reasoned about.
+SESSIONS_Q = "sum(claude_code_session_count)"
+TOKENS_Q = "sum(claude_code_token_usage)"
+COST_Q = "sum(claude_code_cost_usage)"
 
 
 @respx.mock
