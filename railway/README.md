@@ -143,6 +143,27 @@ discovering them from an empty dashboard.
    when it serves. `scripts/verify-hub.sh` is what actually confirms the hub works,
    and it stays a manual step after deploying.
 
+## Symptom to cause
+
+Everything here was met at least once on 2026-07-29. Each row is a symptom that does
+**not** name its own cause, which is why the table exists.
+
+| What you see | What it means |
+|---|---|
+| Build log says `railpack` / *"could not determine how to build the app"* | The **config file path** is not set on the service. It is absolute from the repo root and does not follow Root Directory |
+| Build fails on `COPY ... not found` | Root Directory is set on a service whose Dockerfile copies from `docker/` — it needs the whole repo as context |
+| Dashboard still shows Railpack after the fix | Expected. Config-as-code overrides at deploy time without changing the panel — the build log is the truth |
+| Prometheus restarts, `permission denied` on `/prometheus` | The volume is root-owned. That service needs `RAILWAY_RUN_UID=0` |
+| Prometheus logs `fs_type=OVERLAYFS_SUPER_MAGIC` | It is writing to ephemeral storage: the volume is not mounted on the running deployment. `EXT4` is what you want |
+| Everything green, dashboards empty | Query `up` in Grafana Explore. `1` means Prometheus scrapes fine and nothing has ever arrived — look upstream, at the producer |
+| `claude_code_*` series missing while `up = 1` | No metric ever reached the Collector. Check the client's headers (see `docs/CLAUDE_CODE_TELEMETRY.md`) |
+| Widget returns `null` fields | The Worker could not reach the hub — or the site deploy that introduced `AGENTIC_OS_STATUS_URL` has not finished yet |
+| Widget returns `0` fields | It **did** reach the hub. Zero is data, `null` is failure. The `cache-control` header tells them apart: `max-age=30` on success, `no-store` on the degraded path |
+| Status API answers 403 | Cloudflare Access — the service token or the policy |
+| Status API answers 401 | The app's own bearer token: `AGENTIC_OS_STATUS_TOKEN` on the Worker does not match `STATUS_API_TOKEN` on Railway |
+| Status API answers 502 | It is alive and Prometheus is not answering. Sentry has the exception |
+| `cloudflared` restarts, *"Provided Tunnel token is not valid"* | `--token` or whitespace ended up inside `TUNNEL_TOKEN` |
+
 ## What the move actually cost
 
 Five files. Everything else survived unchanged: the Collector configuration and its

@@ -39,6 +39,21 @@ The names are measured, not assumed — but this telemetry is beta and versioned
 panel goes empty after a Claude Code upgrade, that is the first thing to check, and
 `LOCAL_DRY_RUN.md` is how to check it in five minutes.
 
+## Worth checking once, a day after go-live
+
+The Prometheus volume reported `0.0 MB` right after the first successful mount —
+consistent with a TSDB that had just started (a few KB of WAL round to zero), but
+worth a second look rather than an assumption:
+
+```bash
+railway volume list --json | python3 -c "import sys,json;v=json.load(sys.stdin)['volumes'][0];print(v['currentSizeMB'],'MB')"
+```
+
+If it is still exactly `0.0` after a day of real traffic, the data is not landing on
+the volume and the retention promise is empty. The log line that settles it is
+`filesystem information`: `EXT4_SUPER_MAGIC` is the volume, `OVERLAYFS_SUPER_MAGIC`
+is ephemeral storage.
+
 ## Still Marco's call
 
 - Where the widget goes on the site page (the endpoint is live and degrades cleanly).

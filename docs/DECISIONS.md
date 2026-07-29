@@ -130,6 +130,37 @@ A standing decision for Phase 4 (session RAG), not a gap today.
 (direct embedding + pgvector + a direct Anthropic call), and fewer dependencies is
 the whole posture.
 
+## Where each secret lives, and what rotating one costs
+
+Doppler is the source of truth. Railway service variables are the runtime copy. The
+laptop keeps exactly one, because a shell reads it on every terminal and a network
+call there fails offline.
+
+| Secret | Doppler | Railway | Laptop | Cloudflare Worker |
+|---|---|---|---|---|
+| `OTLP_INGEST_TOKEN` | yes | `otel-collector` | Keychain (`agentic-os-otlp-ingest`) | — |
+| `STATUS_API_TOKEN` | yes | `status-api` | — | as `AGENTIC_OS_STATUS_TOKEN` |
+| `TUNNEL_TOKEN` | yes | `cloudflared` | — | — |
+| `GF_SECURITY_ADMIN_PASSWORD` | yes | `grafana` | — | — |
+| `SENTRY_DSN` | yes | `status-api` | — | — |
+| Access service token (ID + secret) | yes | **never** | for `verify-hub.sh` | `AGENTIC_OS_ACCESS_CLIENT_*` |
+
+The Access credentials never touch Railway on purpose: it is Cloudflare that verifies
+them, at the edge. The hub does not even see them as something to check.
+
+**Rotation is where this bites.** `OTLP_INGEST_TOKEN` lives in three places — Doppler,
+the Collector, and the shell. Change two of the three and telemetry stops **in
+silence**: Claude Code keeps exporting with the old value and the Collector answers
+401, which nothing surfaces. Same shape for `STATUS_API_TOKEN`, which must match
+between the Railway service and the Worker secret **whose name is different**
+(`AGENTIC_OS_STATUS_TOKEN`).
+
+A Doppler → Railway sync was evaluated on 2026-07-29 and not adopted: the five
+services hold different secrets, so respecting least privilege would mean four
+separate Doppler configs to manage five values that change approximately never.
+Revisit if the secrets multiply, if rotation becomes routine, or if a second
+environment appears.
+
 ## How things get verified here
 
 Three layers, each of which found what the previous one could not:

@@ -26,6 +26,35 @@ Three of these are easy to get subtly wrong:
   silently dropped, so a typo is visible: `docker compose logs otel-collector`
   in the Railway logs for that service.
 
+## Check the header, because an empty one is silent
+
+This cost an hour on 2026-07-29. If `OTEL_EXPORTER_OTLP_HEADERS` is empty or
+malformed, Claude Code does not warn, does not retry visibly, and does not log
+anything: the Collector answers 401 and the export disappears. Nothing anywhere says
+so — not the shell, not Grafana, not the Collector's own logs at info level.
+
+So verify it, every time you change it and the first time after a reboot:
+
+```bash
+printf %s "$OTEL_EXPORTER_OTLP_HEADERS" | wc -c   # 85: "Authorization=Bearer " (21) + 64 hex
+echo "$CLAUDE_CODE_ENABLE_TELEMETRY"              # 1
+```
+
+Read the token from the Keychain rather than writing it into the profile — the file
+then holds a reference, not a value:
+
+```bash
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $(security find-generic-password -s agentic-os-otlp-ingest -w | tr -d '\n')"
+```
+
+`tr -d '\n'` is not paranoia: a trailing newline inside a header is exactly the kind
+of invisible defect that produces this failure mode. Doppler would work here too, but
+it makes a network call on every new terminal and fails offline — Doppler is the
+source of truth, the Keychain is the operational copy.
+
+Variables are read **when the process starts**: a Claude Code session opened before
+you edited the profile will never export, and will not say so either.
+
 ## Metric names
 
 Claude Code exports `claude_code.session.count`, `claude_code.token.usage`
