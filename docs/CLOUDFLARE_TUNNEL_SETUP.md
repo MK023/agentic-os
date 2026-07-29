@@ -25,9 +25,9 @@ service, reaching the others over the project's private network):
 
 | Hostname | Service |
 |---|---|
-| `grafana.yourdomain.com` | `http://grafana.railway.internal:3000` |
-| `status.yourdomain.com` | `http://status-api.railway.internal:8000` |
-| `otel.yourdomain.com` | `http://otel-collector.railway.internal:4318` |
+| `grafana.marcobellingeri.dev` | `http://grafana.railway.internal:3000` |
+| `status.marcobellingeri.dev` | `http://status-api.railway.internal:8000` |
+| `otel.marcobellingeri.dev` | `http://otel-collector.railway.internal:4318` |
 
 None of these services takes a public Railway domain: the tunnel is the only way in,
 so there is no platform hostname sitting unprotected beside it.
@@ -39,9 +39,9 @@ of its own, so its only safe exposure is the project's private network.
 
 Zero Trust → **Access → Applications**:
 
-- **Grafana** on `grafana.yourdomain.com` — policy: your own email only
+- **Grafana** on `grafana.marcobellingeri.dev` — policy: your own email only
   (interactive login).
-- **Status API** on `status.yourdomain.com` — policy action **Service Auth**
+- **Status API** on `status.marcobellingeri.dev` — policy action **Service Auth**
   (anything else makes Access prompt for an identity-provider login, which a
   Worker cannot complete), with a Service Token issued for it. The generated
   Client ID/Secret are what marcobellingeri.dev's Worker sends as the
@@ -50,7 +50,16 @@ Zero Trust → **Access → Applications**:
 An Access application with **no** policy is reachable by anyone authenticated in
 the org — check the policy explicitly on both apps after creating them.
 
-## 4. Why `otel.yourdomain.com` has no Access application
+## 4. Why the hostnames are written down here
+
+They are subdomains of a site that is already public, and naming them costs nothing
+this design ever relied on: the OTLP endpoint authenticates inside the Collector, the
+other two sit behind Cloudflare Access. If knowing a hostname were enough to reach
+any of them, that would be the finding — not the fact that it is written in a repo.
+This is the same reasoning that made us reject "the hostname is hard to guess" as an
+access control in the first place.
+
+## 5. Why `otel.marcobellingeri.dev` has no Access application
 
 Claude Code's OTLP exporter cannot send the Access service-token headers, so an
 Access app in front of it would simply break ingestion. That does **not** make
@@ -68,10 +77,10 @@ Code's `OTEL_EXPORTER_OTLP_HEADERS` (see `docs/CLAUDE_CODE_TELEMETRY.md`). A
 request without a matching bearer token is rejected by the Collector before it
 reaches any pipeline.
 
-## 5. Verify
+## 6. Verify
 
 ```bash
-bash scripts/verify-hub.sh https://grafana.yourdomain.com https://status.yourdomain.com "$STATUS_API_TOKEN"
+bash scripts/verify-hub.sh https://grafana.marcobellingeri.dev https://status.marcobellingeri.dev "$STATUS_API_TOKEN"
 ```
 
 Note that the status check goes through Access, so it only passes from a context

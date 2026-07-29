@@ -96,9 +96,9 @@ Worker secrets.
 Same three hostnames as `../docs/CLOUDFLARE_TUNNEL_SETUP.md`, pointed at the internal
 DNS names instead of Docker service names:
 
-- `grafana.yourdomain.com` → `http://grafana.railway.internal:3000`
-- `status.yourdomain.com` → `http://status-api.railway.internal:8000`
-- `otel.yourdomain.com` → `http://otel-collector.railway.internal:4318`
+- `grafana.marcobellingeri.dev` → `http://grafana.railway.internal:3000`
+- `status.marcobellingeri.dev` → `http://status-api.railway.internal:8000`
+- `otel.marcobellingeri.dev` → `http://otel-collector.railway.internal:4318`
 
 ## Three things to check on the first deploy
 
