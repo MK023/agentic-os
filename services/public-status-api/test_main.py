@@ -40,7 +40,7 @@ def test_status_returns_whitelisted_fields_only():
 @respx.mock
 def test_status_returns_zeros_when_no_data_yet():
     # Empty `result` is what Prometheus returns before the first session is ever
-    # recorded, or after a fresh VPS rebuild — a legitimate 200 with zeros, not a
+    # recorded, or after the volume is recreated — a legitimate 200 with zeros, not a
     # 502. Locks in _parse_value's empty-result branch.
     respx.get("http://prometheus:9090/api/v1/query").mock(
         return_value=httpx.Response(200, json={"data": {"result": []}})
@@ -108,7 +108,7 @@ def test_status_with_malformed_upstream_json_returns_502_not_500(monkeypatch):
 
 @respx.mock
 def test_without_sentry_dsn_capture_is_a_noop(monkeypatch):
-    # The no-DSN branch is the default on a VPS where SENTRY_DSN is left empty
+    # The no-DSN branch is the default wherever SENTRY_DSN is left empty
     # in docker/.env — it must stay a silent no-op, not an error path.
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))

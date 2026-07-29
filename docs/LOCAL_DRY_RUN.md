@@ -1,4 +1,4 @@
-# Running the whole stack locally, before any VPS exists
+# Running the whole stack locally
 
 Everything except `cloudflared` runs on a laptop with a Docker daemon. This is how
 the metric names, the ingest auth and the label set were established as facts rather

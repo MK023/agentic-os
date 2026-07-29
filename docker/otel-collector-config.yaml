@@ -42,7 +42,7 @@ processors:
   # the counters are cumulative per process, so without it two concurrent sessions
   # write the same series and the last export wins. Measured 2026-07-28 — two
   # parallel sessions produced one series reading `1`, not `2`. It is a random
-  # per-run UUID, it never leaves the VPS, and the public endpoint returns only sums.
+  # per-run UUID, it never leaves the hub, and the public endpoint returns only sums.
   transform/label-allowlist:
     metric_statements:
       - context: datapoint

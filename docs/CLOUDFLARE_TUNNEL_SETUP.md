@@ -1,7 +1,7 @@
 # Cloudflare Tunnel setup (one-time, manual)
 
 Manual work against the real Cloudflare account — not something this repo's CI
-drives. Run it once the VPS exists and `docker compose up -d` is running there.
+drives. Run it once the five Railway services are deployed and running.
 
 The compose file runs `cloudflared tunnel run` with a `TUNNEL_TOKEN`, which means
 a **remotely-managed** tunnel: it is created in the dashboard, and its routes
@@ -14,7 +14,7 @@ Don't mix the two models.)
 
 Cloudflare dashboard → **Networking → Tunnels → Create a tunnel** → name it
 `agentic-os-hub`. Copy the connector token from the installation command it
-shows; that value goes into the VPS's `docker/.env` as `CLOUDFLARE_TUNNEL_TOKEN`
+shows; that value becomes the `cloudflared` service's `TUNNEL_TOKEN` variable
 (see `docker/.env.example`). It is a credential — treat it like a password.
 
 ## 2. Add three public hostnames

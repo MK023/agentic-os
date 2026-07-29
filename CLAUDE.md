@@ -6,11 +6,11 @@
 
 ## What this is
 
-Personal observability hub for AI-assisted work. Phase 1: one Hostinger VPS
-(Terraform) running OTel Collector → Prometheus → Grafana + a tiny FastAPI status
-API, all behind a Cloudflare Tunnel, with a public widget living in the
+Personal observability hub for AI-assisted work. Phase 1: OTel Collector →
+Prometheus → Grafana plus a tiny FastAPI status API, five services on **Railway**
+behind a Cloudflare Tunnel, with a public widget living in the
 `marcobellingeri.dev` repo. The priority here is **the public/private boundary**:
-three aggregate numbers are public, everything else never leaves the VPS.
+three aggregate numbers are public, everything else stays inside the project.
 
 ## Layout
 
@@ -18,17 +18,15 @@ three aggregate numbers are public, everything else never leaves the VPS.
   `railway/README.md`, which is the deployment guide. **Start here** for infra.
 - `docker/` — the local environment and the single source of every configuration
   file the Railway images copy in. `docker/.env` is local fake secrets, never in git.
-- `terraform/hostinger-vps/` — the VPS alternative. Written, validated, not deployed;
-  kept deliberately, do not delete it as dead code.
 - `services/public-status-api/` — the only application code (and the only place
   coverage/mutation thresholds apply).
-- `scripts/` — `bootstrap.sh` (runs on the VPS at first boot), `verify-hub.sh`
-  (post-deploy smoke test).
+- `scripts/` — `verify-hub.sh`, the post-deploy smoke test. It is the real check
+  that a deploy worked: Railway ignores the Dockerfile `HEALTHCHECK`.
 
 ## Commands
 
 ```bash
-terraform -chdir=terraform/hostinger-vps fmt -check && terraform -chdir=terraform/hostinger-vps validate
+docker build -f railway/prometheus/Dockerfile -t p .   # same for the other three
 docker compose -f docker/docker-compose.yml config --quiet     # needs the 5 env vars set to anything
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
@@ -48,8 +46,8 @@ To validate the Collector config without a Docker daemon, download the real
 ## How we work here
 
 - Branch + PR, never straight to `main`. All gates green before "done".
-- **Autonomy stops before real infrastructure**: `terraform apply`, `cloudflared
-  tunnel create`, Cloudflare Access policies and filling `docker/.env` on the VPS are
+- **Autonomy stops before real infrastructure**: creating Railway services, setting
+  their variables, `cloudflared tunnel create` and the Cloudflare Access policies are
   Marco's, always. Writing and validating the code for them is not.
 - Vendor behaviour is read from the vendor's docs before it is written down here.
   Twelve bugs in the original plan survived an execute-everything pass and died to a
@@ -75,11 +73,16 @@ those files are correct in both places. Never fork a config to "fix it for local
 - OTLP ingest authenticates **inside the Collector** (`bearertokenauth`): a public
   Tunnel hostname is not an access control (CVE-2026-28798 pattern).
 - Prometheus never gets a Tunnel hostname — it has no auth of its own.
-- Secrets live in `docker/.env` on the VPS and in GitHub/Worker secrets. Never in git.
+- Secrets are Railway service variables in production, `docker/.env` locally (fake
+  values, gitignored), and GitHub/Worker secrets elsewhere. Never in git.
 
 ## What NOT to do (closed decisions — don't reopen without new data)
 
-- **No Kubernetes/K3s**, no self-hosted Langfuse, no LangChain. One VPS, one user.
+- **No Kubernetes/K3s, no Docker Swarm**, no self-hosted Langfuse, no LangChain.
+  Five small services for one user: an orchestrator buys nothing here, and Docker's
+  own docs say to use Compose if you are not deploying to Swarm.
+- **No going back to a VPS.** Decided 2026-07-29 and settled: the point of this
+  platform is that there is no machine to maintain.
 - **Never put the `prometheus` exporter in a `logs` pipeline** — metrics-only, the
   Collector refuses to start.
 - **Never turn the label allow-list into a delete-list**, and never assume
@@ -99,7 +102,9 @@ those files are correct in both places. Never fork a config to "fix it for local
 
 ## References (read on demand)
 
+`docs/DECISIONS.md` (every closed decision and what measuring changed about it — read
+this before reopening anything) · `railway/README.md` (how production is deployed) ·
 `README.md` (pipeline level, test contract, gate policy) · `docs/BLOCKERS.md` (what is
-blocked on which account, with evidence) · `docs/CLOUDFLARE_TUNNEL_SETUP.md` ·
-`docs/CLAUDE_CODE_TELEMETRY.md` · `docs/superpowers/specs/` and `plans/` (why, and the
-plan as executed) · `TASKS.md` (checklist + the bug table).
+left) · `docs/CLOUDFLARE_TUNNEL_SETUP.md` · `docs/CLAUDE_CODE_TELEMETRY.md` ·
+`docs/LOCAL_DRY_RUN.md` (how to verify behaviour instead of assuming it) ·
+`docs/superpowers/specs/` (the design, realigned to Railway).

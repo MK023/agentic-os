@@ -2,7 +2,8 @@
 
 **Status:** approved by Marco, ready for implementation planning
 **Repo:** `MK023/agentic-os` (nuovo, separato da `langfuse-devops-lab`)
-**Data:** 2026-07-28
+**Data:** 2026-07-28 · **riallineato il 2026-07-29**, quando il target di deploy è
+passato da un VPS Hostinger a Railway (`docs/DECISIONS.md`)
 
 ## 1. Cos'è
 
@@ -33,12 +34,13 @@ riferimento K8s del portfolio: Agentic OS non ne ha bisogno e non deve assorbirl
 marcobellingeri.dev per farlo vedere lavorare in tempo reale.
 
 **Fatto quando:**
-- VPS provisionato via Terraform, distruggibile con `terraform destroy`.
+- Cinque servizi su Railway, ricreabili dal repo (un Dockerfile e un `railway.json`
+  ciascuno), nessuna macchina da mantenere.
 - Claude Code locale esporta OTLP verso l'hub, metriche visibili in Grafana entro
   secondi da una sessione reale.
 - Endpoint pubblico-sicuro (solo numeri, mai contenuto) raggiungibile da
   marcobellingeri.dev via il pattern Worker same-origin già in uso sul sito.
-- Zero porte pubbliche esposte sul VPS al di fuori del tunnel Cloudflare.
+- Nessun dominio pubblico Railway: l'unico ingresso è il tunnel Cloudflare.
 - Smoke test (`scripts/verify-hub.sh`) verde dopo ogni apply.
 
 ## 3. Architettura
@@ -49,7 +51,7 @@ flowchart TB
         CC["Claude Code<br/>OTEL_EXPORTER_OTLP_ENDPOINT"]
     end
 
-    subgraph VPS["Hostinger VPS KVM2 — Terraform-provisionato, docker-compose"]
+    subgraph HUB["Railway — cinque servizi, rete privata del progetto"]
         CF["cloudflared<br/>(zero-trust, no porte pubbliche)"]
         OTEL["OTel Collector<br/>OTLP receiver — contratto generico"]
         PROM["Prometheus<br/>scrape 15-30s, retention 15-30gg"]
@@ -68,7 +70,7 @@ flowchart TB
     CC -->|OTLP via Tunnel, Access token| CF
     PUBAPI -->|fetch server-side, no CORS| WORKER
 
-    style VPS fill:#1a3a1a
+    style HUB fill:#1a3a1a
     style SITE fill:#1a2a3a
 ```
 
@@ -83,7 +85,7 @@ flowchart TB
 | Endpoint pubblico-sicuro | Espone solo aggregati safe (conteggi/token/costo/stato sessione) | Nessun contenuto, nessuna query libera — pochi campi fissi, whitelist esplicita. |
 | Worker `/api/agentic-status` (repo sito) | Fetch server-side verso l'endpoint pubblico-sicuro, cache edge | Same-origin, CSP intatta, nessuna chiave nel bundle — pattern già in uso per Radar/Newsstand. |
 | Widget sul sito | Rende i dati cacheati | Componente statico + piccolo fetch, coerente stile sito (niente iframe). |
-| Terraform (`hostinger/hostinger` provider) | Provisioning VPS + ssh key + post-install | `terraform apply`/`destroy` puliti, pattern md-vault ("infra che si ricrea"). |
+| Railway (config-as-code) | Un `Dockerfile` + un `railway.json` per servizio | Nessun dominio pubblico; DNS privato `<servizio>.railway.internal`. Guida in `railway/README.md`. |
 
 ## 5. Data flow
 
@@ -99,11 +101,11 @@ flowchart TB
    (whitelist di campi) degli stessi dati.
 6. Il Worker di marcobellingeri.dev fa fetch periodico server-side di quell'endpoint,
    cachea all'edge, il widget pubblico lo mostra — nessuna chiamata diretta
-   browser→VPS, nessun CORS da aprire.
+   browser→hub, nessun CORS da aprire.
 
 ## 6. Sicurezza
 
-- **Zero porte pubbliche** sul VPS: solo `cloudflared` in uscita.
+- **Nessun dominio pubblico** sui servizi: solo `cloudflared` in uscita.
 - **Cloudflare Access** davanti a due superfici private: status API (Service Auth,
   token per-consumer — oggi solo il Worker del sito) e Grafana UI (policy email
   Marco). L'ingest OTLP **non** passa da Cloudflare Access — Claude Code non
@@ -130,15 +132,15 @@ flowchart TB
 - **Immagini Docker pinnate a versione**, mai `:latest`; `no-new-privileges` +
   `cap_drop: [ALL]` su ogni servizio — baseline 2026 hardening container, nessuno
   dei 4 servizi usa capability Linux oltre il default userspace.
-- Secret (token Access/OTLP, credenziali Hostinger API) fuori dal repo — variabili
-  locali/gestore secret, mai committati. Nessun secret hardcoded nel
-  docker-compose versionato: iniettati a runtime dal provisioning Terraform.
+- Secret (token Access/OTLP, token del tunnel) fuori dal repo: variabili di servizio
+  su Railway in produzione, `docker/.env` con valori finti in locale. Nessun secret
+  nel compose versionato.
 
 ## 6.1 Pipeline CI/CD — livello dichiarato e baseline
 
 Modello di riferimento: il modello di maturità CI/CD tenuto nelle note private. **Livello 1**
 dichiarato (`PR → Lint → Test → Build → Audit dipendenze`), motivato: progetto
-personale, un solo sviluppatore, rollback immediato (`terraform destroy`/redeploy).
+personale, un solo sviluppatore, rollback immediato (redeploy dell'immagine precedente).
 Livello 4 (canary, progressive delivery) sarebbe teatro qui — nessun traffico da
 misurare in modo statisticamente significativo.
 
@@ -156,17 +158,17 @@ canary. Vedi il piano per il dettaglio dei job.
 
 Modello di riferimento: il modello dei test tenuto nelle note private.
 
-1. **Forma**: analisi statica come piano terra per l'infra (`terraform validate`,
-   `tflint`, `docker compose config`, Checkov); piccola piramide a baricentro
+1. **Forma**: analisi statica come piano terra per l'infra (`docker compose config`,
+   build di ogni immagine in CI, Checkov); piccola piramide a baricentro
    *unit* per i due componenti applicativi (status API, widget sito) — la
    complessità sta dentro la funzione, non nella composizione.
 2. **Soglia coverage nuovo codice**: 100% su status API e widget (piccoli, pochi
-   path) — nessuna soglia globale sul repo, in gran parte Terraform/YAML dove la
+   path) — nessuna soglia globale sul repo, in gran parte Dockerfile/YAML dove la
    coverage di riga non significa nulla.
 3. **Mutation score bloccante (notturno)**: la funzione `status()` della status
    API — unico confronto di autorizzazione del progetto.
 4. **Tassonomia sicurezza**: OWASP API Security Top 10 per la status API (oggi);
-   MITRE ATT&CK per la superficie infra (Tunnel/Access/VPS) — non MITRE ATLAS,
+   MITRE ATT&CK per la superficie infra (Tunnel, Access, progetto Railway) — non MITRE ATLAS,
    che si applica solo quando esiste una componente ML/LLM interrogabile in modo
    avversario, e la Fase 1 non chiama nessun modello. OWASP LLM Top 10 rimandato
    alla Fase 4 (RAG) per lo stesso motivo.
@@ -260,10 +262,10 @@ lista di controllo per quando la Fase 4 avrà il suo spec.
 
 ## 8. Testing / validazione (Fase 1)
 
-- `terraform validate` + `tflint` sul modulo — estende il gate `validate` già
-  esistente nel pattern di questo portfolio.
+- Build in CI di tutte e cinque le immagini: un file di configurazione spostato
+  rompe un check, non un deploy.
 - `yamllint` sul `docker-compose.yml`.
-- `scripts/verify-hub.sh`: dopo `terraform apply`, verifica 3 endpoint (Collector
+- `scripts/verify-hub.sh`: dopo il deploy, verifica gli endpoint (Collector
   health, Prometheus `/targets` tutti `up`, Grafana `/api/health`) — fallisce se uno
   non risponde. Unico check runnable per questa fase.
 - Verifica manuale finale di Marco: usa Claude Code, conferma le metriche in
@@ -271,15 +273,14 @@ lista di controllo per quando la Fase 4 avrà il suo spec.
 
 ## 9. Costo e durata
 
-- Hostinger VPS KVM2 (2 vCPU, 8GB RAM) — confermare piano esatto prima di
-  `terraform apply`. Stima 10-12€ per il primo mese a fatturazione mensile.
-- **1 mese, poi valuta**: Terraform pensato per `apply`/`destroy` puliti (pattern
-  md-vault "infra che si ricrea"). Decisione di tenerlo vivo oltre il mese è di
-  Marco, non presa qui.
+- Railway: piano Trial per il primo deploy ($5 una tantum, volumi 0,5 GB), Hobby
+  quando il credito finisce ($5/mese + consumo, ~$10-13 stimati per questo carico).
+- **1 mese, poi valuta**: il progetto si ricrea dal repo, quindi spegnerlo e
+  riaccenderlo costa un deploy. Se tenerlo vivo oltre il mese lo decide Marco.
 
 ## 10. Fuori scope (esplicito)
 
-- Nessun K8s/K3s in nessuna fase — un solo VPS per un solo utente non lo
+- Nessun K8s/K3s/Swarm in nessuna fase — cinque servizi per un utente non lo
   giustifica; lo strumento resta Docker Compose ovunque.
 - Nessun Langfuse self-hosted in Fase 1 — l'app di langfuse-devops-lab resta su
   Langfuse Cloud come oggi, invariata.

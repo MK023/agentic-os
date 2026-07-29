@@ -1,16 +1,13 @@
-# Checkov config for Agentic OS. Adapted from langfuse-devops-lab/.checkov.yml
-# on 2026-07-28 — every skip-check entry in that file is Kubernetes/Helm/Supabase
-# specific and none of it applies to this repo's stack (Terraform VPS +
-# Dockerfile + GitHub Actions). Starting from an empty skip-check on purpose:
-# add an entry only in response to a real finding, with a comment saying why.
+# Checkov config for Agentic OS. The repository has no Terraform any more (the
+# deployment target is Railway, see railway/README.md), so the frameworks are the two
+# that still exist here: the Dockerfiles and the GitHub Actions workflows.
+# skip-check stays empty on purpose — the two skips this repo needs are inline in the
+# Dockerfiles that need them, with the reason in the file. A global skip would also
+# silence the rule for images that should keep being checked.
 
 framework:
-  - terraform
   - dockerfile
   - github_actions
-
-skip-path:
-  - .terraform/
 
 skip-check: []
 

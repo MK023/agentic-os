@@ -24,7 +24,7 @@ Three of these are easy to get subtly wrong:
 - **`OTEL_EXPORTER_OTLP_HEADERS`** is what the Collector's `bearertokenauth`
   extension checks. Without it every export is rejected with 401 rather than
   silently dropped, so a typo is visible: `docker compose logs otel-collector`
-  on the VPS.
+  in the Railway logs for that service.
 
 ## Metric names
 
@@ -66,7 +66,7 @@ any rule naming them.
 is a cardinality generator) and lost data: Claude Code's counters are cumulative per
 process, so with the id gone two concurrent sessions write the same series and the
 last export wins — measured, two parallel sessions produced one series reading `1`
-instead of `2`. It is a random per-run UUID, it never leaves the VPS, and the public
+instead of `2`. It is a random per-run UUID, it never leaves the hub, and the public
 endpoint only ever returns sums.
 
 If you add a producer, check its labels the same way — `curl` the Collector's
