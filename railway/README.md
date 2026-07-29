@@ -163,6 +163,8 @@ Everything here was met at least once on 2026-07-29. Each row is a symptom that 
 | Status API answers 401 | The app's own bearer token: `AGENTIC_OS_STATUS_TOKEN` on the Worker does not match `STATUS_API_TOKEN` on Railway |
 | Status API answers 502 | It is alive and Prometheus is not answering. Sentry has the exception |
 | `cloudflared` restarts, *"Provided Tunnel token is not valid"* | `--token` or whitespace ended up inside `TUNNEL_TOKEN` |
+| The three numbers **dropped** right after a deploy | The collector restarted: its exporter state is in memory, and sessions that already ended never re-export. Structural, self-healing for live sessions only — see "collector redeploy" in `../docs/DECISIONS.md` |
+| The numbers are **frozen while a session is actively working** | That client's exporter went silent (measured after a collector switchover, 2026-07-29). The hub is fine — probe the ingest endpoint and it answers 401 without a token. The fix is on the client: restart the Claude Code session |
 
 ## What the move actually cost
 

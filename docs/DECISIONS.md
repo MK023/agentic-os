@@ -107,6 +107,29 @@ activity", which is what the numbers are honestly able to say.
 They stay indicative either way — that is the tool's stated scope: *"If you need 100%
 accuracy, such as for per-request billing, Prometheus is not a good choice"*.
 
+**A collector redeploy is not free, and now we know its exact price.** Measured on
+2026-07-29, when a comment-only change to `otel-collector-config.yaml` triggered a
+production redeploy (the file is in the service's `watchPatterns`):
+
+1. **Closed sessions vanish from "today".** The Prometheus exporter's state lives in
+   collector memory; a session that already ended never re-exports, so its series is
+   gone after the restart. Watched live: 3 sessions / 9,142,741 tokens became
+   2 sessions / 8,743,266 — the day undercounts by exactly the dead session.
+   Live sessions reappear at their next export, cumulative value intact.
+2. **A live client can stay silent after the switchover.** One active session kept
+   consuming for 20+ minutes after the restart while the public sums stayed frozen —
+   its exporter never landed another payload, and nothing anywhere said so (same
+   silent failure mode as the malformed-header case in
+   `CLAUDE_CODE_TELEMETRY.md`). The hub side was healthy the whole time: fresh
+   requests to the ingest endpoint authenticated normally. Only restarting the
+   client session re-establishes the export.
+
+So: redeploy the collector deliberately, not incidentally — and after any collector
+restart, verify that *currently active* sessions still move the numbers (two reads
+of the public endpoint a couple of minutes apart, while a session is working).
+Whether the config file should stay in `watchPatterns` at all is an open call, in
+`BLOCKERS.md`.
+
 **Delta temporality: evaluated, refused, revisit at beta.** It would let the
 Collector sum sessions and remove the `session_id` label entirely — the better
 architecture on paper, and the OTel data model points at it for short-lived

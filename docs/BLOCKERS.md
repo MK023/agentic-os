@@ -30,6 +30,13 @@ what a future release starts sending.
 
 ## Still Marco's call
 
+- **Whether `docker/otel-collector-config.yaml` stays in the otel-collector
+  service's `watchPatterns`.** As it stands, any change to the file — a comment
+  included — redeploys the collector in production, and a collector restart has a
+  measured price (see "collector redeploy" in `DECISIONS.md`: closed sessions drop
+  out of "today", a live client can go silent). The alternative is removing it from
+  the patterns and redeploying by hand when the config really changes — trading an
+  automatic deploy for a deliberate one.
 - Where the widget goes on the site page (the endpoint is live and returns real
   numbers; the degraded path stays tested).
 - Whether the hub stays past the first month.

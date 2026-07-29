@@ -55,6 +55,14 @@ source of truth, the Keychain is the operational copy.
 Variables are read **when the process starts**: a Claude Code session opened before
 you edited the profile will never export, and will not say so either.
 
+The same silence has a second trigger, measured on 2026-07-29: **after a collector
+redeploy, a session that was exporting fine can stop landing payloads and never say
+so** — 20+ minutes of real usage with the public sums frozen, while fresh requests
+to the ingest endpoint authenticated normally. The check is the same idea as above,
+but end-to-end: read the public endpoint twice a couple of minutes apart *while the
+session is working*; if the numbers do not move, the exporter is wedged and the only
+fix is restarting that Claude Code session.
+
 ## Metric names
 
 Claude Code exports `claude_code.session.count`, `claude_code.token.usage`
