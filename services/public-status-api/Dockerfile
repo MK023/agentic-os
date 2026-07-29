@@ -1,6 +1,6 @@
 # Pinned to a patch version, not the moving 3.12-slim tag — same reasoning as the
 # compose file's image pins.
-FROM python:3.12.13-slim
+FROM python:3.14.6-slim
 
 WORKDIR /app
 COPY requirements.txt .
