@@ -214,15 +214,21 @@ questions the metrics leave unanswered.
 same fail-open contract as the one already running on marcobellingeri.dev: no DSN is
 a no-op, a failed delivery never changes the response.
 
-**The Sentry release is the deploy's commit SHA, not a version we bump.** Sentry
-takes any string and explicitly suggests a commit SHA, so both were available.
-`RAILWAY_GIT_COMMIT_SHA` is injected by the platform on every deployment, which makes
-the release a fact about what is running rather than a claim someone remembered to
-update — and a release updated by hand is a release that is eventually wrong. The cost
-of the trade is real and accepted: Sentry releases no longer line up with GitHub tags,
-so "which release is this" is answered by the SHA, not by `v1.0.0`. When the variable
-is absent — locally, and under `docker compose` — the field is **omitted rather than
-sent empty**, so local errors do not accumulate under a version that does not exist.
+**The Sentry release was meant to be the deploy's commit SHA — measured, Railway
+never provides it.** Sentry takes any string and explicitly suggests a commit SHA,
+and `RAILWAY_GIT_COMMIT_SHA` looked like what made the release a fact about what is
+running rather than a claim someone remembered to update. Measured on 2026-07-30, it
+does not exist at runtime: Railway injects exactly seven variables into the service
+(`railway variables`, `railway run -- env` and the dashboard agree), none of them
+git-related, and Railway's docs promise git variables only for deploys "originated
+from a GitHub trigger" without saying they reach the container. So in production the
+release field is **omitted** — every event files under no version, exactly the state
+the feature was written to end. The code path stays (it costs nothing and activates
+the day the platform provides the variable); a hand-bumped version stays rejected —
+a release updated by hand is eventually wrong — and chasing a build-time workaround
+was judged not worth the time. The tests that "verified" the feature set the
+variable with `monkeypatch`: they prove the code works when the variable exists,
+never that it exists — the same shape-not-reality gap as the `increase()` query.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.

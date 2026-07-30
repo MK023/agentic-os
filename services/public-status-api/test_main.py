@@ -309,6 +309,8 @@ def _evento_inviato(sentry_call) -> dict:
 def test_sentry_event_carries_the_deploy_sha_as_release(monkeypatch):
     # Without a release every error in Sentry belongs to the same unnamed
     # version, and "is this still happening after the fix?" has no answer.
+    # Dormant in production — Railway sets no git variable at runtime (measured
+    # 2026-07-30) — so this guards the contract for the day a platform does.
     SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", SHA)
@@ -325,9 +327,10 @@ def test_sentry_event_carries_the_deploy_sha_as_release(monkeypatch):
 
 @respx.mock
 def test_sentry_event_omits_release_when_the_deploy_sha_is_absent(monkeypatch):
-    # Local runs and `docker compose` have no RAILWAY_GIT_COMMIT_SHA. Sending an
-    # empty release would file those errors under a version that does not exist,
-    # which is worse than sending none — the key must be missing, not blank.
+    # No environment we run in today sets RAILWAY_GIT_COMMIT_SHA — not local
+    # runs, not `docker compose`, and (measured 2026-07-30) not Railway either.
+    # Sending an empty release would file those errors under a version that does
+    # not exist, which is worse than sending none — missing, not blank.
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
     respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
