@@ -103,14 +103,14 @@ def test_costs_from_several_models_are_summed(monkeypatch):
     _mock_cost(
         [
             _serie("claude-opus-5", "input", 1_000_000),  # 5.00 from the table
-            _serie("claude-sonnet-9-preview", "input", 1_000_000),  # 5.00 at fallback rates
+            _serie("claude-sonnet-9-preview", "input", 1_000_000),  # 10.00: fallback = dearest input
         ]
     )
 
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    assert response.json()["cost_usd_today"] == 10.00
+    assert response.json()["cost_usd_today"] == 15.00
 
 
 @respx.mock
@@ -130,7 +130,7 @@ def test_unknown_model_is_priced_high_and_reported_not_dropped(monkeypatch):
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    assert response.json()["cost_usd_today"] == 25.00  # dearest known rate for `output`
+    assert response.json()["cost_usd_today"] == 50.00  # dearest known rate for `output`
     # The report is only useful if it says WHICH key is missing and where it came
     # from: a gap event with no model name, the wrong exception type or an
     # unsearchable tag is a report nobody can act on. Asserted on the wire, not on
@@ -157,7 +157,7 @@ def test_unknown_token_type_is_priced_high_and_reported_not_dropped(monkeypatch)
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    assert response.json()["cost_usd_today"] == 25.00  # dearest rate on the table
+    assert response.json()["cost_usd_today"] == 50.00  # dearest rate on the table
     # Same wire-level check as the unknown-model test: the event must name the
     # missing key, or the price table cannot be fixed from the report alone.
     assert "token type 'cacheRefresh'" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
@@ -222,6 +222,35 @@ def test_status_returns_zeros_when_no_data_yet():
     # but JSON can: without the explicit 0.0 start value, `sum([])` is the int 0
     # and the quiet-day payload changes type under the widget's feet.
     assert isinstance(response.json()["cost_usd_today"], float)
+
+
+@respx.mock
+def test_every_model_is_priced_from_its_own_row_not_the_fallback(monkeypatch):
+    # One series per (model, type) in the table, one million tokens each: the
+    # expected total is simply the sum of all sixteen list rates. With several
+    # models in the table the fallback rates no longer equal any single model's
+    # rates, so this pins each row's numbers individually — a mutated price, a
+    # misspelled model key or a silent fall-through changes the total or fires
+    # a Sentry gap report, and either fails the test.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost(
+        [
+            _serie(model, tipo, 1_000_000)
+            for model, prezzi in main.PRICES_USD_PER_MTOK.items()
+            for tipo in prezzi
+        ]
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 139.65  # fable 73.50 + opus 36.75 + sonnet 22.05 + haiku 7.35
+    assert not sentry_call.called
 
 
 @respx.mock
