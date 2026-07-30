@@ -95,6 +95,26 @@
           "refId": "B"
         }
       ]
+    },
+    {
+      "id": 6,
+      "title": "Costo USD per sessione (top 10, ultime ~25h)",
+      "description": "Lo stesso calcolo del pannello 'Cost USD', tenuto per session_id invece di sommato. NON e' il numero della status bar di Claude Code: quello e' cost.total_cost_usd, che il client passa allo statusline su stdin e non esporta in nessuna metrica — non e' raggiungibile da qui, ed e' comunque la stima del client (sottostima verificata il 30-07-2026). I termini sono uniti con `or`, non sommati con `+`: `+` fa match sulle label, quindi una sessione che non ha usato TUTTI i modelli sparirebbe dal risultato invece di valere meno. Verificato il 30-07-2026 con `promtool test rules scripts/cost-per-session.promql-test.yml`: forma `or` due sessioni con modelli diversi $10 e $1, forma `+` zero righe. Le sessioni piu' vecchie di ~25h non ci sono perche' il Collector smette di esporne le serie (metric_expiration). Se i prezzi cambiano vanno aggiornati QUI, nel pannello 'Cost USD' e in PRICES_USD_PER_MTOK di main.py.",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (session_id) (claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"} * 10 or claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"} * 50 or claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"} * 12.5 or claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"} * 1 or claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"} * 5 or claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"} * 25 or claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"} * 6.25 or claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"} * 0.5 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"} * 3 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"} * 15 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"} * 3.75 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"} * 0.3 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"} * 1 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"} * 5 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"} * 1.25 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"} * 0.1) / 1e6)",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ]
     }
   ],
   "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il valore corrente invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra temporale la da' il metric_expiration del Collector (25h). Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare."
