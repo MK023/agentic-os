@@ -159,6 +159,25 @@ multiply by the published rates, compare. The earlier claim that the metric was 
 a 1-session cost. **Establish what the reference number measures before comparing anything
 to it.**
 
+**The cost in Claude Code's own status bar cannot be collected, and would not be
+wanted anyway.** The obvious source for a per-session cost looks like the number
+already on screen. It is not reachable: `ccstatusline` computes nothing, it prints
+`cost.total_cost_usd` out of the JSON Claude Code writes to the statusline command's
+**stdin** — a field that appears in no metric and, checked on 2026-07-30, in no
+transcript either. Even reachable it would be the client's own estimate, the one
+measured at $0.90 against $2.53 of tokens. Per-session cost is therefore the same
+`tokens × list price` arithmetic as everything else, kept `by (session_id)` instead of
+summed.
+
+**Per-session cost joins its terms with `or`, never `+`.** `+` matches label sets, so
+adding one sum per model drops every session that did not use *all* of them — the
+normal case — and the panel comes back empty rather than wrong-looking, which is the
+worse failure of the two. `or` unions the series and a single `sum by (session_id)`
+adds them, so a missing model costs nothing instead of erasing the session. Both
+behaviours are pinned in `scripts/cost-per-session.promql-test.yml`: the `or` form
+prices two single-model sessions at $10 and $1, the `+` form returns zero rows.
+`promtool test rules` runs it without a server or a Docker daemon.
+
 **Delta temporality: evaluated, refused, revisit at beta.** It would let the
 Collector sum sessions and remove the `session_id` label entirely — the better
 architecture on paper, and the OTel data model points at it for short-lived
