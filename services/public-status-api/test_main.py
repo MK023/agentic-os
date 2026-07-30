@@ -5,6 +5,7 @@ import respx
 from fastapi.testclient import TestClient
 
 import main
+import sentry
 from main import app
 
 client = TestClient(app)
@@ -58,12 +59,17 @@ def test_status_returns_whitelisted_fields_only():
 
 
 @respx.mock
-def test_cost_is_computed_from_token_counts_across_every_type():
+def test_cost_is_computed_from_token_counts_across_every_type(monkeypatch):
     # Real production numbers, read off the hub on 2026-07-30. They matter because
     # cache tokens dominate the bill here (cacheCreation alone is ~80% of it), and
     # any parser that reads `result[0]` and stops — as _parse_value does — would
     # answer 2.04 while looking perfectly healthy. That silent truncation is the
     # failure this test exists to catch, not the arithmetic.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
     _mock_scalars()
     _mock_cost(
         [
@@ -78,6 +84,12 @@ def test_cost_is_computed_from_token_counts_across_every_type():
 
     assert response.status_code == 200
     assert response.json()["cost_usd_today"] == 2.53
+    # With a single model in the price table the fallback rates EQUAL that model's
+    # rates, so a lookup that quietly falls through to the fallback produces the
+    # right number for the wrong reason — the arithmetic above cannot see it. What
+    # can: a known model and known types must report no pricing gap. This killed
+    # six mutants (2026-07-30) that rerouted known models through the fallback.
+    assert not sentry_call.called
 
 
 @respx.mock
@@ -119,7 +131,14 @@ def test_unknown_model_is_priced_high_and_reported_not_dropped(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["cost_usd_today"] == 25.00  # dearest known rate for `output`
-    assert sentry_call.called
+    # The report is only useful if it says WHICH key is missing and where it came
+    # from: a gap event with no model name, the wrong exception type or an
+    # unsearchable tag is a report nobody can act on. Asserted on the wire, not on
+    # the dict sentry.py built — same reasoning as _evento_inviato itself.
+    evento = _evento_inviato(sentry_call)
+    assert evento["exception"]["values"][0]["type"] == "UnknownPricingKey"
+    assert "model 'claude-opus-6-unreleased'" in evento["exception"]["values"][0]["value"]
+    assert evento["tags"] == {"endpoint": "status"}
 
 
 @respx.mock
@@ -139,7 +158,9 @@ def test_unknown_token_type_is_priced_high_and_reported_not_dropped(monkeypatch)
 
     assert response.status_code == 200
     assert response.json()["cost_usd_today"] == 25.00  # dearest rate on the table
-    assert sentry_call.called
+    # Same wire-level check as the unknown-model test: the event must name the
+    # missing key, or the price table cannot be fixed from the report alone.
+    assert "token type 'cacheRefresh'" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
 
 
 @respx.mock
@@ -197,6 +218,27 @@ def test_status_returns_zeros_when_no_data_yet():
         "tokens_today": 0,
         "cost_usd_today": 0.0,
     }
+    # `0 == 0.0` is True, so the dict comparison above cannot tell them apart —
+    # but JSON can: without the explicit 0.0 start value, `sum([])` is the int 0
+    # and the quiet-day payload changes type under the widget's feet.
+    assert isinstance(response.json()["cost_usd_today"], float)
+
+
+@respx.mock
+def test_a_month_of_tokens_does_not_hide_a_wrong_divisor(monkeypatch):
+    # `round(..., 2)` forgives a divisor that is off by one (1_000_001 instead of
+    # 1_000_000) on any day cheap enough — the error only clears a cent past ~$5k.
+    # Token counts big enough to make the difference visible pin the divisor
+    # exactly; the daily-sized tests above never can.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 2_000_000_000_000)])
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 10_000_000.0
 
 
 def test_status_rejects_missing_token():
@@ -266,6 +308,12 @@ def test_without_sentry_dsn_capture_is_a_noop(monkeypatch):
 def test_malformed_sentry_dsn_is_reported_not_swallowed(monkeypatch, capsys):
     # A DSN that is set but unparseable means someone believes error reporting
     # works. Silence there is the same failure this endpoint exists to avoid.
+    #
+    # The report-once flag is module state that outlives a test: anything that
+    # ran the malformed path earlier in the same process leaves it True and this
+    # test would then pass vacuously (a mutant of the once-check survived the
+    # 2026-07-30 mutation run for exactly that reason). Reset it explicitly.
+    monkeypatch.setattr(sentry, "_dsn_malformato_segnalato", False)
     monkeypatch.setenv("SENTRY_DSN", "questo-non-e-un-dsn")
     respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
 
