@@ -72,7 +72,29 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 5,
+      "title": "Payload in arrivo al Collector (rate, 5m)",
+      "description": "Il pannello da guardare quando gli altri sembrano fermi. Conta i payload che ENTRANO nel Collector, non il loro contenuto: sopra zero qualcuno sta parlando, a zero non parla nessuno. Senza questo, 'un client ha smesso di esportare' e 'Marco ha smesso di lavorare' danno lo stesso segnale — una serie piatta — perche' il Collector continua a esporre l'ultimo valore per 25h e Prometheus continua a scrapare campioni immutati. Diagnosticato male tre volte prima di avere questa serie.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(otelcol_receiver_accepted_metric_points[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(otelcol_receiver_refused_metric_points[5m]))",
+          "refId": "B"
+        }
+      ]
     }
   ],
-  "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il valore corrente invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra temporale la da' il metric_expiration del Collector (25h). Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori."
+  "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il valore corrente invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra temporale la da' il metric_expiration del Collector (25h). Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare."
 }

@@ -107,6 +107,30 @@ activity", which is what the numbers are honestly able to say.
 They stay indicative either way — that is the tool's stated scope: *"If you need 100%
 accuracy, such as for per-request billing, Prometheus is not a good choice"*.
 
+**The Collector's own telemetry is scraped, because a flat series says nothing.** A
+cumulative counter that stops growing looks identical whether the client stopped
+exporting or nobody was working: the Collector keeps exposing the last value for 25h
+(`metric_expiration`) and Prometheus keeps scraping unchanged samples, so `rate()` is
+zero in both cases and every panel flatlines correctly. That ambiguity was
+misdiagnosed three times between 29 and 30 July — once as a wedged exporter, once as
+a client needing a restart, both wrong — before anyone noticed the signal simply
+cannot answer the question.
+
+`otelcol_receiver_accepted_metric_points` can: it counts payloads *arriving*,
+independent of their content. Above zero somebody is talking, at zero nobody is.
+Enabled with `service.telemetry.metrics.readers` and scraped as a second job on port
+**8888**, the same container as the pipeline output on 8889 — two ports, two
+different questions. Bound to `0.0.0.0` because Prometheus is another container;
+still no Tunnel hostname, so it stays on the private network like everything else.
+
+Two traps worth naming. `service::telemetry::metrics::address` has been **ignored**
+since v0.123.0: writing it is not a syntax error, so nothing complains and the port
+simply never opens — a silent failure that only reading the vendor docs prevents. And
+`docker compose config` never validated this file at all: compose knows its own
+schema, not the Collector's, and the config is merely a file mounted into a
+container. CI now runs `validate` against the built image, so the exact file that
+ships is checked by the exact binary that will run it.
+
 **Delta temporality: evaluated, refused, revisit at beta.** It would let the
 Collector sum sessions and remove the `session_id` label entirely — the better
 architecture on paper, and the OTel data model points at it for short-lived

@@ -163,6 +163,7 @@ Everything here was met at least once on 2026-07-29. Each row is a symptom that 
 | Status API answers 401 | The app's own bearer token: `AGENTIC_OS_STATUS_TOKEN` on the Worker does not match `STATUS_API_TOKEN` on Railway |
 | Status API answers 502 | It is alive and Prometheus is not answering. Sentry has the exception |
 | `cloudflared` restarts, *"Provided Tunnel token is not valid"* | `--token` or whitespace ended up inside `TUNNEL_TOKEN` |
+| The numbers are **flat** and you cannot tell whether that is a fault | Read the *Payload in arrivo al Collector* panel: above zero the data is arriving and you simply were not working; at zero no client is exporting. The other four panels cannot separate those two cases — a cumulative counter that stops growing looks the same either way |
 
 ## What the move actually cost
 

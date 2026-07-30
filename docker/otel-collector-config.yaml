@@ -79,6 +79,30 @@ exporters:
     # (`type`, `model`) are still labels — those are what the dashboard groups by.
 
 service:
+  # Telemetria interna del Collector. Conta i PAYLOAD IN ARRIVO, non il loro
+  # contenuto — ed è l'unica cosa che distingue "un client ha smesso di parlare"
+  # da "Marco ha smesso di lavorare". Sui contatori cumulativi quelle due
+  # situazioni producono lo stesso identico segnale, una serie piatta: il
+  # Collector continua a esporre l'ultimo valore per 25h e Prometheus continua a
+  # scrapare campioni immutati, quindi rate() è zero in entrambi i casi.
+  # Misurato tre volte fra il 29 e il 30 luglio, ogni volta diagnosticato male
+  # prima di avere questa serie.
+  #
+  # host 0.0.0.0 e non il default localhost: Prometheus è un altro container e su
+  # localhost non lo raggiungerebbe mai. Resta comunque sulla rete privata di
+  # Railway — questa porta non ha, e non deve avere, un hostname del Tunnel.
+  #
+  # `readers` e non `service::telemetry::metrics::address`: dalla v0.123.0 quella
+  # chiave è IGNORATA (qui gira la 0.157.0), quindi scriverla lascerebbe la porta
+  # chiusa senza dire niente — un fallimento silenzioso al posto di una misura.
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: '0.0.0.0'
+                port: 8888
   extensions: [bearertokenauth]
   pipelines:
     # Metrics only. The `prometheus` exporter supports the metrics signal only
