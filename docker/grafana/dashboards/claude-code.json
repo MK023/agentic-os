@@ -42,6 +42,7 @@
     {
       "id": 3,
       "title": "Cost USD (ultime ~25h)",
+      "description": "Calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Qui le tariffe Opus 5 sono scritte a mano nella query perche' PromQL non ha una tabella per modello; la status API fa lo stesso conto ma per (model, type), e in caso di disaccordo e' lei quella giusta. Se i prezzi cambiano, o entra un modello diverso, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py.",
       "type": "stat",
       "gridPos": {
         "h": 8,
@@ -51,7 +52,7 @@
       },
       "targets": [
         {
-          "expr": "sum(claude_code_cost_usage)",
+          "expr": "(sum(claude_code_token_usage{type=\"input\"}) * 5 + sum(claude_code_token_usage{type=\"output\"}) * 25 + sum(claude_code_token_usage{type=\"cacheCreation\"}) * 6.25 + sum(claude_code_token_usage{type=\"cacheRead\"}) * 0.5) / 1e6",
           "refId": "A"
         }
       ]
