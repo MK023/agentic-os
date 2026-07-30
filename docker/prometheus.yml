@@ -8,3 +8,15 @@ scrape_configs:
       # alias di rete, così questo file è identico nei due ambienti invece di essere
       # due file che divergono al primo che qualcuno dimentica di allineare.
       - targets: ["otel-collector.railway.internal:8889"]
+
+  # Secondo target, stesso container, porta diversa: la 8889 è l'USCITA della
+  # pipeline (le metriche di Claude Code), la 8888 è il Collector che parla di sé.
+  # Sono due domande diverse e finora sapevamo rispondere solo alla prima:
+  # `claude_code_token_usage` piatto non dice se il dato non arriva o se nessuno
+  # sta lavorando, mentre `otelcol_receiver_accepted_metric_points` conta i
+  # payload in ingresso e separa i due casi.
+  # Serve anche il suo `up`: se il Collector muore, la serie sparisce del tutto e
+  # una regola scritta su rate() non scatterebbe mai — non c'è serie da valutare.
+  - job_name: otel-collector-interno
+    static_configs:
+      - targets: ["otel-collector.railway.internal:8888"]

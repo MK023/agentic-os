@@ -78,6 +78,23 @@ jobs:
           done
           costruisci -t agentic-status-api:ci services/public-status-api
 
+      # `docker compose config` NON valida questo file, e non è una svista: compose
+      # conosce il proprio schema, non quello del Collector — quella config è solo un
+      # file montato dentro un container. Finora nessun gate la leggeva, quindi un
+      # errore lì passava tutti i check e moriva al deploy.
+      # Il caso che l'ha motivato: `service::telemetry::metrics::address` è IGNORATA
+      # dalla v0.123.0. Non è un errore di sintassi, quindi niente si sarebbe
+      # lamentato — il Collector sarebbe partito con la porta chiusa e la metrica
+      # semplicemente non sarebbe esistita.
+      # Gira sull'immagine appena costruita: valida ESATTAMENTE il file che viene
+      # spedito, con esattamente la versione che lo eseguirà.
+      - name: validate della config del Collector (col binario che la eseguirà)
+        env:
+          OTLP_INGEST_TOKEN: dummy
+        run: |
+          docker run --rm -e OTLP_INGEST_TOKEN agentic-otel-collector:ci \
+            validate --config=/etc/otelcol-contrib/config.yaml
+
   # Guardia sulla deroga. Il servizio prometheus gira come root SU RAILWAY, via
   # RAILWAY_RUN_UID=0, perché il volume montato è di proprietà di root — deroga
   # unica, misurata e scritta in docs/DECISIONS.md. Questo job impedisce che
