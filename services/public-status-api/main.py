@@ -60,12 +60,37 @@ QUERIES = {
 # nothing downstream will notice on its own. The `type` keys are Claude Code's own
 # attribute values, spelled exactly as it emits them (camelCase, not snake_case);
 # renaming one to look tidier silently routes those tokens to the fallback below.
+#
+# Model keys are the labels production actually emitted, not the marketing names:
+# Haiku arrives with its dated suffix (measured 2026-07-30, via the very
+# UnknownPricingKey event this table exists to answer). A wrong or missing key is
+# safe by construction — it falls through to the dearest rate and files a report.
+# Sonnet is priced at the standard list, not the introductory price that runs to
+# 2026-08-31: overstating for a month beats editing this table twice.
 PRICES_USD_PER_MTOK = {
+    "claude-fable-5": {
+        "input": 10.00,
+        "output": 50.00,
+        "cacheCreation": 12.50,
+        "cacheRead": 1.00,
+    },
     "claude-opus-5": {
         "input": 5.00,
         "output": 25.00,
         "cacheCreation": 6.25,
         "cacheRead": 0.50,
+    },
+    "claude-sonnet-5": {
+        "input": 3.00,
+        "output": 15.00,
+        "cacheCreation": 3.75,
+        "cacheRead": 0.30,
+    },
+    "claude-haiku-4-5-20251001": {
+        "input": 1.00,
+        "output": 5.00,
+        "cacheCreation": 1.25,
+        "cacheRead": 0.10,
     },
 }
 
