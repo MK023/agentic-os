@@ -131,6 +131,34 @@ schema, not the Collector's, and the config is merely a file mounted into a
 container. CI now runs `validate` against the built image, so the exact file that
 ships is checked by the exact binary that will run it.
 
+**The public cost is computed from tokens, not read from `claude_code.cost.usage`.**
+That metric is Claude Code's own estimate, and on 2026-07-30 it read **$0.90** for a
+session whose measured tokens price out at **$2.53** at list — 326,484 cacheCreation,
+515,573 cacheRead, 22,822 input, 4,582 output on `claude-opus-5`. The token counters
+sitting next to it are measured and correct, so the cost is now `tokens × list price`,
+grouped `by (model, type)` because the rate depends on both.
+
+The trade is explicit: a hand-maintained copy of somebody else's price list
+(`PRICES_USD_PER_MTOK` in `main.py`, plus the flat-rate version in the Grafana panel)
+against a number nobody can reproduce. The published figure is now arithmetic anyone
+reading the repo can redo, which is the only kind of number worth putting on a public
+page. A price change is a code change, and the comment says so.
+
+A model or token type missing from the table is priced at the **dearest known rate**
+and reported once to Sentry. Pricing a gap at zero was the tempting default and is the
+dangerous one: it reads as a cheap day rather than as missing knowledge, and a number
+that is quietly too low is one nobody investigates. Overstating is visible; understating
+is not.
+
+**How this was found is the part worth keeping.** Six hypotheses died first — a wedged
+exporter, a client needing a restart, an export interval too long, a stale dashboard,
+a label allow-list collapsing series — each guessed at a mechanism instead of narrowing
+where the discrepancy lived. The one that worked was arithmetic: sum the tokens by type,
+multiply by the published rates, compare. The earlier claim that the metric was off by
+58× was itself wrong, and for a dull reason — it compared a 5-session token total against
+a 1-session cost. **Establish what the reference number measures before comparing anything
+to it.**
+
 **Delta temporality: evaluated, refused, revisit at beta.** It would let the
 Collector sum sessions and remove the `session_id` label entirely — the better
 architecture on paper, and the OTel data model points at it for short-lived

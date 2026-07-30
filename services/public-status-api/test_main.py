@@ -4,6 +4,7 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
+import main
 from main import app
 
 client = TestClient(app)
@@ -14,20 +15,37 @@ client = TestClient(app)
 # main.py; it was measured in production, not reasoned about.
 SESSIONS_Q = "sum(claude_code_session_count)"
 TOKENS_Q = "sum(claude_code_token_usage)"
-COST_Q = "sum(claude_code_cost_usage)"
+COST_Q = "sum by (model, type) (claude_code_token_usage)"
+
+
+def _serie(model: str, tipo: str, value) -> dict:
+    """One Prometheus instant-vector sample, labels included.
+
+    The cost query groups `by (model, type)`, so its answer is N series, not one —
+    the whole point of the parser this feeds.
+    """
+    return {"metric": {"model": model, "type": tipo}, "value": [0, str(value)]}
+
+
+def _mock_scalars(sessions: str = "3", tokens: str = "48213") -> None:
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": SESSIONS_Q}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, sessions]}]}})
+    )
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": TOKENS_Q}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, tokens]}]}})
+    )
+
+
+def _mock_cost(series: list[dict]):
+    return respx.get("http://prometheus:9090/api/v1/query", params={"query": COST_Q}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": series}})
+    )
 
 
 @respx.mock
 def test_status_returns_whitelisted_fields_only():
-    respx.get("http://prometheus:9090/api/v1/query", params={"query": SESSIONS_Q}).mock(
-        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, "3"]}]}})
-    )
-    respx.get("http://prometheus:9090/api/v1/query", params={"query": TOKENS_Q}).mock(
-        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, "48213"]}]}})
-    )
-    respx.get("http://prometheus:9090/api/v1/query", params={"query": COST_Q}).mock(
-        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, "1.42"]}]}})
-    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
 
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
@@ -35,8 +53,131 @@ def test_status_returns_whitelisted_fields_only():
     assert response.json() == {
         "sessions_today": 3,
         "tokens_today": 48213,
-        "cost_usd_today": 1.42,
+        "cost_usd_today": 1.42,  # 284_000 input tokens at $5.00/Mtok
     }
+
+
+@respx.mock
+def test_cost_is_computed_from_token_counts_across_every_type():
+    # Real production numbers, read off the hub on 2026-07-30. They matter because
+    # cache tokens dominate the bill here (cacheCreation alone is ~80% of it), and
+    # any parser that reads `result[0]` and stops — as _parse_value does — would
+    # answer 2.04 while looking perfectly healthy. That silent truncation is the
+    # failure this test exists to catch, not the arithmetic.
+    _mock_scalars()
+    _mock_cost(
+        [
+            _serie("claude-opus-5", "cacheCreation", 326_484),  # 2.040525
+            _serie("claude-opus-5", "cacheRead", 515_573),  # 0.257787
+            _serie("claude-opus-5", "input", 22_822),  # 0.114110
+            _serie("claude-opus-5", "output", 4_582),  # 0.114550
+        ]
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 2.53
+
+
+@respx.mock
+def test_costs_from_several_models_are_summed(monkeypatch):
+    # One request can span models (a Task subagent on a cheaper one, a compaction
+    # pass). Grouping by model and keeping only the first group would drop real
+    # spend; the total must be the sum over every group.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost(
+        [
+            _serie("claude-opus-5", "input", 1_000_000),  # 5.00 from the table
+            _serie("claude-sonnet-9-preview", "input", 1_000_000),  # 5.00 at fallback rates
+        ]
+    )
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 10.00
+
+
+@respx.mock
+def test_unknown_model_is_priced_high_and_reported_not_dropped(monkeypatch):
+    # A model missing from the price table must never be worth zero: that reads as
+    # "cheap day" instead of "we have no idea", and nobody goes looking. It is
+    # priced at the dearest rates we know — so the number can only ever overstate —
+    # and Sentry is told, because the fix is a table update, not a code change.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-6-unreleased", "output", 1_000_000)])
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 25.00  # dearest known rate for `output`
+    assert sentry_call.called
+
+
+@respx.mock
+def test_unknown_token_type_is_priced_high_and_reported_not_dropped(monkeypatch):
+    # Same contract one level down: Claude Code's telemetry is beta and its `type`
+    # values are not a frozen set, so a new one (a second cache tier, say) must not
+    # be quietly free. Dearest known rate, and a report.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "cacheRefresh", 1_000_000)])
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 25.00  # dearest rate on the table
+    assert sentry_call.called
+
+
+@respx.mock
+def test_a_pricing_gap_is_reported_once_not_on_every_request(monkeypatch):
+    # The widget polls. An unreported gap is invisible, but one report per poll is
+    # a Sentry quota burned on a message that never changes — the same
+    # report-once rule sentry.py already applies to a malformed DSN.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-6-unreleased", "output", 1_000_000)])
+
+    for _ in range(3):
+        risposta = client.get("/status", headers={"Authorization": "Bearer test-token"})
+        assert risposta.status_code == 200
+
+    assert sentry_call.call_count == 1
+
+
+@respx.mock
+def test_cost_series_without_a_value_returns_502_not_500(monkeypatch):
+    # The narrow version of the malformed-shape test below: only the cost query
+    # answers strangely, so it pins the multi-series parser specifically rather
+    # than passing because every query happened to be broken at once.
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([{"metric": {"model": "claude-opus-5", "type": "input"}}])
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 502
+    assert sentry_call.called
 
 
 @respx.mock
