@@ -1,4 +1,4 @@
-# Agentic OS — Claude Code Observability Hub
+# Agentic OS: Claude Code Observability Hub
 
 Personal platform to observe (and later orchestrate) AI-assisted work.
 **Phase 1, live since 2026-07-29**: every Claude Code session streams metrics into a
@@ -20,7 +20,7 @@ public surface of the whole system is exactly three aggregate numbers.
 ## Architecture
 
 ```
- Claude Code ──OTLP + bearer token──▶ otel.marcobellingeri.dev
+ Claude Code: OTLP + bearer token──▶ otel.marcobellingeri.dev
                                             │   Cloudflare Tunnel (only ingress:
                                             │   no service has a Railway domain)
                                             ▼
