@@ -1,6 +1,6 @@
 # Contributing
 
-This is a personal operational project, not a product looking for contributors —
+This is a personal operational project, not a product looking for contributors,
 but the rules below are what keeps it reviewable, so they apply to anyone
 touching it, including future me.
 
@@ -28,7 +28,7 @@ Three layers of verification, each catching what the previous one cannot:
 
 1. **Re-reading** the plan found 5 problems.
 2. **Running** the tools found 12 more.
-3. **Measuring the real behaviour** found what no documentation states — a real
+3. **Measuring the real behaviour** found what no documentation states, a real
    email address arriving as a Prometheus label, and the obvious fix for it
    silently losing data.
 
@@ -47,7 +47,7 @@ config "just for local".
 
 Never in git. Railway service variables in production, Doppler as the source of
 truth, `docker/.env` with fake values locally. `gitleaks` runs on every PR over
-full history, and a pre-commit hook catches it earlier — enable it with:
+full history, and a pre-commit hook catches it earlier, enable it with:
 
 ```bash
 git config core.hooksPath .githooks
