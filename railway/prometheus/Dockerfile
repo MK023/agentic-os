@@ -1,7 +1,7 @@
 # checkov:skip=CKV_DOCKER_2: Railway ignores the Dockerfile HEALTHCHECK — it uses its
 # own healthcheckPath, and these images ship no shell or HTTP client to probe with
 # anyway. What actually verifies the hub after a deploy is scripts/verify-hub.sh.
-FROM prom/prometheus:v3.13.1
+FROM prom/prometheus:v3.13.2
 
 # nobody (65534), which is what the base image already uses — and what makes the
 # volume-ownership question in railway/README.md worth checking on first deploy.
