@@ -151,6 +151,30 @@ Enabled with `service.telemetry.metrics.readers` and scraped as a second job on 
 different questions. Bound to `0.0.0.0` because Prometheus is another container;
 still no Tunnel hostname, so it stays on the private network like everything else.
 
+**Scraping it was only half the fix: the dashboard had no panel that could go
+red.** All six panels were built on Claude Code metrics plus the Collector's
+payload counters, so a dead service produced a flat line, and a flat line is the
+same picture as a quiet afternoon. On 2026-08-13 that cost hours: Prometheus's
+volume filled, compaction failed once a minute, and the three public numbers kept
+moving — correctly — because the head is in RAM. Nothing on screen changed.
+
+`up` is the metric that fixes the shape of the problem. Prometheus synthesises it
+for every configured target, so a dead target reads `0` rather than vanishing;
+`rate()` over a vanished series has nothing to evaluate and stays silent forever.
+Alongside it, `prometheus_tsdb_compactions_failed_total` (a counter, so
+`increase(...[1h])`) and `prometheus_tsdb_storage_blocks_bytes` (a gauge, with
+thresholds anchored to `--storage.tsdb.retention.size=300MB`) make the 13/08
+failure visible in the one place someone actually looks. Both names verified
+against the v3.13.2 source rather than recalled.
+
+The panels sit at the **top** of the dashboard, which is why every pre-existing
+panel moved down four grid rows. Health below the fold is health nobody reads,
+and being unread for hours is the exact failure being fixed.
+
+One thing this cannot cover: if Prometheus itself dies, every panel here reads
+"nessun dato", because nothing can measure itself while dead. That case belongs
+to the Sentry watchdog and to `smoke.yml`, which observe the hub from outside it.
+
 Two traps worth naming. `service::telemetry::metrics::address` has been **ignored**
 since v0.123.0: writing it is not a syntax error, so nothing complains and the port
 simply never opens — a silent failure that only reading the vendor docs prevents. And
