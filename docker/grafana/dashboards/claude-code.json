@@ -1,10 +1,179 @@
 {
   "uid": "claude-code-live",
-  "title": "Claude Code \u2014 Live Usage",
+  "title": "Claude Code — Live Usage",
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "10s",
   "panels": [
+    {
+      "id": 7,
+      "title": "Target su/giù",
+      "type": "stat",
+      "description": "`up` lo genera Prometheus per ogni target configurato, quindi vale 0 quando il target è morto invece di sparire: è la differenza fra un pannello che diventa rosso e uno che si appiattisce. Un rate() su un servizio morto è indistinguibile da 'nessuno sta lavorando'. «nessun dato» su TUTTI i riquadri significa che è caduto Prometheus stesso, che non può misurarsi da morto: quel caso lo coprono il watchdog Sentry e smoke.yml, non questa dashboard.",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "up",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "nessun dato",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "GIÙ",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "su",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Compaction TSDB fallite (1h)",
+      "type": "stat",
+      "description": "La metrica che avrebbe visto il guasto del 13/08: il volume si era riempito e la compaction falliva una volta al minuto per ore, mentre le tre cifre pubbliche restavano giuste e in movimento perché il head sta in RAM. Da fuori non si vedeva niente. Qualunque valore diverso da zero è rosso: qui non esiste un tasso di fallimento accettabile.",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "increase(prometheus_tsdb_compactions_failed_total[1h])",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "nessun dato",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Blocchi TSDB su disco (cap 300MB)",
+      "type": "stat",
+      "description": "Soglie ancorate a --storage.tsdb.retention.size=300MB: giallo a 240MB (80%), rosso a 285MB (95%). Non misura il volume, misura i blocchi: il WAL vive sullo stesso disco e NON è contato dentro retention.size, quindi l'occupazione vera è sempre più alta di questo numero. Serve a vedere la salita prima che diventi il guasto, non a certificare lo spazio.",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "prometheus_tsdb_storage_blocks_bytes",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "nessun dato",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 251658240
+              },
+              {
+                "color": "red",
+                "value": 298844160
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
     {
       "id": 1,
       "title": "Sessions (ultime ~25h)",
@@ -13,7 +182,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 4
       },
       "targets": [
         {
@@ -30,7 +199,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 4
       },
       "targets": [
         {
@@ -48,7 +217,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 12
       },
       "targets": [
         {
@@ -65,7 +234,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 12
       },
       "targets": [
         {
@@ -83,7 +252,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "targets": [
         {
@@ -105,7 +274,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 28
       },
       "targets": [
         {
