@@ -111,6 +111,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: bash scripts/check-image-users.sh
 
+  # Fino al 13/08/2026 questa pipeline aveva dodici gate e nessun linter Python.
+  # Non era un problema teorico: al primo lancio ruff ha trovato uno `zip()` senza
+  # `strict=` proprio dove si costruiscono i tre numeri pubblici — se le chiavi e i
+  # risultati divergessero, l'endpoint risponderebbe 200 con un valore accoppiato
+  # alla query sbagliata. Stessa famiglia del `result[0]` che leggeva un gruppo su N.
+  #
+  # `S` (flake8-bandit) è dentro ruff, quindi bandit gira sotto in gran parte in
+  # sovrapposizione: misurato il 13/08, l'unico rilievo di bandit era lo stesso
+  # `B110` che ruff segnala come `S110`. Resta perché il suo catalogo si muove
+  # separatamente, non perché oggi aggiunga segnale.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      # Pinnati come ogni altra cosa qui: un linter che cambia versione da solo
+      # trasforma un gate in un generatore casuale di build rosse.
+      - run: pip install ruff==0.15.4 bandit==1.9.2
+      - run: ruff check .
+      - run: ruff format --check .
+      # -x sui test: gli assert sono il modo in cui i test si scrivono. La cartella
+      # mutants/ è generata da mutmut e non è codice sorgente.
+      - run: bandit -q -r services/public-status-api -x '**/test_*.py,**/mutants/**'
+
   # La versione di Python è scritta in cinque posti — quattro pin nei workflow e
   # il FROM del Dockerfile — e setup-python non sa leggere un Dockerfile. La
   # duplicazione non si elimina, si sorveglia: questo job fallisce quando i due

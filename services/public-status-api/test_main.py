@@ -1,11 +1,10 @@
 import json
 
 import httpx
-import respx
-from fastapi.testclient import TestClient
-
 import main
+import respx
 import sentry
+from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
@@ -422,9 +421,9 @@ def test_sentry_event_omits_release_when_the_deploy_sha_is_absent(monkeypatch):
 
 
 def _mock_persistence(value: str):
-    return respx.get(
-        "http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}
-    ).mock(return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, value]}]}}))
+    return respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, value]}]}})
+    )
 
 
 @respx.mock
@@ -481,9 +480,9 @@ def test_a_broken_watchdog_never_breaks_the_endpoint(monkeypatch):
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     _mock_scalars()
     _mock_cost([_serie("claude-opus-5", "input", 284_000)])
-    respx.get(
-        "http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}
-    ).mock(return_value=httpx.Response(500))
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(500)
+    )
 
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
@@ -530,9 +529,9 @@ def test_a_watchdog_with_no_data_says_so_instead_of_going_quiet(monkeypatch):
     _mock_scalars()
     _mock_cost([_serie("claude-opus-5", "input", 284_000)])
     # Prometheus answers, correctly, with an empty vector: the metric is not there.
-    respx.get(
-        "http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}
-    ).mock(return_value=httpx.Response(200, json={"data": {"result": []}}))
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": []}})
+    )
 
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
@@ -540,3 +539,14 @@ def test_a_watchdog_with_no_data_says_so_instead_of_going_quiet(monkeypatch):
     evento = _evento_inviato(sentry_call)
     assert evento["exception"]["values"][0]["type"] == "PrometheusWatchdogBlind"
     assert "not scraping itself" in evento["exception"]["values"][0]["value"]
+
+
+def test_only_status_is_routed_at_all():
+    # SECURITY.md says the public surface is three aggregate numbers. FastAPI adds
+    # /docs, /redoc and /openapi.json by default, and `require_valid_token` guards
+    # only /status — so every one of those would answer without a token if anything
+    # ever got past Cloudflare Access. Access does cover the whole host today
+    # (measured: 401 on every path), but this repo's own rule is that a hostname is
+    # not an access control, and the schema names the auth scheme it protects.
+    for percorso in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(percorso).status_code == 404, percorso
