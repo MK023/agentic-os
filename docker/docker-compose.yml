@@ -42,7 +42,7 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
 
   prometheus:
-    image: prom/prometheus:v3.13.1
+    image: prom/prometheus:v3.13.2
     restart: unless-stopped
     networks:
       default:
