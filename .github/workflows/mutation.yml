@@ -17,6 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Allineato a validate.yml, dove la #53 lo ha messo su ogni checkout e
+          # questo file era rimasto fuori. Nessun push dalla CI: lasciare il token
+          # in .git/config allarga solo il raggio di un eventuale compromesso di
+          # uno step successivo — e qui gli step successivi eseguono mutanti del
+          # nostro stesso codice.
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
@@ -25,27 +32,58 @@ jobs:
       # Quoted: an unquoted ":all: " would make YAML read a mapping mid-command.
       - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
       - run: pip install respx==0.23.1 pytest==9.1.1 mutmut==3.6.0
-      # Blocking scope is `require_valid_token` only — spec §6.2. Coverage says a
-      # line ran; only this says an assertion would have noticed it change.
-      # sentry.py's survivors (string/dict shape inside the envelope payload) are
-      # deliberately not blocking: asserting the exact wire format of a fail-open
-      # reporter would freeze a detail Sentry owns, not us.
-      - name: mutmut sulla funzione di autorizzazione (blocca sui non uccisi)
+      # Lo scope bloccante era `require_valid_token` e basta — spec §6.2. Coverage
+      # dice che una riga è stata eseguita; solo questo dice che un'asserzione si
+      # sarebbe accorta se cambiava.
+      #
+      # Dal 13/08 comprende anche il **percorso del costo**. La PR #32 ci aveva
+      # ucciso 19 survivor, ma quel percorso non stava nel gate: la pulizia poteva
+      # marcire senza che niente se ne accorgesse, ed è il numero pubblico che è
+      # già stato sbagliato una volta di 2,8x. Un test scritto una volta e non
+      # sorvegliato è una fotografia, non un vincolo.
+      #
+      # I survivor di sentry.py restano deliberatamente NON bloccanti: asserire il
+      # formato esatto sul filo di un reporter fail-open congelerebbe un dettaglio
+      # che appartiene a Sentry, non a noi.
+      - name: mutmut sulle funzioni bloccanti (autorizzazione + percorso del costo)
         working-directory: services/public-status-api
+        env:
+          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap"
         run: |
           set -uo pipefail
-          # Se la funzione cambia nome il gate deve rompersi QUI: il grep sotto non
-          # troverebbe mai più nulla e passerebbe verde per sempre.
-          grep -q 'def require_valid_token' main.py
+          # Se una funzione cambia nome il gate deve rompersi QUI. Senza questo
+          # controllo il grep sui risultati non troverebbe più niente e passerebbe
+          # verde per sempre: è il modo in cui un gate muore senza fare rumore.
+          # Vale per tutte e cinque, non solo per la prima — una guardia che copre
+          # un sottoinsieme lascia il buco esattamente dove non guarda.
+          for funzione in ${FUNZIONI_BLOCCANTI}; do
+            if ! grep -q "def ${funzione}" main.py; then
+              echo "FAIL: main.py non definisce più '${funzione}'." >&2
+              echo "Se l'hai rinominata, aggiorna FUNZIONI_BLOCCANTI nello stesso commit." >&2
+              exit 1
+            fi
+          done
+
           mutmut run || true
           mutmut results > mutation-results.txt
+
           # `mutmut results` elenca solo i mutanti NON uccisi (survived, timeout, e
           # "not checked" quando il run muore a metà — che il `|| true` sopra
           # nasconderebbe). Contare solo `survived` faceva passare verde un run che
-          # non aveva testato niente: qualsiasi riga con la funzione è un problema.
-          non_uccisi=$(grep -c 'require_valid_token' mutation-results.txt || true)
-          echo "Mutanti non uccisi in require_valid_token: ${non_uccisi}"
-          if [ "${non_uccisi}" -ne 0 ]; then
-            grep 'require_valid_token' mutation-results.txt
+          # non aveva testato niente: qualsiasi riga con una funzione bloccante è
+          # un problema.
+          totale=0
+          for funzione in ${FUNZIONI_BLOCCANTI}; do
+            n=$(grep -c "${funzione}" mutation-results.txt || true)
+            echo "non uccisi in ${funzione}: ${n}"
+            if [ "${n}" -ne 0 ]; then
+              grep "${funzione}" mutation-results.txt
+              totale=$((totale + n))
+            fi
+          done
+
+          if [ "${totale}" -ne 0 ]; then
+            echo "" >&2
+            echo "FAIL: ${totale} mutanti non uccisi nelle funzioni bloccanti." >&2
             exit 1
           fi
