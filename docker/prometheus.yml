@@ -20,3 +20,16 @@ scrape_configs:
   - job_name: otel-collector-interno
     static_configs:
       - targets: ["otel-collector.railway.internal:8888"]
+
+  # Prometheus che parla di sé, per lo stesso motivo del job qui sopra applicato al
+  # servizio che finora era l'unico a non essere osservato da nessuno.
+  # Il 13/08/2026 il suo volume si è riempito e la compaction ha fallito una volta al
+  # minuto per ore: le tre cifre pubbliche restavano giuste e in movimento, perché il
+  # head sta in RAM, quindi da fuori non si vedeva niente. È stato trovato leggendo i
+  # log a mano — l'unico modo che c'era, perché `prometheus_tsdb_*` non veniva
+  # raccolto da nessuna parte e non esisteva serie su cui scrivere una regola.
+  # localhost e non il DNS interno: è lo stesso processo, non serve uscire dal
+  # container, e in locale il compose si comporta identico senza alias aggiuntivi.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

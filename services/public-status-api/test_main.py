@@ -419,3 +419,97 @@ def test_sentry_event_omits_release_when_the_deploy_sha_is_absent(monkeypatch):
 
     assert response.status_code == 502
     assert "release" not in _evento_inviato(sentry_call)
+
+
+def _mock_persistence(value: str):
+    return respx.get(
+        "http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}
+    ).mock(return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, value]}]}}))
+
+
+@respx.mock
+def test_a_prometheus_that_cannot_persist_is_reported(monkeypatch):
+    # The failure this watchdog exists for: on 2026-08-13 compaction failed once a
+    # minute for hours while /status kept answering correct, moving numbers, because
+    # the head block lives in RAM. The assertion that matters is BOTH halves — the
+    # alert fires AND the three numbers are still served. A watchdog that degraded
+    # the endpoint would be a worse bug than the one it reports.
+    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("7")
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd_today"] == 1.42
+    evento = _evento_inviato(sentry_call)
+    assert evento["exception"]["values"][0]["type"] == "PrometheusNotPersisting"
+    assert "failed 7 TSDB compactions" in evento["exception"]["values"][0]["value"]
+
+
+@respx.mock
+def test_a_healthy_prometheus_is_silent(monkeypatch):
+    # Zero must not report. Stated as its own test because the cheapest way to make
+    # the test above pass is an unconditional capture, and that would page on every
+    # single poll of a perfectly healthy hub.
+    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("0")
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert not sentry_call.called
+
+
+@respx.mock
+def test_a_broken_watchdog_never_breaks_the_endpoint(monkeypatch):
+    # The probe's own query fails. The endpoint must still answer 200 with the three
+    # numbers: silence is the contract, an outage is not. This is the test that lets
+    # the watchdog live on the read path of a public endpoint at all.
+    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    respx.get(
+        "http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}
+    ).mock(return_value=httpx.Response(500))
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sessions_today": 3,
+        "tokens_today": 48213,
+        "cost_usd_today": 1.42,
+    }
+
+
+@respx.mock
+def test_the_persistence_alert_is_reported_once_not_every_poll(monkeypatch):
+    # Same reasoning as the pricing gaps: the widget polls every 20s, and a condition
+    # that stays true until a human fixes a volume would otherwise burn the Sentry
+    # quota on one identical event per poll, forever.
+    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("7")
+
+    for _ in range(3):
+        assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    assert sentry_call.call_count == 1
