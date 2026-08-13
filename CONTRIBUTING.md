@@ -8,10 +8,25 @@ touching it, including future me.
 
 Branch, PR, green gates, merge. Never straight to `main`.
 
-Every gate blocks: `compose`, `images`, `image-users`, `status-api-tests`,
-`checkov`, `workflow-lint`, `gitleaks`, `dependency-audit`, `dependency-review`,
-`sonar`. Nothing runs with `continue-on-error` — a gate either blocks or is
-removed on purpose.
+Every gate blocks. Twelve of them, and since 2026-08-13 they live in five files
+by function rather than in one `validate.yml` that had grown to thirteen jobs:
+
+| File | Jobs |
+|---|---|
+| `tests.yml` | `status-api-tests`, `python-versions` |
+| `lint.yml` | `lint`, `workflow-lint` |
+| `security.yml` | `gitleaks`, `checkov`, `dependency-audit`, `dependency-review` |
+| `images.yml` | `images`, `image-users`, `compose` |
+| `sonar.yml` | `sonar` |
+
+**The job names are the contract.** The repository ruleset requires those twelve
+strings as status-check contexts, so renaming a job silently detaches it from the
+gate that was meant to enforce it. Rename one only together with the ruleset, and
+check the result with `gh api repos/MK023/agentic-os/rules/branches/main`.
+
+Nothing runs with `continue-on-error` — a gate either blocks or is removed on
+purpose. Two more workflows are not gates and do not block a merge: `mutation.yml`
+(nightly) and `smoke.yml` (every 10 minutes, against production).
 
 A failing gate is never re-run until green. Either it found something, or it is
 flaky and gets fixed (see the flaky policy in the README).

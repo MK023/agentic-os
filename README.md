@@ -7,7 +7,10 @@ private hub: OTel Collector → Prometheus → Grafana plus a small FastAPI stat
 API, running as five services on **Railway** behind a **Cloudflare Tunnel**, with a
 sanitized public widget on [marcobellingeri.dev](https://marcobellingeri.dev).
 
-[![validate](https://github.com/MK023/agentic-os/actions/workflows/validate.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/validate.yml)
+[![tests](https://github.com/MK023/agentic-os/actions/workflows/tests.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/tests.yml)
+[![lint](https://github.com/MK023/agentic-os/actions/workflows/lint.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/lint.yml)
+[![sicurezza](https://github.com/MK023/agentic-os/actions/workflows/security.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/security.yml)
+[![immagini](https://github.com/MK023/agentic-os/actions/workflows/images.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/images.yml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=MK023_agentic-os&metric=alert_status)](https://sonarcloud.io/summary/overall?id=MK023_agentic-os)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=MK023_agentic-os&metric=coverage)](https://sonarcloud.io/component_measures?id=MK023_agentic-os&metric=coverage)
 [![License: MIT](https://img.shields.io/badge/code-MIT-blue.svg)](LICENSE)
