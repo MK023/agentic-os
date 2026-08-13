@@ -92,8 +92,25 @@ and the datasource arrive by provisioning, nothing to import.
 ## 4. Two behaviours that look like bugs and are not
 
 - **The three numbers read `0` right after startup**, until a session has actually
-  reported. They are sums over the series the Collector still exposes, so the window
-  is `metric_expiration` (25h), not a PromQL range.
+  reported. The window is the PromQL range — `max_over_time(...[25h])` — not the
+  Collector's `metric_expiration`, which is back at its 5m default. It was the other
+  way round until 2026-08-14, and that is worth one check of its own:
+
+  ```bash
+  # Send two sessions (two DIFFERENT session.id values — see the next bullet), read
+  # the numbers, then restart only the Collector and read them again.
+  curl -s -H "Authorization: Bearer $STATUS_API_TOKEN" localhost:8000/status
+  docker compose -f docker/docker-compose.yml restart otel-collector
+  sleep 20   # one scrape, so Prometheus notices the exporter came back empty
+  curl -s -H "Authorization: Bearer $STATUS_API_TOKEN" localhost:8000/status
+  ```
+
+  **The two readings must match.** With the old instant `sum()` the second one dropped
+  the sessions that had already ended — measured 3 sessions / 6600 tokens becoming 1 /
+  3300. If they match on the way in and diverge here, the pair of settings has drifted
+  apart: check that `metric_expiration` is still short *and* the queries still carry
+  their range. Raising expiration back to 25h under a 25h window overcounts instead,
+  by roughly double.
 - **A synthetic payload can lie about the shape of the data.** Re-sending the same
   `session.id` with a higher value manufactures growth that real sessions never
   produce — each real session is its own series, born and then flat. That is how an
