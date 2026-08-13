@@ -86,6 +86,34 @@ metadata. Measured against the real client, Prometheus sees
 five minutes after its last update, so "cost today" would read zero for most of a day
 in which someone stopped working for lunch.
 
+**Prometheus retention is capped by size as well as time, because time alone cannot
+protect a disk.** `--storage.tsdb.retention.time=30d` was the only limit until
+2026-08-13, when the 500 MB volume filled and compaction began failing once a minute:
+`compact head: persist head block: populate block: write chunks: preallocate: no space
+left on device`. With only a time limit there is no back-pressure from the disk —
+Prometheus grows to fill whatever it is given, long before the days run out.
+
+**The failure was invisible from outside, which is the part worth remembering.**
+Ingestion kept working because the head block lives in memory, so the public widget
+went on serving correct, moving numbers while persistence was already broken. Nothing
+was down; something was doomed. It surfaced only by reading the service's own logs —
+and a volume check on 2026-07-30 had already looked at this and passed it, because it
+measured *growth* (50 MB) and never divided it into *capacity*. Accumulating was the
+signal we wanted, not the question that mattered.
+
+Now `retention.time=7d` **and** `retention.size=300MB`, whichever binds first. The
+arithmetic, so the next person can redo it rather than trust it: measured growth is
+~50 MB/day, so seven days is ~350 MB, which does not fit a 500 MB volume — compaction
+writes the new block *before* deleting the old ones, and the WAL shares the volume but
+is **not** counted inside `retention.size`. 300 MB leaves 40% headroom for both, and
+at the observed rate the size cap is what actually binds, around day six. So the
+honest claim is "about a week", not "seven days". Neither number derives itself: if
+the volume is ever resized, both have to be revisited by hand.
+
+Reducing the window from 30 days to about 7 is a cost decision, not a technical one —
+the project runs on free credits, and a bigger volume is recurring spend for history
+nobody has yet needed.
+
 **The three public numbers are plain sums, and they are indicative, not
 accounting.** The shape of the data decides the query: Claude Code emits **one series
 per session** (`session_id` is a label), each a cumulative counter for that process

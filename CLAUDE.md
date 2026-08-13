@@ -52,6 +52,16 @@ To validate the Collector config without a Docker daemon, download the real
 - Vendor behaviour is read from the vendor's docs before it is written down here.
   Twelve bugs in the original plan survived an execute-everything pass and died to a
   read-the-docs pass; that is the house lesson.
+- **MUST: this project runs on Railway's free credits, so deploys queue and take
+  time.** Never merge a run of PRs back to back and call it done. A push that arrives
+  while a build is still in flight **cancels** that build, and the replacement deploy
+  is `SKIPPED` if its own commit misses that service's `watchPatterns` — so the change
+  lands on `main` and never reaches production, green everywhere, silently. That
+  happened on 2026-08-13: #39 bumped Prometheus, #40 landed 72 seconds later, and
+  production stayed on the old image. **After merging more than one PR, check the
+  running commit of each affected service** (`list-deployments` → the newest `SUCCESS`
+  and its `commitHash`), not just that the deploys are green. `SKIPPED` and `REMOVED`
+  are the two statuses that mean "did not ship".
 
 ## Conventions
 
