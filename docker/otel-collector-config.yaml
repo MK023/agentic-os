@@ -74,11 +74,22 @@ processors:
 exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
-    # Default is 5m: a counter stops being exposed 5 minutes after its last
-    # update, so every series would vanish from /metrics whenever Marco stops
-    # working — and "cost today" would read 0 for most of the day. 25h keeps a
-    # full day of counters alive on the exporter side.
-    metric_expiration: 25h
+    # The default 5m, deliberately — and this line is half of one change, never a
+    # setting on its own. It was 25h for a year for exactly one reason: the status
+    # API asked Prometheus an INSTANT query, which can only see series the exporter
+    # is exposing right now, so the series had to be kept alive to be counted.
+    #
+    # The queries now look backwards instead (`max_over_time(...[25h])` in
+    # services/public-status-api/main.py and in the Grafana dashboard), and that
+    # inverts this setting's job: a series the Collector keeps re-exporting keeps
+    # landing in the TSDB, so 25h of expiration under a 25h window makes a session
+    # count for ~50h. Measured 2026-08-14 — it OVERCOUNTS. Expiration decides when a
+    # session stops counting, the query decides how far back we look; if both are the
+    # window, they multiply. 5m is a wide margin over the 15s scrape interval.
+    #
+    # Raising this back to 25h without shortening the queries brings back the double
+    # count. Shortening the queries without raising this loses the history. One change.
+    metric_expiration: 5m
     # UnderscoreEscapingWithoutSuffixes: Prometheus metric names come out exactly
     # as `claude_code_session_count` / `claude_code_token_usage` /
     # `claude_code_cost_usage`. The default strategy appends type AND unit
@@ -99,11 +110,15 @@ service:
   # Telemetria interna del Collector. Conta i PAYLOAD IN ARRIVO, non il loro
   # contenuto — ed è l'unica cosa che distingue "un client ha smesso di parlare"
   # da "Marco ha smesso di lavorare". Sui contatori cumulativi quelle due
-  # situazioni producono lo stesso identico segnale, una serie piatta: il
-  # Collector continua a esporre l'ultimo valore per 25h e Prometheus continua a
-  # scrapare campioni immutati, quindi rate() è zero in entrambi i casi.
-  # Misurato tre volte fra il 29 e il 30 luglio, ogni volta diagnosticato male
-  # prima di avere questa serie.
+  # situazioni producono lo stesso identico segnale: i pannelli dei totali
+  # guardano indietro 25h con max_over_time e continuano a mostrare lo stesso
+  # numero in entrambi i casi, e il pannello dal vivo a rate() smette di avere
+  # dati in entrambi i casi. Misurato tre volte fra il 29 e il 30 luglio, ogni
+  # volta diagnosticato male prima di avere questa serie.
+  #
+  # Il meccanismo è cambiato il 14-08-2026 (metric_expiration da 25h a 5m,
+  # sopra), l'ambiguità no: nessuna delle due serie di Claude Code sa dire
+  # perché ha smesso di crescere. Questa lo sa.
   #
   # host 0.0.0.0 e non il default localhost: Prometheus è un altro container e su
   # localhost non lo raggiungerebbe mai. Resta comunque sulla rete privata di

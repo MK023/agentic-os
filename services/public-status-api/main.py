@@ -39,11 +39,36 @@ REQUEST_TIMEOUT = httpx.Timeout(10.0)
 # up; a synthetic payload that re-sends the same session_id with a higher value
 # hides it perfectly, and that is exactly what an earlier local test did.
 #
-# Summing the current value of every live series gives the right number instead:
-# each series carries its own session's total. The time window comes from the
-# Collector's `metric_expiration: 25h`, which stops exposing a series a day after its
-# last update — so "today" here means "the last ~25 hours of activity", not a
-# calendar day. Honest, and stable when nothing is running.
+# Summing each series' own total gives the right number instead: each series carries
+# its own session's total. `max_over_time(...[25h])` is how that sum reaches series
+# that are no longer being exported — on a counter that only ever grows, the max over
+# the window IS the final value, so this reads the same as a plain sum for a live
+# series and keeps reading it for a dead one.
+#
+# The bare `sum(...)` this replaced undercounted after every otel-collector restart:
+# the sessions that had already ended vanished from the exporter's /metrics, and an
+# instant query cannot see what is not currently exposed. Measured 2026-08-14 against
+# Prometheus 3.13.2 with the real data shape — 3 sessions / 6600 tokens read back as
+# 1 / 3300 after a restart, while this query held 3 / 6600.
+#
+# This query and the Collector's `metric_expiration` are ONE change, never two.
+# Expiration used to be 25h purely so an instant query would still find the series
+# alive; now that the query looks backwards in time, keeping them alive is the bug —
+# a series the Collector keeps re-exporting stays in the TSDB, so a 25h window on top
+# of 25h expiration counts a session for ~50h and OVERCOUNTS. Measured, same day.
+# Expiration is now the 5m default: it decides when a session stops counting, this
+# window decides how far back we look, and the two must not both be the window.
+#
+# What this trades away, deliberately: with 25h of expiration the Collector held a
+# day of state, so a wiped or recreated `prometheus-data` volume healed itself — the
+# next 15s scrape re-ingested every series. It no longer does. Prometheus' disk is now
+# the only copy of today's numbers, and that disk is the component here with a failure
+# on its record (the volume filled on 2026-08-13). Lose it and these three read ~0 for
+# the rest of the day with nothing to recover from, answering 200 — indistinguishable
+# from a quiet morning. Accepted, because the alternative is the double count above.
+#
+# So "today" here means "the last 25 hours of activity", not a calendar day. Honest,
+# and stable when nothing is running.
 #
 # Metric names assume the Collector's UnderscoreEscapingWithoutSuffixes strategy
 # (docker/otel-collector-config.yaml) — keep the two files in sync.
@@ -55,9 +80,9 @@ REQUEST_TIMEOUT = httpx.Timeout(10.0)
 # depends on both — and it is also why this query needs a different parser from the
 # other two.
 QUERIES = {
-    "sessions_today": "sum(claude_code_session_count)",
-    "tokens_today": "sum(claude_code_token_usage)",
-    "cost_usd_today": "sum by (model, type) (claude_code_token_usage)",
+    "sessions_today": "sum(max_over_time(claude_code_session_count[25h]))",
+    "tokens_today": "sum(max_over_time(claude_code_token_usage[25h]))",
+    "cost_usd_today": "sum by (model, type) (max_over_time(claude_code_token_usage[25h]))",
 }
 
 # Anthropic list prices, USD per million tokens, as published on 2026-07-30. These

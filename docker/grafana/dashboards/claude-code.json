@@ -186,7 +186,7 @@
       },
       "targets": [
         {
-          "expr": "sum(claude_code_session_count)",
+          "expr": "sum(max_over_time(claude_code_session_count[25h]))",
           "refId": "A"
         }
       ]
@@ -221,7 +221,7 @@
       },
       "targets": [
         {
-          "expr": "((sum(claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"}) or vector(0)) * 10 + (sum(claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"}) or vector(0)) * 50 + (sum(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"}) or vector(0)) * 20 + (sum(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"}) or vector(0)) * 1 + (sum(claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"}) or vector(0)) * 5 + (sum(claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"}) or vector(0)) * 25 + (sum(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"}) or vector(0)) * 10 + (sum(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"}) or vector(0)) * 0.5 + (sum(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"}) or vector(0)) * 3 + (sum(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"}) or vector(0)) * 15 + (sum(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"}) or vector(0)) * 6 + (sum(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"}) or vector(0)) * 0.3 + (sum(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"}) or vector(0)) * 1 + (sum(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"}) or vector(0)) * 5 + (sum(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"}) or vector(0)) * 2 + (sum(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"}) or vector(0)) * 0.1) / 1e6",
+          "expr": "((sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"}[25h])) or vector(0)) * 10 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"}[25h])) or vector(0)) * 50 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 20 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 1 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"}[25h])) or vector(0)) * 5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"}[25h])) or vector(0)) * 25 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 10 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"}[25h])) or vector(0)) * 3 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"}[25h])) or vector(0)) * 15 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 6 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.3 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"}[25h])) or vector(0)) * 1 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"}[25h])) or vector(0)) * 5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"}[25h])) or vector(0)) * 2 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.1) / 1e6",
           "refId": "A"
         }
       ]
@@ -238,7 +238,7 @@
       },
       "targets": [
         {
-          "expr": "sum(claude_code_token_usage{type=\"cacheRead\"}) / sum(claude_code_token_usage)",
+          "expr": "sum(max_over_time(claude_code_token_usage{type=\"cacheRead\"}[25h])) / sum(max_over_time(claude_code_token_usage[25h]))",
           "refId": "A"
         }
       ]
@@ -246,7 +246,7 @@
     {
       "id": 5,
       "title": "Payload in arrivo al Collector (rate, 5m)",
-      "description": "Il pannello da guardare quando gli altri sembrano fermi. Conta i payload che ENTRANO nel Collector, non il loro contenuto: sopra zero qualcuno sta parlando, a zero non parla nessuno. Senza questo, 'un client ha smesso di esportare' e 'Marco ha smesso di lavorare' danno lo stesso segnale — una serie piatta — perche' il Collector continua a esporre l'ultimo valore per 25h e Prometheus continua a scrapare campioni immutati. Diagnosticato male tre volte prima di avere questa serie.",
+      "description": "Il pannello da guardare quando gli altri sembrano fermi. Conta i payload che ENTRANO nel Collector, non il loro contenuto: sopra zero qualcuno sta parlando, a zero non parla nessuno. Senza questo, 'un client ha smesso di esportare' e 'Marco ha smesso di lavorare' danno lo stesso segnale — una serie piatta — perche' i pannelli guardano indietro 25h con max_over_time e in entrambi i casi continuano a mostrare l'ultimo totale. Diagnosticato male tre volte prima di avere questa serie.",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -278,13 +278,13 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum by (session_id) (claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"} * 10 or claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"} * 50 or claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"} * 20 or claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"} * 1 or claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"} * 5 or claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"} * 25 or claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"} * 10 or claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"} * 0.5 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"} * 3 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"} * 15 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"} * 6 or claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"} * 0.3 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"} * 1 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"} * 5 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"} * 2 or claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"} * 0.1) / 1e6)",
+          "expr": "topk(10, sum by (session_id) (max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"}[25h]) * 10 or max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"}[25h]) * 50 or max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"}[25h]) * 20 or max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"}[25h]) * 1 or max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"}[25h]) * 5 or max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"}[25h]) * 25 or max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"}[25h]) * 10 or max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"}[25h]) * 0.5 or max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"}[25h]) * 3 or max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"}[25h]) * 15 or max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"}[25h]) * 6 or max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"}[25h]) * 0.3 or max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"}[25h]) * 1 or max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"}[25h]) * 5 or max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"}[25h]) * 2 or max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"}[25h]) * 0.1) / 1e6)",
           "refId": "A",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "topk(10, sum by (session_id) (claude_code_token_usage))",
+          "expr": "topk(10, sum by (session_id) (max_over_time(claude_code_token_usage[25h])))",
           "refId": "B",
           "format": "table",
           "instant": true
@@ -359,5 +359,5 @@
       }
     }
   ],
-  "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il valore corrente invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra temporale la da' il metric_expiration del Collector (25h). Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare."
+  "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il totale di ogni serie invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra la da' la query — max_over_time(...[25h]) — e NON piu' il metric_expiration del Collector, che e' tornato al default di 5m: su un contatore che solo cresce, il massimo nella finestra E' il valore finale, quindi i totali sopravvivono a un riavvio del Collector. Prima non sopravvivevano: le sessioni gia' chiuse sparivano da /metrics e 3 sessioni si leggevano come 1 (misurato il 14-08-2026). Query e metric_expiration sono UN cambiamento solo, mai due: rialzare l'expiration a 25h sotto una finestra di 25h fa contare ogni sessione per ~50h. Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori — e quando la serie smette di essere esposta, 5 minuti dopo l'ultimo export, rate() non ha piu' campioni nella finestra e il pannello resta senza dati invece di disegnare uno zero piatto. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare."
 }

@@ -9,13 +9,16 @@ from main import app
 
 client = TestClient(app)
 
-# Query strings must stay in sync with main.QUERIES. Plain sums, because Claude Code
-# emits one series per session and each is a counter that never grows again once the
-# session ends — `increase()` over those is structurally zero. See the comment in
-# main.py; it was measured in production, not reasoned about.
-SESSIONS_Q = "sum(claude_code_session_count)"
-TOKENS_Q = "sum(claude_code_token_usage)"
-COST_Q = "sum by (model, type) (claude_code_token_usage)"
+# Query strings must stay in sync with main.QUERIES — spelled out here on purpose,
+# not imported: a copy that has to be edited by hand is what makes a query change
+# visible in review. Sums of `max_over_time`, because Claude Code emits one series per
+# session and each is a counter that never grows again once the session ends, so
+# `increase()` over those is structurally zero and a plain sum loses the ones the
+# Collector has stopped exporting. See the comment in main.py; both halves were
+# measured, not reasoned about.
+SESSIONS_Q = "sum(max_over_time(claude_code_session_count[25h]))"
+TOKENS_Q = "sum(max_over_time(claude_code_token_usage[25h]))"
+COST_Q = "sum by (model, type) (max_over_time(claude_code_token_usage[25h]))"
 
 
 def _serie(model: str, tipo: str, value) -> dict:

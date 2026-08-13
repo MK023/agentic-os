@@ -82,9 +82,16 @@ metadata. Measured against the real client, Prometheus sees
 `claude_code_session_count`, `claude_code_token_usage`, `claude_code_cost_usage` and
 `claude_code_active_time_total`.
 
-**`metric_expiration: 25h`.** The 5-minute default drops a counter from `/metrics`
-five minutes after its last update, so "cost today" would read zero for most of a day
-in which someone stopped working for lunch.
+**`metric_expiration: 5m` — the default, and it was `25h` until 2026-08-14.** The
+default drops a counter from `/metrics` five minutes after its last update, so under an
+*instant* query "cost today" read zero for most of a day in which someone stopped
+working for lunch. 25h fixed that, and it was the right fix for exactly as long as the
+queries were instant.
+
+It became the bug the moment they stopped being — see "the three public numbers" below.
+A series the Collector keeps re-exporting keeps landing in the TSDB, so a 25h window on
+top of 25h of expiration counts each session for ~50h. Expiration decides when a session
+stops counting; the query decides how far back we look. They must not both be the window.
 
 **Prometheus retention is capped by size as well as time, because time alone cannot
 protect a disk.** `--storage.tsdb.retention.time=30d` was the only limit until
@@ -127,19 +134,53 @@ the local test that "verified" it re-sent the same `session_id` with a higher va
 manufacturing exactly the growth that never happens in reality. A synthetic payload
 can confirm a query and still be lying about the shape of the data.
 
-Summing the current value of every live series is right instead: each carries its own
-session's total, and the Collector's `metric_expiration: 25h` supplies the window by
-dropping series a day after their last update. So "today" means "the last ~25 hours of
-activity", which is what the numbers are honestly able to say.
+Summing each series' own total is right instead: each carries its own session's total.
+Until 2026-08-14 that was a plain `sum()` and the window came from the Collector's
+`metric_expiration: 25h`, which dropped a series a day after its last update.
+
+**Corrected 2026-08-14 — the plain sum undercounted after every Collector restart.** An
+instant query can only see what the exporter is exposing *right now*, and a restart
+starts that exporter empty: every session that had already ended was simply gone.
+Reproduced against Prometheus 3.13.2, the pinned version, with the real data shape — 3
+sessions / 6600 tokens read back as **1 / 3300** after a restart, while
+`sum(max_over_time(...[25h]))` held 3 / 6600. On a counter that only ever grows the max
+over the window *is* the final value, so that query reads the same as a plain sum for a
+live series and keeps reading it for a dead one.
+
+The queries and `metric_expiration` are **one change, never two**. `max_over_time` alone
+overcounts, measured the same day: with expiration at 25h the Collector keeps
+re-exporting a session the query can already see in the TSDB, and the effective window
+becomes ~50h. With expiration back at the 5m default the behaviour is correct — two live
+sessions read 2, one that just ended reads 2, once it falls out of the window it reads 1.
+
+So "today" still means "the last 25 hours of activity", which is what the numbers are
+honestly able to say. It just no longer means "unless the Collector restarted".
+
+**What it costs, written down because it is a real trade and not a free win.** The 25h
+expiration made the Collector a second copy of the day: a wiped or recreated
+`prometheus-data` volume healed itself on the next scrape. It does not any more —
+Prometheus' disk is now the only copy, and per the entry above that disk is the part of
+this system with an actual failure on its record. If the volume is lost, the three
+numbers read ~0 for the rest of the day, `/status` answers 200, and that is
+indistinguishable from a morning when nobody worked. The trade is worth making because
+the other side of it is a silent double count, but it moves the single point of failure
+rather than removing it.
+
+**Both halves ship through three separate Railway services** — the Collector config, the
+status API and the Grafana dashboard live in three images with three `watchPatterns`.
+The platform cannot land them atomically, and the dangerous order is real: 5m expiration
+in production under the old instant `sum()` *is* the undercount bug, live and green. So
+after a merge that touches this pair, check the running `commitHash` of all three
+services, not just that the deploys are green.
 
 They stay indicative either way — that is the tool's stated scope: *"If you need 100%
 accuracy, such as for per-request billing, Prometheus is not a good choice"*.
 
 **The Collector's own telemetry is scraped, because a flat series says nothing.** A
 cumulative counter that stops growing looks identical whether the client stopped
-exporting or nobody was working: the Collector keeps exposing the last value for 25h
-(`metric_expiration`) and Prometheus keeps scraping unchanged samples, so `rate()` is
-zero in both cases and every panel flatlines correctly. That ambiguity was
+exporting or nobody was working: the total panels look back 25h and go on showing the
+same number in both cases, and the live `rate()` panel goes quiet in both cases too, so
+every panel flatlines correctly. That ambiguity was
 misdiagnosed three times between 29 and 30 July — once as a wedged exporter, once as
 a client needing a restart, both wrong — before anyone noticed the signal simply
 cannot answer the question.
