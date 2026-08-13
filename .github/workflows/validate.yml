@@ -250,8 +250,9 @@ jobs:
       # mutants/ è generata da mutmut e non è codice sorgente.
       - run: bandit -q -r services/public-status-api -x '**/test_*.py,**/mutants/**'
 
-  # La versione di Python è scritta in cinque posti — quattro pin nei workflow e
-  # il FROM del Dockerfile — e setup-python non sa leggere un Dockerfile. La
+  # La versione di Python è scritta in sei posti — cinque pin nei workflow, il
+  # FROM del Dockerfile e `sonar.python.version` — e setup-python non sa leggere
+  # un Dockerfile né SonarCloud un workflow. La
   # duplicazione non si elimina, si sorveglia: questo job fallisce quando i due
   # numeri divergono, cioè quando la CI proverebbe un interprete che la
   # produzione non ha. Verde senza questo gate voleva dire solo che le wheel si

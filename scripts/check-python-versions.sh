@@ -7,9 +7,15 @@
 # un altro. Verde significava soltanto che le wheel hash-locked si installavano
 # su 3.14 — nessun test ha mai eseguito su quell'interprete.
 #
-# Il numero resta scritto in cinque posti perché setup-python non legge un
+# Il numero resta scritto in sei posti perché setup-python non legge un
 # Dockerfile e il Dockerfile non legge un file di versione: la duplicazione non
 # si elimina, si sorveglia. Stessa scelta di scripts/check-image-users.sh.
+#
+# Il sesto posto — `sonar.python.version` — è stato aggiunto qui il 13-08-2026
+# dopo averlo trovato fermo a 3.12 mentre produzione e CI erano già su 3.14: la
+# prima versione di questo script sorvegliava cinque posti su sei, e il posto
+# scoperto è proprio quello che è andato alla deriva. Un gate che copre quasi
+# tutto lascia la deriva esattamente dove non guarda.
 set -euo pipefail
 
 dockerfile="services/public-status-api/Dockerfile"
@@ -55,11 +61,31 @@ if [ "$trovati" -eq 0 ]; then
   exit 1
 fi
 
+# Sesto posto, con una sintassi tutta sua: `sonar.python.version=3.14`, non
+# `python-version:`, quindi il ciclo qui sopra non lo vedrebbe mai. Sbagliarlo
+# non rompe nessun test — SonarCloud analizza e basta, con le regole tarate
+# sull'interprete sbagliato. È il tipo di deriva che resta verde per sempre.
+file_sonar="sonar-project.properties"
+riga_sonar=$(grep -m1 -E '^sonar\.python\.version=' "$file_sonar" || true)
+if [ -z "$riga_sonar" ]; then
+  echo "FAIL: ${file_sonar} non dichiara nessun 'sonar.python.version'" >&2
+  exit 1
+fi
+versione_sonar=${riga_sonar#*=}
+
+if [ "$versione_sonar" = "$atteso" ]; then
+  echo "ok: ${file_sonar} -> ${versione_sonar}"
+else
+  echo "FAIL: ${file_sonar} dichiara Python ${versione_sonar}, l'immagine ${atteso}" >&2
+  fallimenti=1
+fi
+
 if [ "$fallimenti" -ne 0 ]; then
   echo "" >&2
   echo "La CI proverebbe un interprete che la produzione non ha. Allinea i" >&2
-  echo "workflow al Dockerfile (o viceversa) nello stesso commit." >&2
+  echo "workflow e sonar-project.properties al Dockerfile (o viceversa) nello" >&2
+  echo "stesso commit." >&2
   exit 1
 fi
 
-echo "tutti i ${trovati} pin dei workflow sono su Python ${atteso}, come l'immagine"
+echo "i ${trovati} pin dei workflow e ${file_sonar} sono su Python ${atteso}, come l'immagine"
