@@ -110,11 +110,15 @@ service:
   # Telemetria interna del Collector. Conta i PAYLOAD IN ARRIVO, non il loro
   # contenuto — ed è l'unica cosa che distingue "un client ha smesso di parlare"
   # da "Marco ha smesso di lavorare". Sui contatori cumulativi quelle due
-  # situazioni producono lo stesso identico segnale, una serie piatta: il
-  # Collector continua a esporre l'ultimo valore per 25h e Prometheus continua a
-  # scrapare campioni immutati, quindi rate() è zero in entrambi i casi.
-  # Misurato tre volte fra il 29 e il 30 luglio, ogni volta diagnosticato male
-  # prima di avere questa serie.
+  # situazioni producono lo stesso identico segnale: i pannelli dei totali
+  # guardano indietro 25h con max_over_time e continuano a mostrare lo stesso
+  # numero in entrambi i casi, e il pannello dal vivo a rate() smette di avere
+  # dati in entrambi i casi. Misurato tre volte fra il 29 e il 30 luglio, ogni
+  # volta diagnosticato male prima di avere questa serie.
+  #
+  # Il meccanismo è cambiato il 14-08-2026 (metric_expiration da 25h a 5m,
+  # sopra), l'ambiguità no: nessuna delle due serie di Claude Code sa dire
+  # perché ha smesso di crescere. Questa lo sa.
   #
   # host 0.0.0.0 e non il default localhost: Prometheus è un altro container e su
   # localhost non lo raggiungerebbe mai. Resta comunque sulla rete privata di

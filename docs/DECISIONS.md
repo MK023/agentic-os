@@ -156,6 +156,23 @@ sessions read 2, one that just ended reads 2, once it falls out of the window it
 So "today" still means "the last 25 hours of activity", which is what the numbers are
 honestly able to say. It just no longer means "unless the Collector restarted".
 
+**What it costs, written down because it is a real trade and not a free win.** The 25h
+expiration made the Collector a second copy of the day: a wiped or recreated
+`prometheus-data` volume healed itself on the next scrape. It does not any more —
+Prometheus' disk is now the only copy, and per the entry above that disk is the part of
+this system with an actual failure on its record. If the volume is lost, the three
+numbers read ~0 for the rest of the day, `/status` answers 200, and that is
+indistinguishable from a morning when nobody worked. The trade is worth making because
+the other side of it is a silent double count, but it moves the single point of failure
+rather than removing it.
+
+**Both halves ship through three separate Railway services** — the Collector config, the
+status API and the Grafana dashboard live in three images with three `watchPatterns`.
+The platform cannot land them atomically, and the dangerous order is real: 5m expiration
+in production under the old instant `sum()` *is* the undercount bug, live and green. So
+after a merge that touches this pair, check the running `commitHash` of all three
+services, not just that the deploys are green.
+
 They stay indicative either way — that is the tool's stated scope: *"If you need 100%
 accuracy, such as for per-request billing, Prometheus is not a good choice"*.
 

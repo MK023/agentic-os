@@ -59,6 +59,14 @@ REQUEST_TIMEOUT = httpx.Timeout(10.0)
 # Expiration is now the 5m default: it decides when a session stops counting, this
 # window decides how far back we look, and the two must not both be the window.
 #
+# What this trades away, deliberately: with 25h of expiration the Collector held a
+# day of state, so a wiped or recreated `prometheus-data` volume healed itself — the
+# next 15s scrape re-ingested every series. It no longer does. Prometheus' disk is now
+# the only copy of today's numbers, and that disk is the component here with a failure
+# on its record (the volume filled on 2026-08-13). Lose it and these three read ~0 for
+# the rest of the day with nothing to recover from, answering 200 — indistinguishable
+# from a quiet morning. Accepted, because the alternative is the double count above.
+#
 # So "today" here means "the last 25 hours of activity", not a calendar day. Honest,
 # and stable when nothing is running.
 #

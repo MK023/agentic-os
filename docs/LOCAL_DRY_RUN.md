@@ -67,6 +67,14 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:4318/v1/metrics -H 'C
 curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:4318/v1/metrics -H 'Content-Type: application/json' -H 'Authorization: Bearer wrong' -d '{}'
 curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:4318/v1/metrics -H 'Content-Type: application/json' -H "Authorization: Bearer $OTLP_INGEST_TOKEN" -d '{}'
 
+# Everything below reads the exporter's LIVE /metrics, where a series lives for five
+# minutes after its last export (`metric_expiration`, and see §4). So run these right
+# after feeding the client — and run this guard first, because on an empty /metrics
+# every grep that follows "passes" by matching nothing. A privacy check that reports
+# "no identifying label found" when there was nothing to look at is the same lie as an
+# alert rule that cannot fire.
+curl -s localhost:8889/metrics | grep -c '^claude_code' # must be > 0, else re-export
+
 # Metric names as Prometheus will actually see them
 curl -s localhost:8889/metrics | grep -v '^#' | grep -o '^claude_code[a-z_]*' | sort -u
 
@@ -80,7 +88,9 @@ curl -s -X POST localhost:4318/v1/metrics -H 'Content-Type: application/json' \
   "scopeMetrics":[{"metrics":[{"name":"claude_code.session.count","sum":{"aggregationTemporality":2,
   "isMonotonic":true,"dataPoints":[{"asDouble":1,"timeUnixNano":"1","attributes":[
   {"key":"user.name","value":{"stringValue":"whoever"}}]}]}}]}]}]}'
-curl -s localhost:8889/metrics | grep -c user_name   # expect 0
+curl -s localhost:8889/metrics | grep -c user_name    # expect 0
+curl -s localhost:8889/metrics | grep -c session_id   # expect > 0 — proves the 0 above
+                                                      # means "dropped", not "empty"
 
 # End to end: expect 401, 401, then the three fields
 curl -s -H "Authorization: Bearer $STATUS_API_TOKEN" localhost:8000/status
@@ -97,20 +107,23 @@ and the datasource arrive by provisioning, nothing to import.
   way round until 2026-08-14, and that is worth one check of its own:
 
   ```bash
-  # Send two sessions (two DIFFERENT session.id values — see the next bullet), read
-  # the numbers, then restart only the Collector and read them again.
+  # From docker/, where §1 left you. Send three sessions — three DIFFERENT session.id
+  # values, see the next bullet — then read, restart only the Collector, read again.
   curl -s -H "Authorization: Bearer $STATUS_API_TOKEN" localhost:8000/status
-  docker compose -f docker/docker-compose.yml restart otel-collector
+  docker compose -f docker-compose.yml restart otel-collector
   sleep 20   # one scrape, so Prometheus notices the exporter came back empty
   curl -s -H "Authorization: Bearer $STATUS_API_TOKEN" localhost:8000/status
   ```
 
-  **The two readings must match.** With the old instant `sum()` the second one dropped
-  the sessions that had already ended — measured 3 sessions / 6600 tokens becoming 1 /
-  3300. If they match on the way in and diverge here, the pair of settings has drifted
-  apart: check that `metric_expiration` is still short *and* the queries still carry
-  their range. Raising expiration back to 25h under a 25h window overcounts instead,
-  by roughly double.
+  **The two readings must match.** Measured on 2026-08-14 with three sessions of 2200
+  tokens: `3 / 6600 / $0.03` both times, while `sum(claude_code_session_count)` — the
+  query this replaced — came back **empty** from the same Prometheus. An earlier run,
+  with one session still live, read 3 / 6600 before and 1 / 3300 after.
+
+  If the readings diverge here, the pair of settings has drifted apart: check that
+  `metric_expiration` is still short *and* that the queries still carry their range.
+  Raising expiration back to 25h under a 25h window does not undercount — it counts
+  each session for roughly twice as long.
 - **A synthetic payload can lie about the shape of the data.** Re-sending the same
   `session.id` with a higher value manufactures growth that real sessions never
   produce — each real session is its own series, born and then flat. That is how an

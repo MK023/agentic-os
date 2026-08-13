@@ -111,12 +111,17 @@ into one stream and make the label unnecessary. It is the more correct architect
 on paper.
 
 Not adopted, for three reasons that are all about this deployment rather than about
-the idea: the processor is **alpha**; it keeps its accumulation **in memory**, so
-every redeploy resets the counters; and its `max_stale` default drops a stream after
-5 minutes of inactivity — the same class of trap as the exporter's
-`metric_expiration`, which already cost us a day's worth of zeroes. Trading a
-verified setup for an alpha component that forgets on restart is not a good trade at
-this size.
+the idea: the processor is **alpha**, and it keeps its accumulation **in memory**, so
+every redeploy resets the counters. Trading a verified setup for an alpha component
+that forgets on restart is not a good trade at this size.
+
+Its `max_stale` default — a stream dropped after 5 minutes of inactivity — used to be
+the third reason, by analogy with the exporter's `metric_expiration`, which had already
+cost us a day's worth of zeroes. That argument died on 2026-08-14: the window now comes
+from the query (`max_over_time(...[25h])`) and the exporter itself sits at 5 minutes on
+purpose, so a short stale window is no longer disqualifying on its own. The two reasons
+above are enough without it, and an argument that no longer distinguishes the options
+should not be left standing as if it did.
 
 Revisit if it reaches beta, or if Phase 2 brings enough producers that the session
 label actually costs something.
