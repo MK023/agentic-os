@@ -33,9 +33,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Must track the minor in services/public-status-api/Dockerfile — the
+      # python-versions job below fails the build when they drift. Drift is silent
+      # otherwise: every job here stays green while testing a runtime production
+      # does not have, because the image build proves only that the hash-locked
+      # wheels install, never that one test ran on that interpreter.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       # Two commands, not one: requirements.txt carries hashes, and pip switches the
       # WHOLE command into hash-checking mode as soon as one requirement has them —
       # the unhashed test tools would fail the install.
@@ -106,6 +111,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: bash scripts/check-image-users.sh
 
+  # La versione di Python è scritta in cinque posti — quattro pin nei workflow e
+  # il FROM del Dockerfile — e setup-python non sa leggere un Dockerfile. La
+  # duplicazione non si elimina, si sorveglia: questo job fallisce quando i due
+  # numeri divergono, cioè quando la CI proverebbe un interprete che la
+  # produzione non ha. Verde senza questo gate voleva dire solo che le wheel si
+  # installavano; nessun test aveva mai eseguito su quel Python.
+  python-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: bash scripts/check-python-versions.sh
+
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
   # the infrastructure this repo has now that deployment is Railway's config-as-code.
   # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,
@@ -148,7 +165,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - run: pip install pip-audit==2.10.1
       - run: pip-audit -r services/public-status-api/requirements.txt --progress-spinner off
 
@@ -205,7 +222,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       # Two commands, not one: requirements.txt carries hashes, and pip switches the
       # WHOLE command into hash-checking mode as soon as one requirement has them —
       # the unhashed test tools would fail the install.
