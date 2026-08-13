@@ -404,8 +404,8 @@ def test_sentry_event_carries_the_deploy_sha_as_release(monkeypatch):
 
 @respx.mock
 def test_sentry_event_omits_release_when_the_deploy_sha_is_absent(monkeypatch):
-    # No environment we run in today sets RAILWAY_GIT_COMMIT_SHA — not local
-    # runs, not `docker compose`, and (measured 2026-07-30) not Railway either.
+    # Railway sets RAILWAY_GIT_COMMIT_SHA on every deployment; nothing off the
+    # platform does — not local runs, not `docker compose`. This is that case.
     # Sending an empty release would file those errors under a version that does
     # not exist, which is worse than sending none — missing, not blank.
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")

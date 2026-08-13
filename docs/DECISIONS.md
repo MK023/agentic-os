@@ -233,21 +233,37 @@ questions the metrics leave unanswered.
 same fail-open contract as the one already running on marcobellingeri.dev: no DSN is
 a no-op, a failed delivery never changes the response.
 
-**The Sentry release was meant to be the deploy's commit SHA — measured, Railway
-never provides it.** Sentry takes any string and explicitly suggests a commit SHA,
-and `RAILWAY_GIT_COMMIT_SHA` looked like what made the release a fact about what is
-running rather than a claim someone remembered to update. Measured on 2026-07-30, it
-does not exist at runtime: Railway injects exactly seven variables into the service
-(`railway variables`, `railway run -- env` and the dashboard agree), none of them
-git-related, and Railway's docs promise git variables only for deploys "originated
-from a GitHub trigger" without saying they reach the container. So in production the
-release field is **omitted** — every event files under no version, exactly the state
-the feature was written to end. The code path stays (it costs nothing and activates
-the day the platform provides the variable); a hand-bumped version stays rejected —
-a release updated by hand is eventually wrong — and chasing a build-time workaround
-was judged not worth the time. The tests that "verified" the feature set the
-variable with `monkeypatch`: they prove the code works when the variable exists,
-never that it exists — the same shape-not-reality gap as the `increase()` query.
+**The Sentry release is the deploy's commit SHA, and it has worked since the day it
+shipped — the measurement that said otherwise was reading the wrong place.** Sentry
+takes any string and explicitly suggests a commit SHA, so `RAILWAY_GIT_COMMIT_SHA` is
+what makes the release a fact about what is running rather than a claim someone
+remembered to update. On 2026-07-30 this was written down as impossible: `railway
+variables`, `railway run -- env` and the dashboard all listed the same seven
+variables, none git-related. **All three read the variables configured *on the
+service*, from outside; none of them is the environment of the deployed container.**
+Railway's docs say the opposite of the conclusion — the variable is "injected
+automatically on every deployment" — and production had been contradicting it in
+Sentry for hours before the paragraph was written:
+
+| Event | Release tag | What was deployed then |
+| --- | --- | --- |
+| 2026-07-29 13:37Z, sent from the laptop | *(none)* | not on Railway at all |
+| 2026-07-30 01:52Z | `67b3b02` | PR #30 |
+| 2026-07-30 02:24Z (×3) | `ce3f520` | PR #32 |
+
+Two different SHAs, each the commit actually running at that moment, and the only
+event with no release is the one that never touched the platform. Nothing in the code
+changed to fix this — `sentry.py` always read the right variable; the documentation
+was wrong, and this repo's own `v1.0.0` was held back on the strength of it. A
+hand-bumped version stays rejected: a release updated by hand is eventually wrong.
+
+The lesson outlives the bug. The old paragraph closed by noting that tests setting
+the variable with `monkeypatch` prove the code works when the variable exists and
+never that it exists — the same shape-not-reality gap as the `increase()` query. That
+was correct, and it applied to the paragraph itself: a CLI that reads configuration
+is no more the runtime than a fixture is. **The only measurement that settled it was
+the artefact production emitted on its own.** When the question is "what does the
+container actually have", ask something running inside it.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.
