@@ -114,16 +114,30 @@ Every gate **blocks**. Nothing runs with `continue-on-error`, and a gate whose
 credential is missing stays red instead of skipping.
 
 One check runs *after* the merge rather than before it: `smoke.yml` hits the
-public endpoint every 10 minutes and fails if it does not answer `200`, or if any
-of the three numbers comes back `null`. The null case is the one that matters —
-the site Worker fails open by design (`200` plus nulls, so a visitor sees a dash
-rather than an error), which means a green HTTP status proves nothing about
-whether the hub behind it is alive. It blocks nothing and merges nothing; it
-turns a silent outage into a red run and an email. Railway ignores the
-Dockerfile `HEALTHCHECK`, so a `SUCCESS` deploy only ever meant "the container
-started". The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana
-behind Access and the status API's own bearer, and stays manual until its
-credentials exist as GitHub secrets.
+public endpoint on a schedule and fails on three things — a status that is not
+`200`, any of the three numbers coming back `null`, or the response declaring
+itself `stale`. The last two are the ones that matter, because a green HTTP
+status proves nothing here: the site Worker fails open by design, answering `200`
+with nulls when it cannot reach the hub, and since it also serves a cached
+last-known-good it can answer `200` with real-but-old numbers. Both look healthy
+from outside and are not. It blocks nothing and merges nothing; it turns a silent
+outage into a red run and an email. Railway ignores the Dockerfile `HEALTHCHECK`,
+so a `SUCCESS` deploy only ever meant "the container started".
+
+**Its cadence is asked for, not guaranteed, and the gap is large.** The cron says
+`*/10`; measured across the first twelve real runs, the interval ran between 38
+and 93 minutes, median ~55 — GitHub throttles frequent schedules on public
+repositories. So this probe reliably catches an outage that *lasts*: a deploy
+that does not serve, a full volume, a Tunnel down. It does **not** reliably catch
+a two-minute restart, and any claim that it would have seen the short 2026-08-13
+windows is wrong. Closing that gap needs a prober that does not run on GitHub
+Actions — a Cron Trigger on the site's Worker is the obvious candidate, since it
+already sits at the edge with Sentry wired — and that is new infrastructure
+rather than a CI change.
+
+The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana behind
+Access and the status API's own bearer, and stays manual until its credentials
+exist as GitHub secrets.
 
 The reasoning behind each CI decision is in `docs/DECISIONS.md`.
 
@@ -158,10 +172,14 @@ Grafana/Prometheus is what the repo builds and how it is observed.
 
 **Live.**
 
-The five services run, the Tunnel serves its three hostnames, and the public
-endpoint answers with real numbers. `scripts/verify-hub.sh` is the post-deploy check.
-What is still open (one volume check and the remaining judgement calls) is tracked
-in `docs/BLOCKERS.md`.
+Tagged **v1.0.0** on 2026-08-13. The five services run, the Tunnel serves its
+three hostnames, and the public endpoint answers with real numbers. `smoke.yml`
+watches it from outside on a schedule; `scripts/verify-hub.sh` is the fuller
+post-deploy check and stays manual.
+
+What is still open is tracked in `docs/BLOCKERS.md`, and it is short: no
+engineering task blocks anything, only judgement calls and one upstream CVE
+nobody downstream can fix.
 
 ## Docs
 

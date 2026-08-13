@@ -20,8 +20,12 @@ three aggregate numbers are public, everything else stays inside the project.
   file the Railway images copy in. `docker/.env` is local fake secrets, never in git.
 - `services/public-status-api/` — the only application code (and the only place
   coverage/mutation thresholds apply).
-- `scripts/` — `verify-hub.sh`, the post-deploy smoke test. It is the real check
-  that a deploy worked: Railway ignores the Dockerfile `HEALTHCHECK`.
+- `scripts/` — `verify-hub.sh`, the fuller post-deploy check (Grafana behind
+  Access + the status API's bearer). Manual: its credentials are not GitHub
+  secrets. `.github/workflows/smoke.yml` is the automatic half — public endpoint
+  only, no secrets, and it fails on `null` *and* on `stale`, never on the HTTP
+  status alone. Railway ignores the Dockerfile `HEALTHCHECK`, so `SUCCESS` only
+  ever means "the container started".
 
 ## Commands
 
