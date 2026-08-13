@@ -62,7 +62,7 @@ def test_cost_is_computed_from_token_counts_across_every_type(monkeypatch):
     # Real production numbers, read off the hub on 2026-07-30. They matter because
     # cache tokens dominate the bill here (cacheCreation alone is ~80% of it), and
     # any parser that reads `result[0]` and stops — as _parse_value does — would
-    # answer 2.04 while looking perfectly healthy. That silent truncation is the
+    # answer 3.26 while looking perfectly healthy. That silent truncation is the
     # failure this test exists to catch, not the arithmetic.
     monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
@@ -72,7 +72,7 @@ def test_cost_is_computed_from_token_counts_across_every_type(monkeypatch):
     _mock_scalars()
     _mock_cost(
         [
-            _serie("claude-opus-5", "cacheCreation", 326_484),  # 2.040525
+            _serie("claude-opus-5", "cacheCreation", 326_484),  # 3.264840
             _serie("claude-opus-5", "cacheRead", 515_573),  # 0.257787
             _serie("claude-opus-5", "input", 22_822),  # 0.114110
             _serie("claude-opus-5", "output", 4_582),  # 0.114550
@@ -82,7 +82,7 @@ def test_cost_is_computed_from_token_counts_across_every_type(monkeypatch):
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    assert response.json()["cost_usd_today"] == 2.53
+    assert response.json()["cost_usd_today"] == 3.75
     # With a single model in the price table the fallback rates EQUAL that model's
     # rates, so a lookup that quietly falls through to the fallback produces the
     # right number for the wrong reason — the arithmetic above cannot see it. What
@@ -248,7 +248,7 @@ def test_every_model_is_priced_from_its_own_row_not_the_fallback(monkeypatch):
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    assert response.json()["cost_usd_today"] == 139.65  # fable 73.50 + opus 36.75 + sonnet 22.05 + haiku 7.35
+    assert response.json()["cost_usd_today"] == 153.90  # fable 81.00 + opus 40.50 + sonnet 24.30 + haiku 8.10
     assert not sentry_call.called
 
 
