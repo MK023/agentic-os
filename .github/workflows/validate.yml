@@ -115,6 +115,61 @@ jobs:
       # semplicemente non sarebbe esistita.
       # Gira sull'immagine appena costruita: valida ESATTAMENTE il file che viene
       # spedito, con esattamente la versione che lo eseguirà.
+      # Le immagini erano pinnate e mai guardate: sapevamo esattamente quale
+      # versione gira, non se ha CVE. Gira qui perche' le immagini sono gia'
+      # costruite sopra — nessun rebuild.
+      #
+      # `ignore-unfixed`: le immagini base trascinano CVE di pacchetti di sistema
+      # per cui non esiste una patch a monte. Bloccare su quelle terrebbe il gate
+      # rosso per sempre e finirebbe in un `continue-on-error`; bloccare solo su
+      # cio' che HA una correzione rende il rosso azionabile — la risposta e'
+      # sempre "aggiorna l'immagine base", che e' esattamente cio' che Dependabot
+      # gia' propone.
+      - name: CVE dell'immagine otel-collector
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-otel-collector:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: CVE dell'immagine prometheus
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-prometheus:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: CVE dell'immagine grafana
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-grafana:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: CVE dell'immagine cloudflared
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-cloudflared:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: CVE dell'immagine status-api
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-status-api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
       - name: validate della config del Collector (col binario che la eseguirà)
         env:
           OTLP_INGEST_TOKEN: dummy
