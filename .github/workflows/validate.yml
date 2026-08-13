@@ -3,11 +3,15 @@ name: validate
 on:
   pull_request:
   push:
+    permissions:
+      contents: read
     branches: [main]
   workflow_dispatch: {}
 
-permissions:
-  contents: read
+# Deny by default, concesso job per job. Un `contents: read` a livello di workflow
+# lo regala anche ai job che il repository non lo leggono mai; con la mappa vuota
+# ogni permesso qui sotto e' una riga che qualcuno ha dovuto scrivere apposta.
+permissions: {}
 
 concurrency:
   group: validate-${{ github.ref }}
@@ -18,9 +22,15 @@ concurrency:
 # template-injection surface. zizmor (workflow-lint job below) enforces that.
 jobs:
   compose:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - run: docker compose -f docker/docker-compose.yml config --quiet
         env:
           CLOUDFLARE_TUNNEL_TOKEN: dummy
@@ -30,9 +40,15 @@ jobs:
           SENTRY_DSN: ""
 
   status-api-tests:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       # Must track the minor in services/public-status-api/Dockerfile — the
       # python-versions job below fails the build when they drift. Drift is silent
       # otherwise: every job here stays green while testing a runtime production
@@ -49,7 +65,7 @@ jobs:
       # Pinnate come tutto il resto della pipeline: erano l'unico install non
       # deterministico rimasto (le dipendenze di prodotto sono hash-locked).
       - run: pip install respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
-      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
+      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml --cov-fail-under=100
 
   # Builds every image the platform will build. The four Railway Dockerfiles copy
   # configuration out of docker/, so a moved or renamed config file breaks them —
@@ -57,9 +73,15 @@ jobs:
   # failed check. Also builds the status API image, which is where the hash-locked
   # install actually gets exercised.
   images:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       # Ritenta: il primo fallimento non deterministico di questa pipeline è stato un
       # `TLS handshake timeout` verso auth.docker.io mentre si scaricava un'immagine
       # base (29-07). Non è il nostro codice, ma un gate che fallisce a caso smette
@@ -93,6 +115,85 @@ jobs:
       # semplicemente non sarebbe esistita.
       # Gira sull'immagine appena costruita: valida ESATTAMENTE il file che viene
       # spedito, con esattamente la versione che lo eseguirà.
+      # Le immagini erano pinnate e mai guardate: sapevamo esattamente quale
+      # versione gira, non se ha CVE noti. Pinnare risponde alla riproducibilita',
+      # non all'esposizione.
+      #
+      # Bloccante SOLO sull'immagine che componiamo noi. La prima versione di
+      # questo gate falliva su tutte e cinque con `ignore-unfixed`, e al primo
+      # run e' andata rossa su 15 HIGH dentro grafana 13.1.3 (tempo, stdlib Go
+      # 1.26.3, x/net, x/text). Sono veri e hanno un fix **nei moduli Go a
+      # monte**, non in una release di Grafana installabile: il gate sarebbe
+      # rimasto rosso per settimane, e un gate perennemente rosso diventa un
+      # `continue-on-error` con passaggi extra.
+      #
+      # La distinzione utile non e' "il CVE ha un fix" ma "possiamo agire":
+      # su status-api si aggiorna la base o una dipendenza, sulle immagini di
+      # terzi l'unica leva e' aggiornare l'immagine, che e' gia' il mestiere di
+      # Dependabot. Quindi quelle si scansionano e si leggono, non bloccano.
+      # `vuln-type: library` — le dipendenze Python, le uniche che scegliamo noi.
+      # Un CVE li si chiude modificando requirements.in e ricompilando il lockfile.
+      # Oggi sono tutte a zero: fastapi, httpx, pydantic, uvicorn, l'intero albero.
+      - name: CVE delle dipendenze Python di status-api (bloccante)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-status-api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: library
+          exit-code: "1"
+          format: table
+
+      # I pacchetti di sistema di `python:3.14.0-slim` ricadono nella stessa
+      # categoria delle immagini di terzi qui sotto: non li installiamo noi e
+      # l'unica leva e' cambiare il tag della base. Al 13/08 sono 25 HIGH con fix
+      # in Debian ma non ancora in un tag pubblicato. Visibili, non bloccanti.
+      - name: CVE del sistema operativo di status-api (informativo)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-status-api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os
+          exit-code: "0"
+          format: table
+
+      - name: CVE dell'immagine otel-collector (informativo — immagine di terzi)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-otel-collector:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
+      - name: CVE dell'immagine prometheus (informativo — immagine di terzi)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-prometheus:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
+      - name: CVE dell'immagine grafana (informativo — immagine di terzi)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-grafana:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
+      - name: CVE dell'immagine cloudflared (informativo — immagine di terzi)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: agentic-cloudflared:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
       - name: validate della config del Collector (col binario che la eseguirà)
         env:
           OTLP_INGEST_TOKEN: dummy
@@ -106,10 +207,48 @@ jobs:
   # diventi un'abitudine: un Dockerfile nuovo senza USER, o un USER 0 messo per
   # far sparire un errore di permessi, fallisce qui.
   image-users:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - run: bash scripts/check-image-users.sh
+
+  # Fino al 13/08/2026 questa pipeline aveva dodici gate e nessun linter Python.
+  # Non era un problema teorico: al primo lancio ruff ha trovato uno `zip()` senza
+  # `strict=` proprio dove si costruiscono i tre numeri pubblici — se le chiavi e i
+  # risultati divergessero, l'endpoint risponderebbe 200 con un valore accoppiato
+  # alla query sbagliata. Stessa famiglia del `result[0]` che leggeva un gruppo su N.
+  #
+  # `S` (flake8-bandit) è dentro ruff, quindi bandit gira sotto in gran parte in
+  # sovrapposizione: misurato il 13/08, l'unico rilievo di bandit era lo stesso
+  # `B110` che ruff segnala come `S110`. Resta perché il suo catalogo si muove
+  # separatamente, non perché oggi aggiunga segnale.
+  lint:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      # Pinnati come ogni altra cosa qui: un linter che cambia versione da solo
+      # trasforma un gate in un generatore casuale di build rosse.
+      - run: pip install ruff==0.15.4 bandit==1.9.2
+      - run: ruff check .
+      - run: ruff format --check .
+      # -x sui test: gli assert sono il modo in cui i test si scrivono. La cartella
+      # mutants/ è generata da mutmut e non è codice sorgente.
+      - run: bandit -q -r services/public-status-api -x '**/test_*.py,**/mutants/**'
 
   # La versione di Python è scritta in cinque posti — quattro pin nei workflow e
   # il FROM del Dockerfile — e setup-python non sa leggere un Dockerfile. La
@@ -118,9 +257,15 @@ jobs:
   # produzione non ha. Verde senza questo gate voleva dire solo che le wheel si
   # installavano; nessun test aveva mai eseguito su quel Python.
   python-versions:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - run: bash scripts/check-python-versions.sh
 
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
@@ -128,9 +273,15 @@ jobs:
   # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,
   # soft-fails LOW/MEDIUM).
   checkov:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - uses: bridgecrewio/checkov-action@9b70310bcd306d11740313070b940167d6b23085 # v12.3115.0
         with:
           directory: .
@@ -141,9 +292,15 @@ jobs:
   # broad permissions. Blocks on HIGH, pinned version — a linter that changes its
   # own rules silently is a non-deterministic gate.
   workflow-lint:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - name: zizmor sui workflow (blocca su HIGH)
         run: |
           pip install --quiet zizmor==1.28.0
@@ -160,9 +317,15 @@ jobs:
   # advisory that provably does not apply here ever fires, add
   # `--ignore-vuln <ID>` with a comment saying why — never drop the gate.
   dependency-audit:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
@@ -179,6 +342,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
@@ -197,6 +364,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
@@ -214,11 +382,20 @@ jobs:
   # weakened one. On a push event `github.event.pull_request` is null, so the first
   # clause short-circuits and the job runs.
   sonar:
-    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      contents: read
+    # Due esclusioni, entrambe per la stessa ragione: i secret non raggiungono
+    # queste PR, quindi il job resterebbe rosso per sempre bloccando ogni merge.
+    # I fork non sono un caso teorico: questo repository e' pubblico.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.user.login != 'dependabot[bot]' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -231,7 +408,7 @@ jobs:
       # Pinnate come tutto il resto della pipeline: erano l'unico install non
       # deterministico rimasto (le dipendenze di prodotto sono hash-locked).
       - run: pip install respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
-      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml
+      - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml --cov-fail-under=100
       - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

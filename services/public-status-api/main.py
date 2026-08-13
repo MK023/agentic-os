@@ -12,10 +12,16 @@ from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
-
 from sentry import capture_exception
 
-app = FastAPI()
+# Nessuna rotta oltre a /status. FastAPI monta /docs, /redoc e /openapi.json da
+# solo, e `require_valid_token` è una dipendenza per-rotta: quelle tre
+# risponderebbero senza token. Oggi Cloudflare Access copre tutto l'host (misurato
+# il 13/08/2026: 401 su ogni path), ma la regola scritta in SECURITY.md è che un
+# hostname non è un controllo d'accesso — è la stessa ragione per cui l'ingest OTLP
+# autentica dentro il Collector invece di fidarsi del tunnel. Lo schema OpenAPI
+# descriverebbe per giunta proprio l'autenticazione che protegge.
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 PROMETHEUS_URL = os.environ["PROMETHEUS_URL"]
 STATUS_API_TOKEN = os.environ["STATUS_API_TOKEN"]
@@ -281,7 +287,11 @@ async def status(_: RequireToken) -> dict:
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         try:
             results = await asyncio.gather(*(_query_one(client, q) for q in QUERIES.values()))
-            payloads = dict(zip(QUERIES.keys(), results))
+            # strict=True: senza, uno zip fra chiavi e risultati di lunghezza diversa
+            # si tronca in silenzio e l'endpoint risponde 200 con un numero mancante o
+            # accoppiato alla query sbagliata. È la stessa famiglia di _parse_value che
+            # leggeva result[0] e si fermava — un dato parziale che sembra sano.
+            payloads = dict(zip(QUERIES.keys(), results, strict=True))
             values = {
                 "sessions_today": int(_parse_value(payloads["sessions_today"])),
                 "tokens_today": int(_parse_value(payloads["tokens_today"])),

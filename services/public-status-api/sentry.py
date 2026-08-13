@@ -96,5 +96,11 @@ async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None
                 headers={"Content-Type": "application/x-sentry-envelope"},
                 timeout=3.0,
             )
-    except Exception:  # noqa: BLE001 — fail-open is the whole point of this module
-        pass
+    # noqa BLE001+S110: entrambe le regole segnalano, correttamente in generale, che
+    # inghiottire ogni eccezione senza loggarla nasconde i guasti. Qui è il contratto:
+    # questo modulo È il canale di logging, e non può usare sé stesso per riportare il
+    # proprio fallimento. Se Sentry è irraggiungibile, la richiesta pubblica che stiamo
+    # servendo deve comunque rispondere — un errore di telemetria non può diventare un
+    # errore dell'utente. Il comportamento è coperto dai test di fail-open.
+    except Exception:  # noqa: BLE001, S110
+        pass  # nosec B110 — vedi il commento sopra: questo modulo non può segnalarsi da sé

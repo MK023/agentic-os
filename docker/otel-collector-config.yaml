@@ -24,6 +24,23 @@ receivers:
           authenticator: bearertokenauth
 
 processors:
+  # Primo della pipeline, come prescrive la documentazione OpenTelemetry: senza,
+  # un picco di dati in ingresso non incontra nessun freno e il Collector muore
+  # per OOM. Il container riparte, ma nel frattempo la telemetria si ferma e i
+  # tre numeri pubblici si congelano — lo stesso tipo di guasto che il 13/08/2026
+  # è rimasto invisibile per ore su Prometheus, cioè un servizio che smette di
+  # funzionare senza che niente lo dica.
+  #
+  # 256 MiB su un container che oggi ne usa 45: il limite non è tarato sul
+  # consumo attuale ma sul punto oltre il quale rifiutare dati è meglio che
+  # morire. Quando il soft limit (limit_mib - spike_limit_mib = 192 MiB) viene
+  # superato, il processor risponde errori ai receiver e Claude Code ritenta —
+  # perdere un export è recuperabile, un OOM no.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
   # Labels are an ALLOW-LIST, not a deny-list, and that is the point.
   #
   # The first version of this deleted the five identity attributes Claude Code was
@@ -114,5 +131,7 @@ service:
       receivers: [otlp]
       # Order matters: strip before batching, so nothing identifying is ever held
       # in a batch buffer or handed to an exporter.
-      processors: [transform/label-allowlist, batch]
+      # memory_limiter per primo: deve poter rifiutare i dati PRIMA che vengano
+      # trasformati e accodati, altrimenti frena a valle del lavoro già fatto.
+      processors: [memory_limiter, transform/label-allowlist, batch]
       exporters: [prometheus]

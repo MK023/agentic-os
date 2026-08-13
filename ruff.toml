@@ -1,0 +1,26 @@
+# Linter e formatter per l'unico codice applicativo del repo
+# (services/public-status-api). Aggiunto il 13/08/2026: fino a quel giorno la CI
+# aveva dodici gate — immagini, supply chain, segreti, config, coverage, Sonar —
+# e **nessun linter Python**. La prova che il buco non era teorico: quella stessa
+# notte era stato scritto un `# noqa: BLE001` per una regola che nessuno eseguiva,
+# e al primo lancio ruff ha trovato uno `zip()` senza `strict=` sul percorso che
+# costruisce i tre numeri pubblici.
+
+line-length = 110
+
+[lint]
+# Oltre ai default (E4/E7/E9/F): `S` sono le regole flake8-bandit, `B` bugbear,
+# `ASYNC` gli errori tipici del codice asincrono — le tre famiglie che qui possono
+# produrre guasti veri, non questioni di stile. `I` tiene deterministico l'ordine
+# degli import, che altrimenti sporca i diff e i confronti di cache.
+select = ["E", "F", "W", "I", "UP", "B", "S", "ASYNC", "C4", "RET", "SIM", "BLE"]
+
+# RUF100 non è nel set: una `# noqa` inutile è rumore, ma qui le due che esistono
+# sono deliberate e documentate, e vogliamo che restino leggibili come scelte.
+
+[lint.per-file-ignores]
+# S101 (assert) nei test è il modo in cui i test si scrivono, non un rischio.
+# S105/S106 (hardcoded password) su token finti come "test-token": sono fixture,
+# non credenziali — i segreti veri li intercetta gitleaks, che gira su ogni commit.
+"**/test_*.py" = ["S101", "S105", "S106"]
+"**/conftest.py" = ["S105", "S106"]

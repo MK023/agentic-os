@@ -118,9 +118,12 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
    image build of every service, Checkov); a small unit-heavy pyramid for the two
    application components (status API here, widget in the site repo).
 
-2. **Coverage on new code**: 100% on the status API (met: 9 tests, 100% on
-   `main.py` and `sentry.py`). No repo-wide threshold. Line coverage on
-   Dockerfiles and YAML means nothing.
+2. **Coverage on new code**: 100% on the status API, **enforced** by
+   `--cov-fail-under=100` in CI (met: 25 tests, 100% on `main.py` and
+   `sentry.py`). No repo-wide threshold — line coverage on Dockerfiles and YAML
+   means nothing. Until 2026-08-13 this number was measured and *not* enforced:
+   a contract written in a README that no gate checks is a wish, and it is the
+   same defect as a gate nobody wrote a policy for, seen from the other side.
 
 3. **Blocking mutation score (nightly)**: any non-killed mutant in
    `require_valid_token`, the only authorization comparison in the project,
