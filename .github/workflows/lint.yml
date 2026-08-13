@@ -1,0 +1,88 @@
+name: lint
+
+# Diviso da validate.yml il 13-08-2026, che era arrivato a 13 job di mestieri
+# diversi. **I nomi dei job non sono cambiati**, ed e' la cosa importante: i
+# dodici check obbligatori del ruleset `main protetta` (id 19979456) SONO i nomi
+# dei job. Rinominarne uno durante la divisione avrebbe lasciato il ruleset ad
+# aspettare per sempre un contesto che nessuno produce piu'.
+#
+# Analisi statica di cio' che scriviamo noi: ruff e bandit sul Python,
+# zizmor sui workflow. Due linguaggi, stesso mestiere.
+#
+# Nessun filtro `paths`, di proposito: un check obbligatorio che non parte per un
+# filtro lascia la PR in attesa per sempre invece di passare. Si puo' aggiungere,
+# ma serve un job "skip" che riporti successo, ed e' un pezzo di macchinario in
+# piu' per risparmiare qualche minuto di runner gratuito.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Deny by default, concesso job per job. Un `contents: read` a livello di
+# workflow lo regala anche ai job che il repository non lo leggono mai; con la
+# mappa vuota ogni permesso qui sotto e' una riga che qualcuno ha dovuto
+# scrivere apposta.
+permissions: {}
+
+concurrency:
+  # Un gruppo PER FILE. Con il gruppo condiviso di prima, un push avrebbe
+  # cancellato i run degli altri quattro workflow, e un check obbligatorio
+  # cancellato non e' ne' rosso ne' verde: resta appeso.
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nessuno step `run:` interpola espressioni ${{ }}: le uniche sono in `if:` e
+# in mappe `env:`, quindi non c'e' superficie di template injection. Lo impone
+# zizmor, nel job workflow-lint (lint.yml).
+jobs:
+  # Fino al 13/08/2026 questa pipeline aveva dodici gate e nessun linter Python.
+  # Non era un problema teorico: al primo lancio ruff ha trovato uno `zip()` senza
+  # `strict=` proprio dove si costruiscono i tre numeri pubblici — se le chiavi e i
+  # risultati divergessero, l'endpoint risponderebbe 200 con un valore accoppiato
+  # alla query sbagliata. Stessa famiglia del `result[0]` che leggeva un gruppo su N.
+  #
+  # `S` (flake8-bandit) è dentro ruff, quindi bandit gira sotto in gran parte in
+  # sovrapposizione: misurato il 13/08, l'unico rilievo di bandit era lo stesso
+  # `B110` che ruff segnala come `S110`. Resta perché il suo catalogo si muove
+  # separatamente, non perché oggi aggiunga segnale.
+  lint:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      # Pinnati come ogni altra cosa qui: un linter che cambia versione da solo
+      # trasforma un gate in un generatore casuale di build rosse.
+      - run: pip install ruff==0.15.4 bandit==1.9.2
+      - run: ruff check .
+      - run: ruff format --check .
+      # -x sui test: gli assert sono il modo in cui i test si scrivono. La cartella
+      # mutants/ è generata da mutmut e non è codice sorgente.
+      - run: bandit -q -r services/public-status-api -x '**/test_*.py,**/mutants/**'
+
+  # Pipeline-as-attack-surface: zizmor is SAST for
+  # the workflows themselves — template injection, dangerous triggers, overly
+  # broad permissions. Blocks on HIGH, pinned version — a linter that changes its
+  # own rules silently is a non-deterministic gate.
+  workflow-lint:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - name: zizmor sui workflow (blocca su HIGH)
+        run: |
+          pip install --quiet zizmor==1.28.0
+          zizmor --min-severity=high .github/workflows/

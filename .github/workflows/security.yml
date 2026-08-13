@@ -1,0 +1,154 @@
+name: sicurezza
+
+# Diviso da validate.yml il 13-08-2026, che era arrivato a 13 job di mestieri
+# diversi. **I nomi dei job non sono cambiati**, ed e' la cosa importante: i
+# dodici check obbligatori del ruleset `main protetta` (id 19979456) SONO i nomi
+# dei job. Rinominarne uno durante la divisione avrebbe lasciato il ruleset ad
+# aspettare per sempre un contesto che nessuno produce piu'.
+#
+# Segreti, infrastruttura come codice e catena delle dipendenze. I due gate
+# sulle dipendenze vedono cose diverse di proposito: pip-audit guarda TUTTO
+# l'insieme pinnato a ogni run, dependency-review solo cio' che il diff di
+# questa PR introduce.
+#
+# Nessun filtro `paths`, di proposito: un check obbligatorio che non parte per un
+# filtro lascia la PR in attesa per sempre invece di passare. Si puo' aggiungere,
+# ma serve un job "skip" che riporti successo, ed e' un pezzo di macchinario in
+# piu' per risparmiare qualche minuto di runner gratuito.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Deny by default, concesso job per job. Un `contents: read` a livello di
+# workflow lo regala anche ai job che il repository non lo leggono mai; con la
+# mappa vuota ogni permesso qui sotto e' una riga che qualcuno ha dovuto
+# scrivere apposta.
+permissions: {}
+
+concurrency:
+  # Un gruppo PER FILE. Con il gruppo condiviso di prima, un push avrebbe
+  # cancellato i run degli altri quattro workflow, e un check obbligatorio
+  # cancellato non e' ne' rosso ne' verde: resta appeso.
+  group: sicurezza-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nessuno step `run:` interpola espressioni ${{ }}: le uniche sono in `if:` e
+# in mappe `env:`, quindi non c'e' superficie di template injection. Lo impone
+# zizmor, nel job workflow-lint (lint.yml).
+jobs:
+  # Zero tolerance, full history, e da oggi nessuna eccezione — perche' una
+  # c'era. Fino al 13/08/2026 il job portava
+  # `if: pull_request.user.login != 'dependabot[bot]'`, e le dieci PR di
+  # Dependabot mergiate quel giorno sono entrate in main **senza scansione dei
+  # segreti**. Il motivo era legittimo (l'action vuole un token che a quelle PR
+  # non arriva, e sarebbe rimasta rossa bloccando ogni bump) ma il risultato no:
+  # un check obbligatorio che si salta da solo e' un `continue-on-error` con
+  # passaggi extra, che e' la cosa che il CLAUDE.md vieta per nome.
+  #
+  # Il binario CLI non vuole nessun token, quindi l'eccezione non ha piu' una
+  # ragione di esistere e sparisce. Un percorso solo, non due: tenere l'action
+  # per gli umani e la CLI per Dependabot avrebbe lasciato in piedi proprio il
+  # ramo che nessuno guarda, che e' il ramo dove le cose marciscono.
+  # Sparisce anche `pull-requests: read`, che serviva solo all'action.
+  #
+  # Pinnato per versione **e** per checksum: da solo il pin della versione e'
+  # un'etichetta, e un release asset di GitHub si puo' sostituire sotto la
+  # stessa etichetta. `--redact=100` perche' i log di un repo pubblico sono
+  # pubblici: un gate che trova un segreto e lo stampa in chiaro lo pubblica lui.
+  #
+  # Misurato in locale con la v8.30.1 prima di scriverlo: exit 0 sulla storia di
+  # questo repo (99 commit, nessun leak), exit 1 su un repo con una chiave AWS
+  # piantata apposta. Il secondo e' quello che conta.
+  gitleaks:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # `gitleaks git` legge la storia con `git log -p`: con la profondita'
+          # di default vedrebbe un commit solo e direbbe comunque "no leaks
+          # found" — verde e cieco.
+          fetch-depth: 0
+      - name: gitleaks su tutta la storia (binario pinnato, nessun token)
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          # Checksum di gitleaks_8.30.1_linux_x64.tar.gz. Cambiando VERSION va
+          # rifatto anche questo: un asset diverso fa fallire lo step, ed e' il
+          # comportamento voluto, non un intralcio.
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        # Scaricato in RUNNER_TEMP e non nel workspace: un binario da 8 MB nella
+        # working copy finirebbe sotto gli occhi dello scan che stiamo lanciando.
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact=100 --exit-code 1 --no-banner .
+
+  # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
+  # the infrastructure this repo has now that deployment is Railway's config-as-code.
+  # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,
+  # soft-fails LOW/MEDIUM).
+  checkov:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - uses: bridgecrewio/checkov-action@9b70310bcd306d11740313070b940167d6b23085 # v12.3115.0
+        with:
+          directory: .
+          config_file: .checkov.yml
+
+  # Two dependency gates on purpose, they see different things: this one audits
+  # the WHOLE pinned set on every run, `dependency-review` below sees only what a
+  # single PR's diff introduces. Keeping both also means the audit survives if the
+  # repo ever goes private again — `dependency-review` cannot run there without
+  # GitHub Code Security (confirmed live on PR #1, 2026-07-28, before this repo
+  # was made public), pip-audit needs no licence and no secret.
+  # Policy: any known advisory against the three pinned dependencies fails the
+  # build. With three dependencies that is a real signal, not noise; if an
+  # advisory that provably does not apply here ever fires, add
+  # `--ignore-vuln <ID>` with a comment saying why — never drop the gate.
+  dependency-audit:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - run: pip install pip-audit==2.10.1
+      - run: pip-audit -r services/public-status-api/requirements.txt --progress-spinner off
+
+  # Blocks on new HIGH-severity CVEs introduced by this PR's dependency diff — it
+  # does not see what is already on main (that is pip-audit's job above, plus
+  # Dependabot alerts). Uses no secrets, so it runs on Dependabot's own PRs too.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga
+          # solo il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
