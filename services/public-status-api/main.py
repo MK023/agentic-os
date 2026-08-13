@@ -186,6 +186,57 @@ async def _query_one(client: httpx.AsyncClient, query: str) -> dict:
     return response.json()
 
 
+# The only production failure this project has had was invisible from out here. On
+# 2026-08-13 Prometheus's volume filled and compaction failed once a minute for hours
+# while the three numbers above stayed correct and kept moving — the head block lives
+# in memory, so ingestion outlives persistence right up until it doesn't. Nothing was
+# down; something was doomed, and it surfaced only because someone read the service
+# logs by hand. This is the smallest counter that would have said so out loud.
+#
+# `increase()` here, and plain sums above, for the same reason in reverse: this is an
+# ordinary counter scraped every 15s from one long-lived process, so growth inside a
+# window is exactly the question. The Claude Code counters are one series per session
+# that never move again once the session ends, which is why increase() is structurally
+# zero there. Same function, opposite verdict — the data shape decides, not the habit.
+PERSISTENCE_QUERY = "sum(increase(prometheus_tsdb_compactions_failed_total[1h]))"
+
+_INFRA_ALERTS_REPORTED: set[str] = set()
+
+
+class PrometheusNotPersisting(Exception):
+    """Prometheus answers queries but cannot write blocks. Reported, never raised."""
+
+
+async def _check_persistence(client: httpx.AsyncClient) -> None:
+    """Report a Prometheus that serves reads but has stopped persisting.
+
+    Swallows every error on purpose. This is a watchdog bolted onto the read path of
+    the one public endpoint, and a watchdog that can 502 the widget it exists to
+    protect is worse than no watchdog: a broken probe must degrade to silence, never
+    to an outage. It also means the probe can never be the reason /status fails, which
+    is what lets it live on the hot path at all — the widget polls every 20s, so this
+    is a cron nobody has to run and no scheduler has to own.
+    """
+    try:
+        failures = _parse_value(await _query_one(client, PERSISTENCE_QUERY))
+    except Exception:  # noqa: BLE001 — see the docstring; silence is the contract
+        return
+    # Missing metric parses to 0.0 (empty result), so a Prometheus that is not yet
+    # scraping itself is quiet rather than alarming. Fail-open in both directions.
+    if failures <= 0:
+        return
+    if "tsdb-compaction" in _INFRA_ALERTS_REPORTED:
+        return
+    _INFRA_ALERTS_REPORTED.add("tsdb-compaction")
+    await capture_exception(
+        PrometheusNotPersisting(
+            f"Prometheus failed {int(failures)} TSDB compactions in the last hour — "
+            "it still answers queries, but it is not writing blocks; check the volume"
+        ),
+        tags={"endpoint": "status"},
+    )
+
+
 @app.get(
     "/status",
     # Documented, not just raised: these two are the endpoint's contract for whoever
@@ -202,17 +253,22 @@ async def status(_: RequireToken) -> dict:
     # an unhandled 500 with no Sentry capture, breaking this endpoint's "every
     # upstream failure is a controlled 502" promise. Parsing therefore stays inside
     # the try, next to the fetch it can only fail because of.
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        try:
             results = await asyncio.gather(*(_query_one(client, q) for q in QUERIES.values()))
-        payloads = dict(zip(QUERIES.keys(), results))
-        values = {
-            "sessions_today": int(_parse_value(payloads["sessions_today"])),
-            "tokens_today": int(_parse_value(payloads["tokens_today"])),
-            "cost_usd_today": round(await _cost_usd(payloads["cost_usd_today"]), 2),
-        }
-    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-        await capture_exception(exc, tags={"endpoint": "status"})
-        raise HTTPException(status_code=502, detail="upstream unavailable") from exc
+            payloads = dict(zip(QUERIES.keys(), results))
+            values = {
+                "sessions_today": int(_parse_value(payloads["sessions_today"])),
+                "tokens_today": int(_parse_value(payloads["tokens_today"])),
+                "cost_usd_today": round(await _cost_usd(payloads["cost_usd_today"]), 2),
+            }
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            await capture_exception(exc, tags={"endpoint": "status"})
+            raise HTTPException(status_code=502, detail="upstream unavailable") from exc
+
+        # After the three numbers are already in hand, and outside the try above: the
+        # watchdog must not share a failure path with the contract it guards. Same
+        # client, so it costs one round trip on the private network, not a connection.
+        await _check_persistence(client)
 
     return values
