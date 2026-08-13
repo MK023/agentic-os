@@ -180,8 +180,17 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
    the infra surface. Not OWASP LLM / ATLAS: Phase 1 observes a model's usage; it never calls one.
    Those arrive with Phase 4.
 
-6. **Flaky policy**: tests are deterministic (pytest + mocks). A gate that fails
-   at random gets fixed or removed, never re-run until green.
+5. **Flaky policy**: tests are deterministic (pytest + mocks). A gate that fails
+   at random gets fixed or removed, never re-run until green. There is no
+   `FLAKY.md` because nothing is in quarantine; if something ever is, that file is
+   where it goes, with a test id, an owner and a ticket.
+
+One rule cuts across all five: **a change whose halves live in different services
+needs a check that sees both.** The window of the three public numbers is set by
+`max_over_time(...[25h])` in `main.py` and the dashboard, and by the Collector's
+short `metric_expiration` — raise one without the other and the numbers silently
+double-count or lose a day. No test suite spans those files, so the `compose` job
+holds the pair.
 
 Production monitoring is both the deliverable and the top rung of the pyramid:
 Grafana/Prometheus is what the repo builds and how it is observed.
