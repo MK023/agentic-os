@@ -73,29 +73,38 @@ QUERIES = {
 # safe by construction — it falls through to the dearest rate and files a report.
 # Sonnet is priced at the standard list, not the introductory price that runs to
 # 2026-08-31: overstating for a month beats editing this table twice.
+#
+# `cacheCreation` is 2x input, not 1.25x. Anthropic publishes two cache-write
+# rates -- 1.25x for the 5-minute TTL, 2x for the 1-hour one -- and
+# `claude_code_token_usage` does NOT carry the TTL, so the metric cannot tell us
+# which one applied. Until 2026-08-14 this table picked 1.25x, which is the
+# CHEAPER of the two and contradicted the rule stated above: a gap we cannot
+# measure is priced at the dearest rate we know, because a number quietly too low
+# is one nobody investigates. Claude Code runs a 1-hour cache TTL, so 2x is also
+# the likelier of the two, not merely the safer.
 PRICES_USD_PER_MTOK = {
     "claude-fable-5": {
         "input": 10.00,
         "output": 50.00,
-        "cacheCreation": 12.50,
+        "cacheCreation": 20.00,
         "cacheRead": 1.00,
     },
     "claude-opus-5": {
         "input": 5.00,
         "output": 25.00,
-        "cacheCreation": 6.25,
+        "cacheCreation": 10.00,
         "cacheRead": 0.50,
     },
     "claude-sonnet-5": {
         "input": 3.00,
         "output": 15.00,
-        "cacheCreation": 3.75,
+        "cacheCreation": 6.00,
         "cacheRead": 0.30,
     },
     "claude-haiku-4-5-20251001": {
         "input": 1.00,
         "output": 5.00,
-        "cacheCreation": 1.25,
+        "cacheCreation": 2.00,
         "cacheRead": 0.10,
     },
 }
