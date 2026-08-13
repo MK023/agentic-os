@@ -61,19 +61,21 @@ async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None
         "tags": tags or {},
         "exception": {"values": [{"type": type(exc).__name__, "value": str(exc)}]},
     }
-    # Which deploy an error came from — if the platform ever says so. The plan
-    # was RAILWAY_GIT_COMMIT_SHA, but measured on 2026-07-30 Railway injects
-    # exactly seven variables into this service at runtime (`railway variables`,
-    # `railway run -- env` and the dashboard agree) and none of them is a git
-    # SHA; Railway's docs promise git variables only for deploys "originated
-    # from a GitHub trigger" and say nothing about them reaching the container.
-    # So in production today this branch never fires and events carry no
-    # release. The read stays because it costs nothing and starts working the
-    # day the platform provides the variable — a hand-bumped version was
-    # rejected instead, because a release updated by hand is eventually wrong.
+    # Which deploy an error came from. Railway injects RAILWAY_GIT_COMMIT_SHA
+    # into every deployment, so the release is a fact about what is running
+    # rather than a version someone remembered to bump — a hand-bumped version
+    # was rejected, because a release updated by hand is eventually wrong.
+    #
+    # Documented as unavailable on 2026-07-30, corrected on 2026-08-13: the
+    # measurement used `railway variables` and `railway run -- env`, which list
+    # the variables configured on the service, not the environment of the
+    # deployed container. Production was already emitting two different SHAs,
+    # each the commit then deployed. Don't re-measure this from the outside.
     #
     # Absent means omitted, not empty: an empty release would file those errors
-    # under a version that does not exist rather than under none.
+    # under a version that does not exist rather than under none. Absent is the
+    # normal case off-platform — an event sent from a laptop carries no release,
+    # which is how the correcting evidence was told apart from the deployed ones.
     release = os.environ.get("RAILWAY_GIT_COMMIT_SHA")
     if release:
         event["release"] = release
