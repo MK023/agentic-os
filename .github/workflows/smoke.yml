@@ -10,15 +10,25 @@ name: smoke
 # (verify-hub.sh, che verifica anche Grafana dietro Access e la status API con
 # il suo bearer) richiede CF_ACCESS_CLIENT_ID/SECRET e STATUS_API_TOKEN come
 # GitHub secrets: crearli e' una decisione di Marco, non della CI.
-#
-# Avrebbe visto entrambe le finestre di disservizio del 13/08 (01:26Z e 01:45Z),
-# trovate solo perche' qualcuno stava guardando lo schermo in quel momento.
 on:
   schedule:
-    # Ogni 10 minuti. Le due finestre del 13/08 sono durate pochi minuti l'una:
-    # a 15' si rischiava di passarci in mezzo senza vedere niente. GitHub non
-    # garantisce la puntualita' degli schedule e sotto carico li ritarda, quindi
-    # questa e' una cadenza indicativa, non un SLA.
+    # `*/10` e' cio' che si CHIEDE, non cio' che si ottiene. Misurato sui primi
+    # dodici run reali del 13/08: intervalli fra 38 e 93 minuti, mediana ~55.
+    # GitHub non garantisce la puntualita' degli schedule e strozza i cron
+    # frequenti sui repo pubblici — il numero qui dentro e' un tetto, non una
+    # cadenza.
+    #
+    # Quindi la prima versione di questo commento, che diceva "avrebbe visto
+    # entrambe le finestre del 13/08", era FALSA e va detto: quelle finestre
+    # duravano pochi minuti l'una, e a ~55' ci si passa in mezzo quasi sempre.
+    # Quello che questa sonda vede davvero e' un disservizio che DURA: un deploy
+    # che non serve, un volume pieno, un Tunnel giu'. Non un riavvio di due
+    # minuti.
+    #
+    # Per cogliere anche quelli servirebbe una sonda che non gira su GitHub —
+    # per esempio un Cron Trigger sul Worker del sito, che sta gia' sul bordo e
+    # ha gia' il canale Sentry cablato. E' infrastruttura nuova, quindi e' una
+    # decisione di Marco, non della CI.
     - cron: "*/10 * * * *"
   # Niente trigger su push a main, e non e' una dimenticanza: Railway ridispiega
   # in modo asincrono e mette in coda sui crediti gratuiti. Un controllo lanciato

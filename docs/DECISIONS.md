@@ -261,6 +261,44 @@ analysis.
 `SONAR_TOKEN` existed): a quality gate that disappears when its credential does is
 the `continue-on-error` antipattern with extra steps.
 
+**And the rule had already been broken, by `gitleaks`, for exactly that reason.**
+The job carried `if: pull_request.user.login != 'dependabot[bot]'`, so the ten
+Dependabot PRs merged on 2026-08-13 entered `main` with no secret scan at all and
+a green required check — not passed, never run. The justification was real
+(gitleaks-action needs a `GITHUB_TOKEN` that never reaches those PRs, and would
+have sat red blocking every bump), which is what makes it worth writing down: a
+legitimate reason produced precisely the antipattern named one paragraph above.
+
+The fix was to stop needing the credential. The pinned CLI binary wants no token,
+so the exception lost its reason and went away along with `pull-requests: read`.
+**One path, not two** — keeping the action for humans and the CLI for Dependabot
+would have left standing the branch nobody looks at, which is the branch where
+things rot. Pinned by version *and* by SHA-256: alone, a version pin is a label,
+and a GitHub release asset can be replaced under the same label. Read from the
+vendor's docs rather than recalled: `detect` has been deprecated since v8.19, the
+command is `gitleaks git`.
+
+**Twelve blocking gates in five workflow files, split by function** (2026-08-13),
+after `validate.yml` reached thirteen jobs doing unrelated jobs. The load-bearing
+constraint is that **the job names are the contract**: the ruleset requires those
+twelve strings as status-check contexts, so a rename during the split would have
+detached a check from the gate it was meant to enforce. The blocks were therefore
+moved verbatim, comments included, and the twelve job bodies verified identical
+before and after. No `paths` filters, deliberately — a required check that never
+starts leaves a PR pending forever rather than passing, so it would need a "skip"
+job reporting success, which is machinery bought with a few minutes of free
+runner time. One `concurrency` group per file, because the shared group would
+have let a push cancel the other four workflows, and a cancelled required check
+is neither red nor green.
+
+**`smoke.yml`'s schedule is a request, not a cadence.** It asks for `*/10`; across
+its first twelve real runs the interval measured between 38 and 93 minutes, median
+~55, because GitHub throttles frequent schedules on public repositories. This is
+recorded because the first version of the workflow's own comment claimed it would
+have caught the two short outages of 2026-08-13, and that claim is false: it
+catches outages that *last*, not two-minute restarts. A prober outside GitHub
+Actions is what would close the gap.
+
 ## Logs
 
 **No logs pipeline today.** The Prometheus exporter supports the metrics signal only,
