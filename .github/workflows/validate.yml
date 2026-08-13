@@ -64,7 +64,15 @@ jobs:
       - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
       # Pinnate come tutto il resto della pipeline: erano l'unico install non
       # deterministico rimasto (le dipendenze di prodotto sono hash-locked).
-      - run: pip install respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
+      #
+      # `httpx2` sta QUI e non in requirements.in perche' e' una dipendenza di
+      # TEST, non di produzione. Starlette 1.3.1 importa `httpx2 as httpx` se lo
+      # trova e ricade su `httpx` con uno StarletteDeprecationWarning se non c'e'
+      # (letto nel suo testclient.py, non dedotto). Installarlo qui spegne il
+      # warning senza toccare `httpx==0.28.1`, che e' quello con cui il servizio
+      # parla davvero a Prometheus. respx continua a moccare httpx: sono due
+      # strade separate, il TestClient entra nell'app e main.py esce verso l'hub.
+      - run: pip install httpx2==2.10.0 respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
       - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml --cov-fail-under=100
 
   # Builds every image the platform will build. The four Railway Dockerfiles copy
@@ -439,7 +447,15 @@ jobs:
       - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
       # Pinnate come tutto il resto della pipeline: erano l'unico install non
       # deterministico rimasto (le dipendenze di prodotto sono hash-locked).
-      - run: pip install respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
+      #
+      # `httpx2` sta QUI e non in requirements.in perche' e' una dipendenza di
+      # TEST, non di produzione. Starlette 1.3.1 importa `httpx2 as httpx` se lo
+      # trova e ricade su `httpx` con uno StarletteDeprecationWarning se non c'e'
+      # (letto nel suo testclient.py, non dedotto). Installarlo qui spegne il
+      # warning senza toccare `httpx==0.28.1`, che e' quello con cui il servizio
+      # parla davvero a Prometheus. respx continua a moccare httpx: sono due
+      # strade separate, il TestClient entra nell'app e main.py esce verso l'hub.
+      - run: pip install httpx2==2.10.0 respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
       - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml --cov-fail-under=100
       - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
