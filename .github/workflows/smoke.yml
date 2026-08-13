@@ -85,5 +85,19 @@ jobs:
               print("a leggere l'hub. Guarda Railway (prometheus, status-api) e il Tunnel.", file=sys.stderr)
               sys.exit(1)
 
+          # Secondo modo di rispondere 200 con numeri veri mentre l'hub e' giu'.
+          # Da marcobellingeri.dev#202 il Worker, quando non riesce a leggere
+          # l'hub, serve l'ultimo valore buono dalla Cache API invece del
+          # trattino. E' giusto per il visitatore e sarebbe un disastro qui: i tre
+          # campi tornerebbero pieni e questo gate direbbe verde per un'ora esatta
+          # mentre l'hub e' morto. Il Worker si dichiara con `stale`, e questa e'
+          # l'unica ragione per cui quel campo esiste.
+          if dati.get("stale"):
+              eta = dati.get("ageSeconds")
+              print(f"FAIL: 200 con numeri VECCHI (stale, ~{eta}s fa).", file=sys.stderr)
+              print("Il Worker sta servendo l'ultimo valore buono: l'hub non risponde.", file=sys.stderr)
+              print("I numeri sono veri, il momento no. Guarda Railway e il Tunnel.", file=sys.stderr)
+              sys.exit(1)
+
           print(f"ok: {dati}")
           PY
