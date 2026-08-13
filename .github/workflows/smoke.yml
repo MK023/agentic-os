@@ -1,0 +1,89 @@
+name: smoke
+
+# Il CLAUDE.md di questo repo dichiara scripts/verify-hub.sh "il vero controllo
+# che un deploy ha funzionato" — e fino a oggi non lo eseguiva nessuno in
+# automatico. Railway ignora l'HEALTHCHECK del Dockerfile, quindi un deploy
+# `SUCCESS` dice soltanto che il container e' partito, non che sta servendo.
+#
+# Questa e' la versione economica: colpisce il solo endpoint pubblico, non ha
+# bisogno di nessun segreto e quindi puo' esistere subito. La versione completa
+# (verify-hub.sh, che verifica anche Grafana dietro Access e la status API con
+# il suo bearer) richiede CF_ACCESS_CLIENT_ID/SECRET e STATUS_API_TOKEN come
+# GitHub secrets: crearli e' una decisione di Marco, non della CI.
+#
+# Avrebbe visto entrambe le finestre di disservizio del 13/08 (01:26Z e 01:45Z),
+# trovate solo perche' qualcuno stava guardando lo schermo in quel momento.
+on:
+  schedule:
+    # Ogni 10 minuti. Le due finestre del 13/08 sono durate pochi minuti l'una:
+    # a 15' si rischiava di passarci in mezzo senza vedere niente. GitHub non
+    # garantisce la puntualita' degli schedule e sotto carico li ritarda, quindi
+    # questa e' una cadenza indicativa, non un SLA.
+    - cron: "*/10 * * * *"
+  # Niente trigger su push a main, e non e' una dimenticanza: Railway ridispiega
+  # in modo asincrono e mette in coda sui crediti gratuiti. Un controllo lanciato
+  # subito dopo il push interrogherebbe il container VECCHIO e direbbe "verde"
+  # proprio del deploy che non e' ancora arrivato — la stessa classe di guasto
+  # silenzioso che questo workflow esiste per intercettare.
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  # Se un run resta appeso, il successivo non si accoda: non serve a niente avere
+  # due sonde in volo, e `cancel-in-progress` terrebbe viva solo l'ultima.
+  group: smoke
+  cancel-in-progress: false
+
+jobs:
+  # Nessun checkout: lo script sta tutto qui e il job non legge il repository.
+  # Con `permissions: {}` il GITHUB_TOKEN di questo job non puo' fare niente.
+  endpoint-pubblico:
+    runs-on: ubuntu-latest
+    steps:
+      - name: l'endpoint pubblico risponde 200 con tre numeri veri
+        env:
+          URL: https://marcobellingeri.dev/api/agentic-status
+        run: |
+          set -euo pipefail
+
+          # --retry-all-errors copre anche i 5xx transitori del bordo Cloudflare:
+          # un gate che diventa rosso per un blip di rete smette di essere letto,
+          # e questo gira 144 volte al giorno.
+          codice=$(curl -sS -o "$RUNNER_TEMP/risposta.json" -w '%{http_code}' \
+            --retry 3 --retry-delay 5 --retry-all-errors --max-time 20 "$URL")
+
+          if [ "$codice" != "200" ]; then
+            echo "FAIL: l'endpoint pubblico ha risposto ${codice}, non 200" >&2
+            cat "$RUNNER_TEMP/risposta.json" >&2 || true
+            exit 1
+          fi
+
+          # Il controllo che conta davvero. Il Worker fa fail-open per scelta: se
+          # l'hub e' irraggiungibile risponde comunque 200, con i tre campi a
+          # null, cosi' il visitatore vede un trattino invece di un errore. E'
+          # corretto verso il pubblico ed e' esattamente cio' che rende inutile
+          # guardare solo il codice HTTP: durante un blackout totale dell'hub
+          # questo gate sarebbe verde. I null sono il segnale, il 200 no.
+          python3 - "$RUNNER_TEMP/risposta.json" <<'PY'
+          import json
+          import sys
+
+          campi = ("sessionsToday", "tokensToday", "costUsdToday")
+
+          try:
+              with open(sys.argv[1]) as sorgente:
+                  dati = json.load(sorgente)
+          except (OSError, ValueError) as errore:
+              print(f"FAIL: risposta 200 ma non e' JSON valido: {errore}", file=sys.stderr)
+              sys.exit(1)
+
+          nulli = [campo for campo in campi if dati.get(campo) is None]
+          if nulli:
+              print(f"FAIL: 200 ma questi campi sono null: {', '.join(nulli)}", file=sys.stderr)
+              print("Il Worker fa fail-open: 200 + null significa che NON e' riuscito", file=sys.stderr)
+              print("a leggere l'hub. Guarda Railway (prometheus, status-api) e il Tunnel.", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"ok: {dati}")
+          PY

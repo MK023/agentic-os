@@ -110,6 +110,18 @@ per-PR diff), SonarCloud as quality gate.
 Every gate **blocks**. Nothing runs with `continue-on-error`, and a gate whose
 credential is missing stays red instead of skipping.
 
+One check runs *after* the merge rather than before it: `smoke.yml` hits the
+public endpoint every 10 minutes and fails if it does not answer `200`, or if any
+of the three numbers comes back `null`. The null case is the one that matters —
+the site Worker fails open by design (`200` plus nulls, so a visitor sees a dash
+rather than an error), which means a green HTTP status proves nothing about
+whether the hub behind it is alive. It blocks nothing and merges nothing; it
+turns a silent outage into a red run and an email. Railway ignores the
+Dockerfile `HEALTHCHECK`, so a `SUCCESS` deploy only ever meant "the container
+started". The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana
+behind Access and the status API's own bearer, and stays manual until its
+credentials exist as GitHub secrets.
+
 The reasoning behind each CI decision is in `docs/DECISIONS.md`.
 
 ## Test contract
