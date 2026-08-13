@@ -31,7 +31,7 @@ jobs:
       # whole command as soon as one requirement carries hashes.
       # Quoted: an unquoted ":all: " would make YAML read a mapping mid-command.
       - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
-      - run: pip install respx==0.23.1 pytest==9.1.1 mutmut==3.6.0
+      - run: pip install httpx2==2.10.0 respx==0.23.1 pytest==9.1.1 mutmut==3.6.0
       # Lo scope bloccante era `require_valid_token` e basta — spec §6.2. Coverage
       # dice che una riga è stata eseguita; solo questo dice che un'asserzione si
       # sarebbe accorta se cambiava.
