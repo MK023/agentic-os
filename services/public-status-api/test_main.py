@@ -513,3 +513,30 @@ def test_the_persistence_alert_is_reported_once_not_every_poll(monkeypatch):
         assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
 
     assert sentry_call.call_count == 1
+
+
+@respx.mock
+def test_a_watchdog_with_no_data_says_so_instead_of_going_quiet(monkeypatch):
+    # The failure the watchdog itself can have. If Prometheus stops scraping itself,
+    # the metric disappears; an empty result parses to 0.0 and a `<= 0` check reads
+    # that as "healthy". Silent and blind become the same output, which is the exact
+    # failure class this watchdog was added to end — and the lesson the Collector job
+    # in docker/prometheus.yml already spells out: no series means no rule can fire.
+    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    # Prometheus answers, correctly, with an empty vector: the metric is not there.
+    respx.get(
+        "http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}
+    ).mock(return_value=httpx.Response(200, json={"data": {"result": []}}))
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    evento = _evento_inviato(sentry_call)
+    assert evento["exception"]["values"][0]["type"] == "PrometheusWatchdogBlind"
+    assert "not scraping itself" in evento["exception"]["values"][0]["value"]

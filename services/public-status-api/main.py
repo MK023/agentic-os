@@ -207,6 +207,17 @@ class PrometheusNotPersisting(Exception):
     """Prometheus answers queries but cannot write blocks. Reported, never raised."""
 
 
+class PrometheusWatchdogBlind(Exception):
+    """The watchdog's own input is missing. Reported, never raised."""
+
+
+async def _report_infra_once(key: str, exc: Exception) -> None:
+    if key in _INFRA_ALERTS_REPORTED:
+        return
+    _INFRA_ALERTS_REPORTED.add(key)
+    await capture_exception(exc, tags={"endpoint": "status"})
+
+
 async def _check_persistence(client: httpx.AsyncClient) -> None:
     """Report a Prometheus that serves reads but has stopped persisting.
 
@@ -218,22 +229,36 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     is a cron nobody has to run and no scheduler has to own.
     """
     try:
-        failures = _parse_value(await _query_one(client, PERSISTENCE_QUERY))
+        series = (await _query_one(client, PERSISTENCE_QUERY))["data"]["result"]
     except Exception:  # noqa: BLE001 — see the docstring; silence is the contract
         return
-    # Missing metric parses to 0.0 (empty result), so a Prometheus that is not yet
-    # scraping itself is quiet rather than alarming. Fail-open in both directions.
+
+    # An empty vector is NOT zero failures, and conflating the two is how a watchdog
+    # goes blind without saying so: if Prometheus stops scraping itself the metric
+    # disappears, `<= 0` reads that as healthy, and we are back to the 2026-08-13
+    # blindness inside the very thing added to end it. The Collector job in
+    # docker/prometheus.yml already spells out the general rule — no series means no
+    # rule can fire — and this is that rule applied to the watchdog's own input.
+    if not series:
+        await _report_infra_once(
+            "tsdb-watchdog-blind",
+            PrometheusWatchdogBlind(
+                "prometheus_tsdb_compactions_failed_total returned no series — "
+                "Prometheus is not scraping itself, so this watchdog is blind, "
+                "not healthy; check the `prometheus` job in prometheus.yml"
+            ),
+        )
+        return
+
+    failures = float(series[0]["value"][1])
     if failures <= 0:
         return
-    if "tsdb-compaction" in _INFRA_ALERTS_REPORTED:
-        return
-    _INFRA_ALERTS_REPORTED.add("tsdb-compaction")
-    await capture_exception(
+    await _report_infra_once(
+        "tsdb-compaction",
         PrometheusNotPersisting(
             f"Prometheus failed {int(failures)} TSDB compactions in the last hour — "
             "it still answers queries, but it is not writing blocks; check the volume"
         ),
-        tags={"endpoint": "status"},
     )
 
 
