@@ -110,6 +110,24 @@ minimal per-job `permissions:`, gitleaks at zero tolerance, zizmor on the
 workflows themselves, Checkov for IaC, two dependency gates (whole pinned set +
 per-PR diff), SonarCloud as quality gate.
 
+**CodeQL runs too, and it is not in this repository.** It is enabled as GitHub's
+*default setup* (`python` and `actions`, weekly plus per-PR), the same way the
+site repo has it — which means there is no workflow file to read, no action SHA
+to pin, and nothing to maintain. It is written here because a gate that exists
+only as a repository setting is invisible to anyone reading the code, and an
+invisible gate is one nobody thinks to check. It complements ruff and bandit
+rather than repeating them: those are linters with security rules, matching
+patterns in a file; CodeQL follows a value from source to sink across files. It
+reports rather than blocks — it is not one of the twelve required contexts.
+
+One thing that is **not** enabled, having been tried: secret scanning's
+*non-provider patterns*. The API accepts the change with a `200` and leaves the
+value at `disabled` on both public repos, because the feature needs GitHub Secret
+Protection. gitleaks is the compensating control and covers generic secrets over
+full history on every PR. Worth recording that the API silently no-ops rather
+than refusing — a `200` that changes nothing is the same shape as the failures
+this project keeps removing.
+
 Every gate **blocks**. Nothing runs with `continue-on-error`, and a gate whose
 credential is missing stays red instead of skipping.
 

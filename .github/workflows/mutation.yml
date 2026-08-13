@@ -9,11 +9,19 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch: {}
 
-permissions:
-  contents: read
+# Deny by default, concesso job per job — come gli altri sei workflow. Questo
+# file era rimasto con `contents: read` a livello di WORKFLOW: con un solo job
+# l'effetto pratico e' identico, ma il modello di sicurezza no. Un `permissions`
+# di workflow concede a ogni job futuro senza che nessuno se ne accorga, ed e'
+# elencato per nome fra gli errori noti del modello di pipeline. Il costo di
+# tenerlo giusto adesso e' una riga; il costo di accorgersene al secondo job e'
+# un job con permessi che nessuno gli ha dato apposta.
+permissions: {}
 
 jobs:
   mutation-score:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
