@@ -57,7 +57,14 @@ services:
       - prometheus-data:/prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.retention.time=30d
+      # Stessi due limiti della produzione (railway/prometheus/Dockerfile, dove
+      # sta il ragionamento sui numeri): con la sola retention a tempo il volume
+      # si riempie e la compaction fallisce in silenzio, perché l'ingestione
+      # continua dalla RAM. Qui il volume è un volume Docker senza tetto, quindi
+      # il limite non serve a salvare il disco — serve a far somigliare il locale
+      # alla produzione, che è il motivo per cui questo file esiste.
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=300MB
 
   grafana:
     image: grafana/grafana:13.1.3
