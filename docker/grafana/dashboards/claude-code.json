@@ -267,8 +267,8 @@
     },
     {
       "id": 6,
-      "title": "Costo USD per sessione (top 10, ultime ~25h)",
-      "description": "Lo stesso calcolo del pannello 'Cost USD', tenuto per session_id invece di sommato. NON e' il numero della status bar di Claude Code: quello e' cost.total_cost_usd, che il client passa allo statusline su stdin e non esporta in nessuna metrica — non e' raggiungibile da qui, ed e' comunque la stima del client (sottostima verificata il 30-07-2026). I termini sono uniti con `or`, non sommati con `+`: `+` fa match sulle label, quindi una sessione che non ha usato TUTTI i modelli sparirebbe dal risultato invece di valere meno. Verificato il 30-07-2026 con `promtool test rules scripts/cost-per-session.promql-test.yml`: forma `or` due sessioni con modelli diversi $10 e $1, forma `+` zero righe. Le sessioni piu' vecchie di ~25h non ci sono perche' il Collector smette di esporne le serie (metric_expiration). Se i prezzi cambiano vanno aggiornati QUI, nel pannello 'Cost USD' e in PRICES_USD_PER_MTOK di main.py.",
+      "title": "Token e costo per sessione (top 10, ultime ~25h)",
+      "description": "Token E costo sulla stessa riga, per sessione. Il costo e' calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py. Le due query usano lo STESSO topk(10): con finestre diverse il merge produrrebbe righe con i token e il costo vuoto, che si leggono come una sessione gratis.",
       "type": "table",
       "gridPos": {
         "h": 8,
@@ -282,8 +282,81 @@
           "refId": "A",
           "instant": true,
           "format": "table"
+        },
+        {
+          "expr": "topk(10, sum by (session_id) (claude_code_token_usage))",
+          "refId": "B",
+          "format": "table",
+          "instant": true
         }
-      ]
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "session_id": "sessione",
+              "Value #A": "costo USD",
+              "Value #B": "token"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "costo USD",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "costo USD"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "token"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il valore corrente invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra temporale la da' il metric_expiration del Collector (25h). Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare."
