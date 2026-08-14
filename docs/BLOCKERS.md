@@ -56,7 +56,7 @@ Grafana is a convenience here, and the three public numbers do not pass through
 it. That is worth knowing *before* the day it matters, because a decision that has
 already been made is much cheaper at 3am.
 
-## 3. The smoke probe cannot see a short outage
+## 3. The smoke probe cannot see a short outage — closed from the other repo
 
 `smoke.yml` asks for `*/10` and gets, measured over its first twelve runs, an
 interval between 38 and 93 minutes (median ~55): GitHub throttles frequent
@@ -64,10 +64,27 @@ schedules on public repositories. It reliably catches an outage that *lasts* —
 deploy that does not serve, a full volume, a Tunnel down — and will usually miss
 a two-minute restart like the two on 2026-08-13.
 
-Closing that needs a prober that does not run on GitHub Actions. The obvious
-candidate is a Cron Trigger on the site's Worker, which already sits at the edge
-with the Sentry channel wired. That is new infrastructure, so it is a decision
-rather than a task.
+**The prober that closes it shipped on 2026-08-14 in the site repo, not here**
+(`marcobellingeri.dev` PR #203): a Cloudflare Cron Trigger at `*/2 * * * *` with a
+`scheduled` handler that runs the same probe a visitor's request would. Two
+properties are worth writing down, because they are why it works:
+
+- **It adds a trigger, not logic.** The Worker already reported to Sentry when the
+  hub did not answer; that code only ran if somebody visited, and at 4am nobody
+  does — which is exactly when an outage has no witness. Reusing the visitor's path
+  instead of writing a parallel one also means the probe measures **what a visitor
+  actually gets**, not a twin road that can drift in silence.
+- **It distinguishes the two ways of being degraded**, which is the part that
+  matters here: `null` means "I could not read the hub", `stale` means "the hub is
+  down and I am serving the last good numbers". The second one looks healthy from
+  outside, and is the failure this project keeps removing.
+
+So this section stays as the record of *why* the GitHub-side cadence is what it is
+— `smoke.yml` is still throttled and still useful for outages that last — but the
+gap it describes is no longer open. **The lesson is the cross-repo one**: a hole
+named in one repo can be filled in another, and neither repo notices on its own.
+This one sat here as "a decision rather than a task" for the fifteen hours after it
+had already been decided and shipped.
 
 ## Still Marco's call
 

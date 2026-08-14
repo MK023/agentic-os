@@ -148,10 +148,16 @@ and 93 minutes, median ~55 — GitHub throttles frequent schedules on public
 repositories. So this probe reliably catches an outage that *lasts*: a deploy
 that does not serve, a full volume, a Tunnel down. It does **not** reliably catch
 a two-minute restart, and any claim that it would have seen the short 2026-08-13
-windows is wrong. Closing that gap needs a prober that does not run on GitHub
-Actions — a Cron Trigger on the site's Worker is the obvious candidate, since it
-already sits at the edge with Sentry wired — and that is new infrastructure
-rather than a CI change.
+windows is wrong.
+
+**That gap is closed, and not from this repository.** On 2026-08-14 the site repo
+shipped a Cloudflare Cron Trigger at `*/2` whose `scheduled` handler runs the same
+probe a visitor's request would (`marcobellingeri.dev` PR #203). It adds a trigger
+rather than logic: the Worker already reported to Sentry when the hub did not
+answer, but that code only ran if somebody visited, and at 4am nobody does. So this
+repository now has two probes with different jobs — `smoke.yml`, throttled and good
+for outages that last, and an edge probe every two minutes that sees the short ones
+and measures exactly what a visitor gets.
 
 The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana behind
 Access and the status API's own bearer, and stays manual until its credentials
