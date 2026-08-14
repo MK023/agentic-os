@@ -358,6 +358,51 @@ choice (R2 is S3-compatible and already in the portfolio) is part of the design,
 a detail. And Phase 1 has not been used yet: a week of real use will say which
 questions the metrics leave unanswered.
 
+**Criterion applied 2026-08-14, after sixteen days of real use: still no, and the
+deferral now has a trigger instead of a date.** The deferral was never "revisit in
+mid-August" — it was "a week of use will say which questions the metrics leave
+unanswered". Sixteen days later, the questions that actually went unanswered were about
+**the hub's own five containers**, not about Claude Code: a Prometheus that had stopped
+compacting (found by reading the service's logs by hand), a Collector that would not
+start, a deploy that did not serve. What answered them each time was a **targeted metric
+plus a Sentry event** — the compaction watchdog, the Collector's self-telemetry, the
+health panels — which cost a query and a line, not a service. Loki as specced ingests
+Claude Code's *log events*; in sixteen days those were never the missing answer.
+
+One thing changed today that weighs directly on this: `metric_expiration` is short now,
+so **Prometheus' disk is the only copy of the day**. That volume has already filled once,
+at 500 MB, with metrics alone. A log store with the filesystem backend would add storage
+pressure to the one component here with a disk failure on its record — which is the same
+reason the evaluation above says the storage choice (R2) is *part of the design*.
+
+**Reopen on a trigger, not on a date** — a date-based deferral is the kind that expires
+and gets renewed out of inertia. Two triggers, either one is enough:
+
+1. **A question that comes up twice and no metric or Sentry event can answer** —
+   typically "which tool call failed" or "which permission decision was taken". Second
+   occurrence, not the first: once is curiosity, twice is a gap.
+2. **A paid Railway plan.** Marco's point, and it is a real one: the free-credit budget
+   and the deploy queue are what make a sixth service expensive here, and both are
+   properties of the plan rather than of Loki. On a paid plan the arithmetic changes, and
+   Loki's data is genuinely rich — richer than what the three metrics can express.
+
+Marco's expected horizon for the second trigger, stated 2026-08-14: **winter, after
+September.** That is recorded as an *expectation*, deliberately not as a third trigger —
+the moment a date becomes the criterion again, this entry has turned back into the
+deferral it replaced. Practically: if winter arrives and the plan has not changed,
+nothing is due and nothing needs re-deciding; if the plan changes in October, the trigger
+has fired and the date is irrelevant.
+
+The second trigger comes with a caveat that has to be written down now, while it is
+cheap: **"better data on the public site" collides with a closed invariant.** The public
+surface is exactly three aggregate numbers, and no session content — see the security
+section of `CLAUDE.md` and `SECURITY.md`. Log-derived data on the site is therefore not a
+free upgrade: it is a design question of the form *"which aggregate derived from logs can
+be public without becoming content?"*. That question is answerable — counts and rates are
+aggregates the same way sessions and tokens are — but it needs its own pass, and the
+answer is not "publish what Loki has". Whatever it turns out to be, it goes through the
+same allow-list discipline as the labels: default deny, added deliberately.
+
 ## Observability of this project itself
 
 **Sentry yes, from the start** — zero-dependency envelope client in the status API,

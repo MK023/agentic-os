@@ -51,8 +51,15 @@ rather than a task.
   in CI instead of by hand. It would extend the automatic check past the public
   endpoint to Grafana behind Access and the status API's own bearer.
 - Whether the hub stays past the first month.
-- Grafana Loki as a Phase 1.5, with its own spec — evaluated and recommended, but
-  after a week of actually using Phase 1 (see `DECISIONS.md`).
+- Grafana Loki as a Phase 1.5 — **not now, and no longer waiting on a date.** The
+  criterion was applied on 2026-08-14 after sixteen days of real use: the questions Phase
+  1 actually left unanswered were about the hub's own containers, and a targeted metric
+  plus a Sentry event answered each of them for the price of a query. It reopens on
+  either of two triggers, whichever comes first: a question that recurs **twice** and no
+  metric or Sentry event can answer, or **a paid Railway plan** — the free-credit budget
+  and the deploy queue are what make a sixth service expensive, and those belong to the
+  plan, not to Loki. Full reasoning, including why "richer data on the public site" is a
+  design question rather than a free upgrade, in `DECISIONS.md`.
 
 ## Closed since the last revision of this file
 
