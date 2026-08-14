@@ -31,6 +31,31 @@ Dependabot proposes a newer `grafana/grafana`, check whether the count drops in
 the job log. If it is still stuck in a few weeks, an upstream issue is worth
 opening.
 
+**Triaged 2026-08-14 by the criteria the model actually asks for — exploitability,
+not existence.** "15 HIGH" is a count, and a count is not a risk assessment:
+
+- **CISA KEV: none of the eleven.** Catalogue of 1665 entries, released
+  2026-08-11. Nothing here is being exploited in the wild.
+- **EPSS: the worst is 0.0078** — CVE-2026-33814, a 0.78% chance of exploitation
+  in 30 days, 52nd percentile. Every other one is lower, down to 0.0016. This is
+  the ordinary background of open-source CVEs, not a signal.
+- **Reachability: the two `tempo` CVEs have no configured code path here.** The
+  only provisioned datasource is Prometheus (`docker/grafana/provisioning/
+  datasources/prometheus.yml`); there is no Tempo datasource and no S3 anywhere in
+  `docker/grafana/`. They ship inside the binary as vendored modules and nothing
+  calls them.
+- **`13.1.3` is the newest release** (checked against the upstream release list on
+  2026-08-14; it shipped 2026-08-07). So "wait for Dependabot" is currently waiting
+  for something that does not exist yet — the absence of a bump is not neglect.
+
+So the watch is not just cheap, it is **correct by the same criteria that would
+have made it blocking**. What would change the posture is a **KEV entry**, not a
+higher count — and the action then would not be "upgrade", since there would still
+be no release to upgrade to. It would be to narrow or switch off the exposure:
+Grafana is a convenience here, and the three public numbers do not pass through
+it. That is worth knowing *before* the day it matters, because a decision that has
+already been made is much cheaper at 3am.
+
 ## 3. The smoke probe cannot see a short outage
 
 `smoke.yml` asks for `*/10` and gets, measured over its first twelve runs, an
