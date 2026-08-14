@@ -46,12 +46,6 @@ rather than a task.
 
 ## Still Marco's call
 
-- Whether `docker/otel-collector-config.yaml` stays in the otel-collector service's
-  `watchPatterns`: today every merge touching it redeploys the Collector, and a
-  Collector restart drops already-closed sessions from the three public numbers
-  (measured on PR #29: 3 sessions/9.1M tokens became 2/8.7M). The alternative is
-  removing it from the patterns and redeploying by hand. Raised in PR #27, which
-  was closed for unrelated reasons — the question never landed in a doc until now.
 - Whether to add `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` /
   `STATUS_API_TOKEN` as GitHub secrets, which is what `verify-hub.sh` needs to run
   in CI instead of by hand. It would extend the automatic check past the public
@@ -61,6 +55,17 @@ rather than a task.
   after a week of actually using Phase 1 (see `DECISIONS.md`).
 
 ## Closed since the last revision of this file
+
+- **Whether `docker/otel-collector-config.yaml` stays in the otel-collector's
+  `watchPatterns`** — it stays, and the question dissolved rather than being decided
+  (PR #67, 2026-08-14). It was only ever a question because a Collector restart
+  dropped already-closed sessions from the three public numbers (measured on PR #29:
+  3 sessions/9.1M tokens became 2/8.7M). The queries now read
+  `max_over_time(...[25h])` and survive a restart — measured before and after on the
+  same TSDB — so redeploying the Collector costs nothing that needs avoiding. The
+  trade is written in `DECISIONS.md`: Prometheus' disk is now the only copy of the
+  day. Both halves are held together by a step in the `compose` job, because they
+  live in different services and no test suite sees them together.
 
 - **Where the widget goes on the site page** — settled 2026-07-30 (site PR #160):
   a card under Projects with an `I NUMERI, LIVE →` chip pointing at

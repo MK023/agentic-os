@@ -205,3 +205,31 @@ jobs:
           STATUS_API_TOKEN: dummy
           OTLP_INGEST_TOKEN: dummy
           SENTRY_DSN: ""
+
+      # La coppia inseparabile: la finestra dei tre numeri sta NELLE QUERY
+      # (max_over_time), e `metric_expiration` deve restare corto.
+      #
+      # Sta qui e non fra i test del Python perche' le due meta' vivono in file di
+      # servizi diversi: nessuna suite le vede insieme. Senza questo passo, un
+      # ritorno a `metric_expiration: 25h` passerebbe tutti e dodici i gate — le
+      # query sono asserite in test_main.py, l'expiration non era asserita da
+      # nessuna parte. Il 14-08-2026 quella meta' e' stata cambiata senza rete.
+      #
+      # Rialzare l'expiration a ore sotto una finestra di 25h non sotto-conta:
+      # SOVRA-conta, perche' il Collector continua a ri-esportare una sessione che
+      # la query gia' vede nel TSDB e la finestra effettiva diventa ~50h.
+      - name: la finestra sta nelle query, non nell'expiration
+        run: |
+          set -euo pipefail
+          exp=$(awk '/^[[:space:]]*metric_expiration:/ {print $2; exit}' docker/otel-collector-config.yaml)
+          case "$exp" in
+            "")     echo "::error::metric_expiration non trovato in docker/otel-collector-config.yaml"; exit 1 ;;
+            *s|*m)  echo "metric_expiration=$exp — corto, corretto" ;;
+            *)      echo "::error::metric_expiration=$exp: a ore o giorni si somma alla finestra della query (~50h). Deve restare secondi o minuti."; exit 1 ;;
+          esac
+          # Tutte e tre le query, non una: mezza modifica farebbe divergere i numeri
+          # pubblici da se stessi.
+          n=$(grep -c 'max_over_time(claude_code' services/public-status-api/main.py)
+          [ "$n" -eq 3 ] || { echo "::error::main.py ha $n query con max_over_time, ne servono 3"; exit 1; }
+          grep -q 'max_over_time(claude_code' docker/grafana/dashboards/claude-code.json \
+            || { echo "::error::la dashboard Grafana ha perso max_over_time: mostrerebbe numeri diversi dall'API"; exit 1; }
