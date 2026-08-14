@@ -386,6 +386,13 @@ and gets renewed out of inertia. Two triggers, either one is enough:
    properties of the plan rather than of Loki. On a paid plan the arithmetic changes, and
    Loki's data is genuinely rich — richer than what the three metrics can express.
 
+Marco's expected horizon for the second trigger, stated 2026-08-14: **winter, after
+September.** That is recorded as an *expectation*, deliberately not as a third trigger —
+the moment a date becomes the criterion again, this entry has turned back into the
+deferral it replaced. Practically: if winter arrives and the plan has not changed,
+nothing is due and nothing needs re-deciding; if the plan changes in October, the trigger
+has fired and the date is irrelevant.
+
 The second trigger comes with a caveat that has to be written down now, while it is
 cheap: **"better data on the public site" collides with a closed invariant.** The public
 surface is exactly three aggregate numbers, and no session content — see the security
