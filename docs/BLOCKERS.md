@@ -92,7 +92,19 @@ had already been decided and shipped.
   `STATUS_API_TOKEN` as GitHub secrets, which is what `verify-hub.sh` needs to run
   in CI instead of by hand. It would extend the automatic check past the public
   endpoint to Grafana behind Access and the status API's own bearer.
-- Whether the hub stays past the first month.
+- ~~Whether the hub stays past the first month.~~ **Decided 2026-08-16: it stays**, and
+  the Railway plan changes on **2026-09-01**. Measured cost, which is the number that made
+  the decision easy: **€2.05 over 12 days**, so about €0.17/day or **~€5/month** for five
+  services. That is roughly half the $10-13/month this project had estimated, and the
+  estimate is what was written down before anyone had a bill to read.
+
+  The arithmetic to 2026-09-01 is about €2.70 more at that rate, which is close enough to
+  the remaining one-off Trial credit that it could run out first. **Marco's answer,
+  2026-08-16: he activates the plan early if it does.** Worth having asked, because this
+  is the silent kind of ending — a hub that stops for an empty balance produces no error,
+  no red deploy and no failed check, only numbers that stop moving. The balance lives in
+  the Railway dashboard; the API this project can reach does not expose it, so no gate
+  here can watch it.
 - Grafana Loki as a Phase 1.5 — **not now, and no longer waiting on a date.** The
   criterion was applied on 2026-08-14 after sixteen days of real use: the questions Phase
   1 actually left unanswered were about the hub's own containers, and a targeted metric
@@ -102,6 +114,14 @@ had already been decided and shipped.
   and the deploy queue are what make a sixth service expensive, and those belong to the
   plan, not to Loki. Full reasoning, including why "richer data on the public site" is a
   design question rather than a free upgrade, in `DECISIONS.md`.
+
+  **The second trigger now has a date: the plan changes on 2026-09-01** (decided
+  2026-08-16). That is the trigger firing, not a date-based deferral coming back in
+  through the window — the condition is still "a paid plan", it simply has a calendar
+  now. So Loki moves from "not now" to "due for its design pass", and that pass starts
+  from the caveat already written down: the public surface stays three aggregate numbers,
+  so the question to answer first is *which log-derived aggregate can be public without
+  becoming content*.
 
 ## Closed since the last revision of this file
 

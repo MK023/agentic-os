@@ -393,6 +393,20 @@ deferral it replaced. Practically: if winter arrives and the plan has not change
 nothing is due and nothing needs re-deciding; if the plan changes in October, the trigger
 has fired and the date is irrelevant.
 
+**Update 2026-08-16: the second trigger fires on 2026-09-01.** The hub stays and the
+Railway plan changes on that date, so Loki is due for its design pass rather than
+deferred. Worth being precise about why this is not the date-based deferral sneaking back
+in: the criterion never became a date, the *condition* acquired one. If the plan change
+slips, Loki slips with it and nobody has to re-decide anything. Winter, the expectation
+recorded two days earlier, turned out to be four months early — which is the ordinary
+fate of expectations and the reason they are not criteria.
+
+**And the number that made "the hub stays" easy, now that there is a bill to read:
+€2.05 over 12 days**, about €0.17/day, **~€5/month** for five services. This project had
+estimated $10-13/month, written before anyone had measured anything; the real figure is
+roughly half. Same shape as the cost of a session and the Prometheus volume: the estimate
+survived until someone divided one number by another.
+
 The second trigger comes with a caveat that has to be written down now, while it is
 cheap: **"better data on the public site" collides with a closed invariant.** The public
 surface is exactly three aggregate numbers, and no session content — see the security
