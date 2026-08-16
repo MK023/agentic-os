@@ -79,6 +79,14 @@ sends identity as **data point** attributes, not resource attributes, so
 plain Prometheus labels. What showed up: `user_email` (a real address),
 `user_id`, `user_account_id`, `user_account_uuid`, `organization_id`.
 
+**Re-measured 2026-08-16 against v2.1.227**, with two real headless sessions: the label
+set reaching Prometheus is still exactly the allow-list, no identity attribute survives,
+and the two sessions stayed two distinct series. The allow-list is what makes this a
+cheap check rather than an anxious one — it keeps what is named and drops everything
+else, so a release that invents a new identity attribute fails safe by construction. The
+thing this dry run is really watching for is the opposite: a *rename* of something we
+keep, which drops data silently instead of leaking it.
+
 They never reach storage: the Collector keeps an **allow-list** of labels
 (`transform/label-allowlist` in `docker/otel-collector-config.yaml`) and drops
 everything else. Surviving labels are `model`, `type`, `query_source`, `start_type`,

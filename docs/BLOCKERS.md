@@ -17,6 +17,21 @@ panel goes empty after a Claude Code upgrade, that is the first thing to check, 
 only check the label allow-list gets against a *new* client version: no CI gate sees
 what a future release starts sending.
 
+**Re-run 2026-08-16 against v2.1.227**, seven patch releases after the v2.1.220 the
+names and labels were first measured on. Nothing moved: same four metric names, the
+label set is still exactly the allow-list (`model`, `type`, `query_source`,
+`start_type`, `session_id`, plus the `otel_scope_*` the exporter adds), and zero hits
+for `user_email` / `user_id` / `user_account*` / `organization_id`. Two headless
+sessions produced **two distinct `session_id` values**, which is the half that matters
+and the half production cannot self-check: a renamed `session.id` would collapse
+concurrent sessions into one series and the numbers would simply read *lower*, with no
+error anywhere.
+
+The other half checks itself for free, and is worth knowing so this dry run is not run
+out of habit: the three public numbers are non-zero, which is only possible if
+`claude_code_session_count` and `claude_code_token_usage` still exist under those exact
+names. The dry run is for the label set, not the metric names.
+
 ## 2. Grafana's fixable CVEs, which are not fixable here
 
 `grafana/grafana:13.1.3` carries 15 HIGH vulnerabilities that *do* have fixes —
