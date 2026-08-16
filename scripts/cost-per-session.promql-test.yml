@@ -7,6 +7,14 @@
 # railway/prometheus/Dockerfile) e non serve ne' un server ne' un daemon Docker.
 # Non gira in CI: e' un check da rieseguire quando cambia il prezzario o entra un
 # modello nuovo, cioe' le due occasioni in cui questa query viene riscritta.
+#
+# Quella riga qui sopra e' rimasta un'istruzione non seguita: la #66 ha alzato
+# cacheCreation da 1.25x a 2x dell'input in main.py e nella dashboard, e qui le
+# tariffe vecchie sono sopravvissute due giorni. Il test passava lo stesso, perche'
+# esercita solo opus input/output e haiku cacheRead e quei moltiplicatori non li
+# valuta mai. Dal 16-08 il job `compose` confronta queste tariffe con quelle del
+# pannello e diventa rosso se divergono: un commento che chiede di ricordarsi non
+# e' un gate, ed e' stato dimostrato qui.
 evaluation_interval: 1m
 
 tests:
@@ -27,19 +35,19 @@ tests:
           sum by (session_id) (
               claude_code_token_usage{model="claude-fable-5",type="input"} * 10
            or claude_code_token_usage{model="claude-fable-5",type="output"} * 50
-           or claude_code_token_usage{model="claude-fable-5",type="cacheCreation"} * 12.5
+           or claude_code_token_usage{model="claude-fable-5",type="cacheCreation"} * 20
            or claude_code_token_usage{model="claude-fable-5",type="cacheRead"} * 1
            or claude_code_token_usage{model="claude-opus-5",type="input"} * 5
            or claude_code_token_usage{model="claude-opus-5",type="output"} * 25
-           or claude_code_token_usage{model="claude-opus-5",type="cacheCreation"} * 6.25
+           or claude_code_token_usage{model="claude-opus-5",type="cacheCreation"} * 10
            or claude_code_token_usage{model="claude-opus-5",type="cacheRead"} * 0.5
            or claude_code_token_usage{model="claude-sonnet-5",type="input"} * 3
            or claude_code_token_usage{model="claude-sonnet-5",type="output"} * 15
-           or claude_code_token_usage{model="claude-sonnet-5",type="cacheCreation"} * 3.75
+           or claude_code_token_usage{model="claude-sonnet-5",type="cacheCreation"} * 6
            or claude_code_token_usage{model="claude-sonnet-5",type="cacheRead"} * 0.3
            or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="input"} * 1
            or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="output"} * 5
-           or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="cacheCreation"} * 1.25
+           or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="cacheCreation"} * 2
            or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="cacheRead"} * 0.1
           ) / 1e6
         eval_time: 5m

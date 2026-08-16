@@ -10,3 +10,7 @@ coverage.xml
 
 # mutmut working copy
 mutants/
+
+# Output di graphify: artefatto rigenerabile (309 nodi da 42 file). Il valore
+# durevole sta in docs/DECISIONS.md, non nel grafo che lo indicizza.
+graphify-out/
