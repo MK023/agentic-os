@@ -233,3 +233,28 @@ jobs:
           [ "$n" -eq 3 ] || { echo "::error::main.py ha $n query con max_over_time, ne servono 3"; exit 1; }
           grep -q 'max_over_time(claude_code' docker/grafana/dashboards/claude-code.json \
             || { echo "::error::la dashboard Grafana ha perso max_over_time: mostrerebbe numeri diversi dall'API"; exit 1; }
+
+      # Il test promtool esiste per mettere alla prova il pannello del costo per
+      # sessione, quindi deve portare le SUE tariffe. Il file diceva gia' "rieseguimi
+      # quando cambia il prezzario": non e' bastato. La #66 ha alzato cacheCreation da
+      # 1.25x a 2x dell'input in main.py e nella dashboard, e qui sono rimaste le
+      # vecchie per due giorni senza che niente diventasse rosso — il test passa lo
+      # stesso perche' esercita solo opus input/output e haiku cacheRead, cioe' non
+      # valuta mai i moltiplicatori sbagliati che si porta dietro.
+      #
+      # Un test con dentro tariffe stale che non asserisce mai e' peggio di un test
+      # assente: chi lo legge prende quei numeri per buoni. Un commento non e' un gate.
+      - name: le tariffe del test promtool sono quelle del pannello
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+          dash = json.load(open("docker/grafana/dashboards/claude-code.json"))
+          pannello = next(p for p in dash["panels"] if "sessione" in p.get("title", "").lower())
+          attese = sorted(set(re.findall(r"\* ([0-9.]+)", pannello["targets"][0]["expr"])), key=float)
+          trovate = sorted(set(re.findall(r"\* ([0-9.]+)", open("scripts/cost-per-session.promql-test.yml").read())), key=float)
+          if attese != trovate:
+              print(f"::error::le tariffe divergono. Pannello: {attese} — test: {trovate}. "
+                    "Il prezzario vive in tre posti (main.py, la dashboard, questo test): cambiarne uno solo li fa mentire.")
+              sys.exit(1)
+          print(f"tariffe allineate: {trovate}")
+          PY
