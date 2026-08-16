@@ -112,7 +112,12 @@ those files are correct in both places. Never fork a config to "fix it for local
   precisely so they stop depending on unit metadata.
 - **Never let a gate skip because its credential is missing** (the `sonar` job stays
   red instead) — that is `continue-on-error` with extra steps.
-- No app-level rate limiter in the status API: Cloudflare does it at the edge.
+- No app-level rate limiter in the status API — that part stands. **What this line used
+  to claim, "Cloudflare does it at the edge", was false**: measured 2026-08-16, 60
+  requests in ~20s returned zero `429`, and the zone has no rate limiting rule at all.
+  Nothing was throttling the public endpoint. Being added in the site's Worker, where the
+  route is served; until it ships the honest statement is that the endpoint is unthrottled.
+  An asserted control that does not exist is worse than a declared absence.
 
 ## References (read on demand)
 
