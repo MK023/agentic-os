@@ -5,7 +5,7 @@
 # checkov:skip=CKV_DOCKER_2: Railway ignores the Dockerfile HEALTHCHECK — it uses its
 # own healthcheckPath, and these images ship no shell or HTTP client to probe with
 # anyway. What actually verifies the hub after a deploy is scripts/verify-hub.sh.
-FROM grafana/grafana:13.1.3
+FROM grafana/grafana:13.1.4
 
 # 472 is Grafana's own uid in this image.
 USER 472:472
