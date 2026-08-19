@@ -552,6 +552,44 @@ three is 33% of the load bought by an unauthenticated caller — and removing it
 request, unthrottled, which is what the Worker's limiter is for. It now runs at most
 once per minute — still far denser than a condition measured in days.
 
+**Denial-of-wallet: measured, small, and capped anyway.** Moving to usage-based
+billing turned "someone floods the public endpoint" from an availability question
+into a financial one, so it was worth arithmetic rather than posture. At the
+repository's own rates ($20/vCPU-month, $10/GB-month) a sustained flood from one
+laptop costs on the order of **$0.12–0.35/hour** — a few dollars a day, not
+hundreds. Two things bound it that are not the plan ceiling: `uvicorn` runs with no
+`--workers`, so the status API is one process and one GIL and can never reach the
+8 vCPU the plan allows; and the per-request client churn degrades into connection
+errors long before it reaches interesting money.
+
+What the rate hid was more interesting than the rate. **The error path cost 10–100×
+the success path**: every 502 opened a fresh TLS connection to sentry.io with no
+limiter, while every other capture in the service had one. With Prometheus down and
+the widget polling every 20s that is ~4,300 events/day with no attacker at all —
+the free quota gone in a day, exactly when it is needed. Fixed by routing the 502
+capture through the same throttle, keyed on the exception type so a new fault still
+speaks immediately.
+
+**`/status` caches for 60 seconds, and that one change closes more than the flood.**
+The origin now runs three Prometheus queries per minute whatever the incoming rate;
+the sampling resolution of the presence side-channel drops to a minute; the
+per-request connection churn stops mattering; and the Worker's rate limiter becomes
+a second layer instead of the only one — which matters because that Worker lives in
+another repository. Only successes are cached, and past the window a broken upstream
+is a 502, never a stale number wearing a fresh face: a degradation that hides itself
+would turn the smoke probe green against a dead hub, and that lesson is already paid
+for. The watchdog lost its own interval in the same change — two clocks for one
+cadence drift apart, and these two did: the cache timestamp is taken before the
+queries and the probe's after, so the probe would have run once every *two* windows.
+
+**The usage limit is named as the single backstop, and this repository has no record
+that it is set.** Recommended values are a $15 email alert and a $30 hard limit —
+deliberately far from the ~$10/month measured spend, because the hard limit takes
+every workload offline and a limit set near normal spend is a self-inflicted outage.
+Until the configured value and a verification date are written here, treat the
+backstop as **unverified**: naming a control without evidence it exists is the same
+failure this project already corrected once for edge rate limiting.
+
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.
 

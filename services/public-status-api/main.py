@@ -25,7 +25,27 @@ from sentry import capture_exception
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 PROMETHEUS_URL = os.environ["PROMETHEUS_URL"]
-STATUS_API_TOKEN = os.environ["STATUS_API_TOKEN"]
+
+
+def _token_configurato(valore: str) -> str:
+    """Un token vuoto e' peggio di un token mancante.
+
+    `os.environ["X"]` solleva se la variabile MANCA, non se e' VUOTA. Con una stringa
+    vuota il valore atteso diventa `Bearer ` — spazio finale compreso — cioe' una
+    credenziale che si indovina alla prima richiesta, su un endpoint che dichiara di
+    averne una. Il caso non e' teorico: la tabella di rotazione in docs/DECISIONS.md
+    segnala gia' che questo token vive in due posti e che un disallineamento fallisce
+    in silenzio. Meglio un deploy che non parte.
+    """
+    if not valore.strip():
+        raise RuntimeError(
+            "STATUS_API_TOKEN e' vuoto: senza un valore l'endpoint accetterebbe "
+            "'Bearer ' come credenziale valida. Impostalo sul servizio Railway."
+        )
+    return valore
+
+
+STATUS_API_TOKEN = _token_configurato(os.environ["STATUS_API_TOKEN"])
 REQUEST_TIMEOUT = httpx.Timeout(10.0)
 
 # Plain sums, not `increase()` over a range — and that is not a shortcut, it is what
@@ -213,8 +233,29 @@ async def _cost_usd(payload: dict) -> float:
     )
 
 
+# `secrets.compare_digest` su due `str` solleva TypeError appena una delle due
+# contiene un carattere non-ASCII, e uvicorn decodifica gli header in latin-1: un
+# singolo byte >= 0x80 in Authorization diventava un 500 con traceback nei log,
+# scatenabile da un chiamante NON autenticato. Non era un bypass — era una classe di
+# risposta che il contratto dell'endpoint dichiara inesistente, e volume di log
+# illimitato su un piano a consumo.
+#
+# `isascii()` invece di ri-codificare in byte: un token valido e' ASCII per
+# costruzione, quindi qualunque cosa non lo sia e' gia' sbagliata e puo' uscire da
+# qui senza toccare compare_digest. Ri-codificare funzionava, ma introduceva un nome
+# di codec e un gestore di errori come letterali — e quelli generano mutanti
+# EQUIVALENTI ("LATIN-1" e' un alias valido, e il gestore non viene mai consultato
+# perche' una stringa decodificata da latin-1 si ri-codifica sempre): quattro
+# sopravvissuti impossibili da uccidere sull'unica funzione dove il repo ne esige
+# zero. Meno letterali, meno superficie, stessa proprieta'.
+#
+# L'ordine conta: `isascii()` prima, cosi' compare_digest riceve solo ASCII e resta a
+# tempo costante sul confronto che conta.
+_ATTESO = f"Bearer {STATUS_API_TOKEN}"
+
+
 def require_valid_token(authorization: str = Header(default="")) -> None:
-    if not secrets.compare_digest(authorization, f"Bearer {STATUS_API_TOKEN}"):
+    if not authorization.isascii() or not secrets.compare_digest(authorization, _ATTESO):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
@@ -241,17 +282,13 @@ async def _query_one(client: httpx.AsyncClient, query: str) -> dict:
 # zero there. Same function, opposite verdict — the data shape decides, not the habit.
 PERSISTENCE_QUERY = "sum(increase(prometheus_tsdb_compactions_failed_total[1h]))"
 
-# Il watchdog sta sul percorso caldo dell'unico endpoint pubblico, e quell'endpoint
-# non è throttlato. Dal 19/08/2026 il progetto è su un piano a consumo, quindi quella
-# quarta query era spesa, non solo carico: questo intervallo la toglie.
-#
-# Toglie QUELLA, e va detto con precisione: le tre query pubbliche restano una per
-# richiesta e non le limita niente. Il guadagno è 4→3, cioè il 25%, non la chiusura
-# del vettore — il vettore lo chiude il rate limiter nel Worker del sito, che non è
-# ancora spedito. Sopravvalutare una mitigazione è lo stesso errore del "ci pensa il
-# CDN" che questo repo ha già dovuto correggere una volta.
-PERSISTENCE_CHECK_INTERVAL_S = 60.0
-_persistence_checked_at: float | None = None
+# Una passata al minuto, qualunque sia il traffico in ingresso. E' l'unico cancello di
+# cadenza del servizio: lo condividono le tre query pubbliche e la sonda, che gira una
+# volta per passata. Un secondo orologio per la stessa cadenza si sfasa dal primo — e
+# lo ha fatto, la prima volta che ci ho provato.
+STATUS_CACHE_TTL_S = 60.0
+_status_cache: tuple[float, dict] | None = None
+
 
 # Una notifica per vita del processo era troppo poco, e si è visto in produzione: il
 # 13/08/2026 la compaction ha iniziato a fallire una volta al minuto, Sentry ha
@@ -306,22 +343,20 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     protect is worse than no watchdog: a broken probe must degrade to silence, never
     to an outage. It also means the probe can never be the reason /status fails, which
     is what lets it live on the hot path at all — the widget polls every 20s, so this
-    is a cron nobody has to run and no scheduler has to own. It runs at most once per
-    PERSISTENCE_CHECK_INTERVAL_S: the polling rate sets the floor, not the bill.
+    is a cron nobody has to run and no scheduler has to own. It runs once per cache
+    pass (STATUS_CACHE_TTL_S), so the polling rate sets the floor, not the bill.
     """
-    # Dentro il try, non prima: la promessa scritta qui sopra è che NIENTE in questa
-    # funzione possa far cadere /status, e vale per la funzione, non per il suo corpo.
-    # `time.monotonic()` non solleva in produzione, ma l'invariante non era "non
-    # solleva di fatto", era "non può". La query costosa resta comunque dietro il
-    # cancello: il `return` avviene prima di toccare la rete.
-    global _persistence_checked_at
+    # Nessun intervallo proprio: la sonda gira una volta per PASSATA, e le passate le
+    # limita gia' la cache di /status (STATUS_CACHE_TTL_S). Averne uno suo era peggio
+    # che inutile — era sbagliato: il timestamp della cache si prende PRIMA delle
+    # query e quello della sonda DOPO, quindi al passaggio successivo la sonda
+    # risultava indietro di quei millisecondi, saltava, e sarebbe girata una volta
+    # ogni DUE finestre invece di una. Due orologi per la stessa cadenza si sfasano
+    # sempre; qui ne resta uno solo, ed e' quello che paga le query.
+    #
+    # Resta dentro il try tutto cio' che puo' sollevare: la promessa e' che NIENTE in
+    # questa funzione possa far cadere /status.
     try:
-        now = time.monotonic()
-        ultimo = _persistence_checked_at
-        if ultimo is not None and now - ultimo < PERSISTENCE_CHECK_INTERVAL_S:
-            return
-        _persistence_checked_at = now
-
         series = (await _query_one(client, PERSISTENCE_QUERY))["data"]["result"]
     except Exception:  # noqa: BLE001 — see the docstring; silence is the contract
         return
@@ -371,6 +406,31 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     },
 )
 async def status(_: RequireToken) -> dict:
+    # Una passata al minuto, qualunque sia il traffico. L'endpoint pubblico non e'
+    # throttlato e dal 19/08/2026 il progetto si paga a consumo: senza questa finestra
+    # ogni richiesta comprava tre query a Prometheus e tre connessioni TCP nuove, cioe'
+    # un moltiplicatore di spesa a disposizione di chiunque conosca l'URL. Con la
+    # finestra, l'origine costa uguale sotto una richiesta al minuto e sotto mille al
+    # secondo, e il limitatore nel Worker del sito torna a essere un SECONDO strato
+    # invece dell'unico — cosa che conta, perche' quel Worker sta in un altro repo.
+    #
+    # Chiude anche una risoluzione, non solo un costo: tre aggregati campionabili
+    # senza limite sono un segnale di presenza al secondo (l'ora in cui una sessione
+    # comincia, quanto e' intensa, che modello gira). Aggregare sulle METRICHE e non
+    # sul TEMPO lasciava aperta la seconda dimensione.
+    #
+    # Solo i successi entrano qui, e scaduta la finestra un guasto e' un 502: NON si
+    # serve l'ultimo valore buono oltre la scadenza. Un degrado che si nasconde
+    # renderebbe verde lo smoke test a hub morto, ed e' una lezione gia' pagata.
+    #
+    # ponytail: nessun lock. Due richieste che arrivano insieme a finestra scaduta
+    # fanno due passate invece di una — costa una query in piu' ogni tanto, e un lock
+    # su un singolo processo asyncio costerebbe piu' codice di quanto risparmi.
+    global _status_cache
+    now = time.monotonic()
+    if _status_cache is not None and now - _status_cache[0] < STATUS_CACHE_TTL_S:
+        return _status_cache[1]
+
     # KeyError/TypeError/ValueError are caught alongside httpx.HTTPError: a 200
     # response with an unexpected shape (Prometheus mid-restart, a future API
     # change) raises inside _parse_value or _parse_series and would otherwise become
@@ -390,9 +450,27 @@ async def status(_: RequireToken) -> dict:
                 "tokens_today": int(_parse_value(payloads["tokens_today"])),
                 "cost_usd_today": round(await _cost_usd(payloads["cost_usd_today"]), 2),
             }
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            await capture_exception(exc, tags={"endpoint": "status"})
+        except (httpx.HTTPError, KeyError, TypeError, ValueError, ArithmeticError) as exc:
+            # Limitata, come ogni altra cattura di questo file. Era l'unica senza
+            # limitatore, ed era anche l'unica che un chiamante NON autenticato puo'
+            # far scattare a volonta': ogni 502 apriva un client nuovo verso
+            # sentry.io, handshake TLS compreso. Con Prometheus giu' e il widget che
+            # interroga ogni 20s sono ~4.300 eventi al giorno senza alcun attaccante,
+            # cioe' la quota Sentry che si esaurisce da sola proprio mentre serve.
+            #
+            # La chiave e' il TIPO dell'eccezione, non un valore fisso: un guasto
+            # nuovo parla subito invece di restare zitto per un'ora dietro a uno
+            # vecchio. La RISPOSTA non e' limitata — 502 su ogni richiesta, sempre:
+            # si limita cio' che raccontiamo, mai cio' che serviamo.
+            #
+            # ArithmeticError nella tupla per la stessa promessa: un `+Inf` da
+            # Prometheus faceva `int(float('inf'))` -> OverflowError, che non e' un
+            # ValueError e diventava il 500 senza cattura che il commento qui sopra
+            # dichiarava chiuso.
+            await _report_infra_throttled(f"upstream-{type(exc).__name__}", exc)
             raise HTTPException(status_code=502, detail="upstream unavailable") from exc
+
+        _status_cache = (now, values)
 
         # After the three numbers are already in hand, and outside the try above: the
         # watchdog must not share a failure path with the contract it guards. Same
