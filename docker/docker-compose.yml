@@ -77,9 +77,13 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
+      # GF_AUTH_ANONYMOUS_ENABLED=false era qui e ripeteva il default del fornitore:
+      # si leggeva come hardening senza cambiare niente. Le impostazioni vere adesso
+      # stanno in docker/grafana/grafana.ini, una copia sola per i due ambienti, come
+      # ogni altra configurazione di questo progetto.
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
-      - GF_AUTH_ANONYMOUS_ENABLED=false
     volumes:
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
