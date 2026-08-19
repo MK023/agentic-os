@@ -72,7 +72,7 @@ jobs:
         env:
           FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence"
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # Se una funzione cambia nome il gate deve rompersi QUI. Senza questo
           # controllo il grep sui risultati non troverebbe più niente e passerebbe
           # verde per sempre: è il modo in cui un gate muore senza fare rumore.
@@ -88,8 +88,30 @@ jobs:
             fi
           done
 
+          # `|| true` resta necessario: mutmut esce non-zero QUANDO ci sono
+          # sopravvissuti, che e' il caso che vogliamo misurare, non subire.
           mutmut run || true
           mutmut results > mutation-results.txt
+
+          # Il pavimento. Senza, questo gate conta solo gli esiti CATTIVI e non
+          # asserisce mai quello buono: se mutmut non parte — cache sporca,
+          # dipendenze sfasate, un errore di import — il file dei risultati resta
+          # vuoto, ogni grep -c da' 0, e lo step esce verde avendo verificato
+          # NIENTE. "Nessun sopravvissuto" e "nessun mutante" erano lo stesso
+          # output, e il 19-08-2026 questo gate e' stato usato per dichiarare zero
+          # sopravvissuti: la dichiarazione valeva solo perche' un umano ha visto
+          # scorrere i mutanti.
+          #
+          # 100 e' un pavimento grossolano, non una soglia di qualita': al
+          # 19-08-2026 i mutanti generati sono 260. Distingue "ha girato" da "non
+          # ha girato", e nient'altro.
+          generati=$(mutmut results --all true | grep -cE ": (killed|survived|timeout|no tests|not checked|skipped|suspicious)" || true)
+          echo "mutanti generati: ${generati}"
+          if [ "${generati}" -lt 100 ]; then
+            echo "FAIL: mutmut ha classificato ${generati} mutanti (attesi >=100)." >&2
+            echo "Non e' un punteggio basso: e' un run che non ha girato." >&2
+            exit 1
+          fi
 
           # `mutmut results` elenca solo i mutanti NON uccisi (survived, timeout, e
           # "not checked" quando il run muore a metà — che il `|| true` sopra

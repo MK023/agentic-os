@@ -11,9 +11,16 @@ framework:
 
 skip-check: []
 
-soft-fail-on:
-  - LOW
-  - MEDIUM
+# Niente soft-fail. C'era `soft-fail-on: [LOW, MEDIUM]`, e descriveva una politica
+# che non e' mai stata osservata: quella mappatura si appoggia ai metadati di
+# severita' che Checkov open-source non porta senza una chiave di piattaforma, e con
+# 0 check falliti (misurato il 19-08-2026: 41 passati sui Dockerfile, 304 sui
+# workflow) non e' mai stata esercitata. Una politica che non si puo' verificare non
+# e' una politica. Qui blocca qualunque check fallito: se un giorno ne comparira' uno
+# rumoroso lo si salta INLINE, con la ragione accanto, come gia' fanno i Dockerfile.
+#
+# `docker/docker-compose.yml` resta fuori da Checkov perche' `docker_compose` non e'
+# un framework che Checkov abbia. Lo copre un gate dedicato in images.yml.
 
 compact: true
 quiet: true

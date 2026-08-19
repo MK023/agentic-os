@@ -61,7 +61,16 @@ jobs:
       # rate limit anonimo di Docker Hub.
       - name: build delle immagini (con ritentata sui fallimenti di rete)
         run: |
-          set -uo pipefail
+          # -e, non solo -uo: senza, l'esito dello step e' quello dell'ULTIMO comando
+          # (la build di status-api), e un fallimento di otel-collector, prometheus,
+          # grafana o cloudflared lasciava lo step VERDE. Oggi verrebbe intercettato
+          # comunque, ma per caso e nel posto sbagliato — gli step Trivy successivi
+          # citano tag che non esisterebbero. Il giorno che si aggiunge un'immagine
+          # senza uno step a valle che la nomini, quel fallimento diventa muto.
+          #
+          # La funzione di ritentata usa `if docker build ...; then`, che -e non
+          # altera: nessun altro comportamento cambia.
+          set -euo pipefail
           costruisci() {
             for tentativo in 1 2 3; do
               if docker build "$@"; then return 0; fi
@@ -270,6 +279,110 @@ jobs:
       #
       # Il pannello sarebbe andato in rosso PERMANENTE dal sesto giorno su un hub
       # sano — cioe' il modo piu' efficace di insegnare a ignorarlo.
+      # Il guasto silenzioso del 13-08-2026, finalmente con un gate. Se un Dockerfile
+      # copia un file che NON compare nei watchPatterns del suo railway.json, la
+      # modifica entra in main verde e Railway non ricostruisce quel servizio:
+      # produzione e main divergono, in silenzio e per sempre. Questo repo ha gia' un
+      # gate per ogni altro accoppiamento che l'ha morso; questo era affidato a una
+      # procedura manuale scritta in CLAUDE.md — cioe' esattamente cio' che la lezione
+      # "un commento non e' un gate" dice di non fare.
+      - name: ogni COPY e' coperto dai watchPatterns del suo servizio
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import fnmatch, json, pathlib, re, sys
+
+          servizi = sorted(pathlib.Path("railway").glob("*/railway.json"))
+          if not servizi:
+              sys.exit("::error::nessun railway.json trovato: gate che passerebbe sempre")
+
+          def coperto(percorso: str, patterns: list[str]) -> bool:
+              for p in patterns:
+                  # `dir/**` in Railway copre anche i file dentro dir/, che fnmatch
+                  # da solo non tratta come ricorsivo.
+                  if fnmatch.fnmatch(percorso, p) or (p.endswith("/**") and percorso.startswith(p[:-2])):
+                      return True
+              return False
+
+          problemi = []
+          for config in servizi:
+              dati = json.loads(config.read_text()).get("build", {})
+              patterns = dati.get("watchPatterns", [])
+              if not patterns:
+                  problemi.append(f"{config.parent.name}: nessun watchPattern")
+                  continue
+
+              percorso_dockerfile = dati.get("dockerfilePath")
+              if percorso_dockerfile:
+                  dockerfile = pathlib.Path(percorso_dockerfile)
+                  contesto = pathlib.Path(".")
+              else:
+                  # Nessun dockerfilePath: il servizio si costruisce dalla directory
+                  # che i watchPatterns sorvegliano, e i COPY sono relativi a quella.
+                  radice = patterns[0].split("*")[0].rstrip("/")
+                  dockerfile = pathlib.Path(radice) / "Dockerfile"
+                  contesto = pathlib.Path(radice)
+
+              if not dockerfile.exists():
+                  problemi.append(f"{config.parent.name}: {dockerfile} non esiste")
+                  continue
+
+              for sorgente in re.findall(r"^COPY\s+(?!--)(\S+)", dockerfile.read_text(), re.MULTILINE):
+                  percorso = str(contesto / sorgente) if str(contesto) != "." else sorgente
+                  if not coperto(percorso, patterns):
+                      problemi.append(f"{config.parent.name}: COPY {sorgente} -> {percorso} "
+                                      f"non e' coperto da {patterns}")
+              # Il Dockerfile stesso deve essere sorvegliato, o cambiarlo non ricostruisce.
+              if not coperto(str(dockerfile), patterns):
+                  problemi.append(f"{config.parent.name}: {dockerfile} non e' coperto da {patterns}")
+
+          if problemi:
+              print("::error::un COPY non sorvegliato significa che Railway NON ricostruisce "
+                    "il servizio quando quel file cambia: la modifica entra in main verde e la "
+                    "produzione resta indietro. E' il guasto del 13-08-2026.")
+              for problema in problemi:
+                  print(f"::error::{problema}")
+              sys.exit(1)
+          print(f"watchPatterns coerenti con i COPY per {len(servizi)} servizi")
+          PY
+
+      # Checkov copre i Dockerfile (CKV_DOCKER_7 sul pinning) e i workflow, ma NON
+      # docker/docker-compose.yml: `docker_compose` non e' un framework che Checkov
+      # abbia — l'elenco valido va da `ansible` a `terraform` e non lo contiene — e
+      # scripts/check-image-users.sh legge solo `USER`, mai `FROM`. Risultato: la
+      # regola "ogni immagine pinnata, mai :latest" era applicata ai Dockerfile e a
+      # NIENTE per il compose, dove un :latest sarebbe passato per tutti i gate.
+      - name: le immagini del compose sono pinnate e non divergono dai Dockerfile
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          compose = pathlib.Path("docker/docker-compose.yml").read_text()
+          immagini = re.findall(r"^\s*image:\s*(\S+)", compose, re.MULTILINE)
+          if not immagini:
+              sys.exit("::error::nessuna `image:` trovata nel compose: il gate sta "
+                       "guardando il file sbagliato, ed e' un gate che passerebbe sempre")
+
+          for riferimento in immagini:
+              if ":" not in riferimento or riferimento.rsplit(":", 1)[1] == "latest":
+                  sys.exit(f"::error::{riferimento} non e' pinnata a una versione")
+
+          # Stesse immagini, stesse versioni fra locale e produzione: sono le due
+          # meta' della stessa scelta, come gia' per la retention.
+          da_compose = dict(r.rsplit(":", 1) for r in immagini)
+          for dockerfile in sorted(pathlib.Path("railway").glob("*/Dockerfile")):
+              base = re.search(r"^FROM\s+(\S+)", dockerfile.read_text(), re.MULTILINE).group(1)
+              if ":" not in base:
+                  sys.exit(f"::error::{dockerfile} usa {base}, senza versione")
+              nome, versione = base.rsplit(":", 1)
+              if nome in da_compose and da_compose[nome] != versione:
+                  sys.exit(f"::error::{nome}: il compose dice {da_compose[nome]}, "
+                           f"{dockerfile} dice {versione}. Locale e produzione divergono.")
+
+          print(f"immagini pinnate e allineate: {sorted(da_compose)}")
+          PY
+
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
           python3 - <<'PY'
