@@ -4,7 +4,9 @@
 # checkov:skip=CKV_DOCKER_2: Railway ignores the Dockerfile HEALTHCHECK — it uses its
 # own healthcheckPath, and these images ship no shell or HTTP client to probe with
 # anyway. What actually verifies the hub after a deploy is scripts/verify-hub.sh.
-FROM otel/opentelemetry-collector-contrib:0.158.0-386
+# Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
+# sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
+FROM otel/opentelemetry-collector-contrib:0.158.0-386@sha256:93e4793719dd55d0d9499328e7b45af219116cc9d1bcb95df5b3a0f8cade831d
 
 # The base image already runs as 10001; stated explicitly so it is visible here and
 # survives a base-image change that silently drops it.
