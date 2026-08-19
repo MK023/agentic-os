@@ -953,11 +953,99 @@ def test_an_empty_token_is_refused_at_startup_not_served_open():
     # atteso diventa "Bearer " con lo spazio finale, cioe' una credenziale valida che
     # si indovina alla prima richiesta. Meglio un deploy che non parte di un endpoint
     # che serve aperto: il guasto rumoroso e' quello che si nota.
+    atteso = (
+        "STATUS_API_TOKEN e' vuoto: senza un valore l'endpoint accetterebbe "
+        "'Bearer ' come credenziale valida. Impostalo sul servizio Railway."
+    )
     for vuoto in ("", "   ", "\t"):
-        with pytest.raises(RuntimeError, match="STATUS_API_TOKEN"):
+        with pytest.raises(RuntimeError) as errore:
             main._token_configurato(vuoto)
+        # Il messaggio per intero: e' l'unica istruzione operativa che riceve chi
+        # trova il deploy fermo, e "Impostalo sul servizio Railway" e' la meta' che
+        # dice dove andare.
+        assert str(errore.value) == atteso
 
     assert main._token_configurato("un-token-vero") == "un-token-vero"
+
+
+def test_every_route_either_requires_the_token_or_is_the_health_probe():
+    # `require_valid_token` e' una dipendenza PER ROTTA, non un middleware: una
+    # `@app.get("/qualcosa")` scritta domani nasce PUBBLICA, con il suo test verde e
+    # la copertura ancora al 100%. Il commento in cima a main.py identifica proprio
+    # questo rischio e poi si difende solo dalle tre rotte che FastAPI aggiunge da
+    # solo. Questa e' l'asserzione sull'insieme, l'unica che vede una rotta nuova.
+    from fastapi.routing import APIRoute
+
+    senza_token = {
+        rotta.path
+        for rotta in app.routes
+        if isinstance(rotta, APIRoute)
+        and not any(d.call is main.require_valid_token for d in rotta.dependant.dependencies)
+    }
+
+    # /healthz e' deliberatamente aperta: Railway non manda header, e il suo
+    # contenuto e' una costante. Ogni altra rotta senza token e' un errore.
+    assert senza_token == {"/healthz"}
+
+
+@respx.mock
+def test_the_health_probe_answers_without_a_token_and_touches_nothing():
+    # Railway promuove un deploy quando il processo parte, non quando serve: con
+    # PROMETHEUS_URL sbagliato ma risolvibile l'import riesce, uvicorn ascolta, ogni
+    # /status e' 502, il deploy e' SUCCESS e il container buono viene spento. Questa
+    # rotta esiste perche' la piattaforma abbia qualcosa da interrogare — e Railway
+    # non manda credenziali, quindi /status (401) non puo' esserlo.
+    #
+    # Nessuna chiamata a monte, e nessun dato: un probe che dipende da Prometheus
+    # direbbe "malato" quando e' Prometheus a esserlo, spegnendo l'unica cosa che in
+    # quel momento funziona ancora.
+    risposta = client.get("/healthz")
+
+    assert risposta.status_code == 200
+    assert risposta.json() == {"status": "ok"}
+    assert not respx.calls
+
+
+def test_a_dsn_that_is_set_but_unparseable_refuses_to_boot():
+    # Un DSN malformato spegne la segnalazione errori restando indistinguibile da
+    # "nessun errore" — la lettura esatta che ha lasciato correre sei giorni il
+    # guasto del 13/08. Stessa scelta gia' accettata per il token: meglio un deploy
+    # che non parte di un reporter che qualcuno CREDE acceso.
+    atteso = (
+        "SENTRY_DSN e' impostato ma non ha la forma https://<chiave>@<host>/<progetto>: "
+        "la segnalazione errori sarebbe spenta senza dirlo. Correggilo o rimuovilo."
+    )
+    for rotto in ("non-un-dsn", "https://KEY@host/9", "https://abc@host/prefisso/9"):
+        with pytest.raises(RuntimeError) as errore:
+            sentry.verifica_dsn(rotto)
+        assert str(errore.value) == atteso
+
+    # Assente e' un no-op deliberato, non un errore: e' il caso normale in locale.
+    sentry.verifica_dsn(None)
+    sentry.verifica_dsn("")
+    sentry.verifica_dsn("https://abc123@example.sentry.io/9")
+
+
+@respx.mock
+def test_pricing_gaps_cannot_grow_without_bound(monkeypatch):
+    # La chiave del dedup e' un VALORE che arriva da fuori (`model`, da Prometheus).
+    # Chi ha il token di ingest puo' quindi far crescere il set senza limite e
+    # comprare un evento Sentry per ogni modello inventato: la stessa esaurizione di
+    # quota che il limitatore sul 502 e' appena servito a impedire.
+    _reset_stato_di_processo(monkeypatch)
+    pieno = {f"model {i!r}" for i in range(main.MAX_PRICING_GAPS)}
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", pieno)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("modello-mai-visto", "input", 1_000)])
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    assert not sentry_call.called
+    assert len(main._PRICING_GAPS_REPORTED) == main.MAX_PRICING_GAPS
 
 
 def test_only_status_is_routed_at_all():

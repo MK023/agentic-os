@@ -243,6 +243,22 @@ jobs:
           grep -q 'max_over_time(claude_code' docker/grafana/dashboards/claude-code.json \
             || { echo "::error::la dashboard Grafana ha perso max_over_time: mostrerebbe numeri diversi dall'API"; exit 1; }
 
+          # I NOMI, non solo la finestra. I nomi delle metriche sono prevedibili solo
+          # grazie a `translation_strategy: UnderscoreEscapingWithoutSuffixes`: la
+          # strategia predefinita appende tipo e unita' e li farebbe diventare
+          # `claude_code_token_usage_tokens_total`. Cambiata quella, le tre query non
+          # corrispondono piu' a niente, /status risponde 200 con tre zeri, e la
+          # compensazione scritta in BLOCKERS ("i numeri sono diversi da zero") la
+          # nota solo se qualcuno guarda. Il Collector nomina le metriche solo nei
+          # commenti, quindi la meta' da sorvegliare e' la strategia.
+          strategia=$(awk -F': *' '/^[[:space:]]*translation_strategy:/ {print $2; exit}' docker/otel-collector-config.yaml)
+          [ "$strategia" = "UnderscoreEscapingWithoutSuffixes" ] || {
+            echo "::error::translation_strategy=$strategia: con un'altra strategia i nomi prendono i suffissi di tipo e unita' e le tre query di main.py non trovano piu' nulla."; exit 1; }
+          for metrica in claude_code_session_count claude_code_token_usage; do
+            grep -q "$metrica" services/public-status-api/main.py || {
+              echo "::error::main.py non usa piu' $metrica: i nomi vivono in tre posti e questo e' uno."; exit 1; }
+          done
+
       # Il test promtool esiste per mettere alla prova il pannello del costo per
       # sessione, quindi deve portare le SUE tariffe. Il file diceva gia' "rieseguimi
       # quando cambia il prezzario": non e' bastato. La #66 ha alzato cacheCreation da
@@ -261,11 +277,22 @@ jobs:
           pannello = next(p for p in dash["panels"] if "sessione" in p.get("title", "").lower())
           attese = sorted(set(re.findall(r"\* ([0-9.]+)", pannello["targets"][0]["expr"])), key=float)
           trovate = sorted(set(re.findall(r"\* ([0-9.]+)", open("scripts/cost-per-session.promql-test.yml").read())), key=float)
-          if attese != trovate:
-              print(f"::error::le tariffe divergono. Pannello: {attese} — test: {trovate}. "
+          # Il TERZO posto, che il messaggio d'errore qui sotto nominava gia' e che il
+          # gate non guardava: la tabella in main.py e' quella che PRODUCE il numero
+          # pubblico. E' dato a livello di modulo, quindi la copertura la vede al
+          # 100% e mutmut non genera mutanti per una costante: un prezzo sbagliato li'
+          # non fa diventare rosso niente. E' la #66/#75 spostata di un file.
+          tabella = re.search(r"PRICES_USD_PER_MTOK = \{.*?\n\}", open("services/public-status-api/main.py").read(), re.S)
+          if not tabella:
+              print("::error::PRICES_USD_PER_MTOK non trovata in main.py: il gate sta guardando il file sbagliato")
+              sys.exit(1)
+          da_codice = sorted({v.rstrip("0").rstrip(".") or "0" for v in re.findall(r":\s*([0-9]+\.[0-9]+)", tabella.group(0))}, key=float)
+
+          if attese != trovate or attese != da_codice:
+              print(f"::error::le tariffe divergono. Pannello: {attese} — test: {trovate} — main.py: {da_codice}. "
                     "Il prezzario vive in tre posti (main.py, la dashboard, questo test): cambiarne uno solo li fa mentire.")
               sys.exit(1)
-          print(f"tariffe allineate: {trovate}")
+          print(f"tariffe allineate nei tre posti: {trovate}")
           PY
 
       # Stessa famiglia del gate qui sopra, ma le meta' sono TRE, e questo gate e'

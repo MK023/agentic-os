@@ -62,13 +62,22 @@ jobs:
       # rosso. E' il posto dove la coverage mente piu' che altrove: le righe sono
       # tutte eseguite, ma l'unica cosa che conta e' se qualcuno se ne accorgerebbe.
       #
+      # Dal 19/08 comprende anche le due GUARDIE DI AVVIO — `_token_configurato` e
+      # `verifica_dsn`. Sono le funzioni che decidono se il servizio parte: un token
+      # vuoto renderebbe valido `Bearer ` con lo spazio, un DSN illeggibile spegnerebbe
+      # la segnalazione errori restando identica a "nessun errore". Il primo giro ne
+      # ha lasciate vive dieci, tutte sul TESTO del messaggio: quel testo e' l'unica
+      # istruzione operativa che riceve chi trova il deploy fermo, quindi si asserisce
+      # per intero. Non e' in contraddizione con la deroga qui sotto: li' si rifiuta
+      # di congelare il formato dell'ENVELOPE, che appartiene a Sentry.
+      #
       # I survivor di sentry.py restano deliberatamente NON bloccanti: asserire il
       # formato esatto sul filo di un reporter fail-open congelerebbe un dettaglio
       # che appartiene a Sentry, non a noi.
       - name: mutmut sulle funzioni bloccanti (autorizzazione, costo, watchdog)
         working-directory: services/public-status-api
         env:
-          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence"
+          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence _token_configurato verifica_dsn"
         run: |
           set -euo pipefail
           # Se una funzione cambia nome il gate deve rompersi QUI. Senza questo

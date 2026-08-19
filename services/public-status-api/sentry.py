@@ -20,6 +20,25 @@ _DSN_RE = re.compile(r"^https://([a-f0-9]+)@([^/]+)/(\d+)$")
 _dsn_malformato_segnalato = False
 
 
+def verifica_dsn(dsn: str | None) -> None:
+    """Un DSN impostato ma illeggibile deve fermare il deploy, non spegnersi da solo.
+
+    Assente e' un no-op deliberato: e' il caso normale fuori dalla produzione.
+    IMPOSTATO e non interpretabile e' un'altra cosa — qualcuno ha configurato la
+    segnalazione errori e crede che funzioni, mentre `capture_exception` diventa un
+    `return` silenzioso e il risultato osservabile e' identico a "nessun errore".
+    E' la lettura esatta che ha lasciato correre sei giorni il guasto del 13/08.
+
+    Stessa scelta gia' presa per `STATUS_API_TOKEN` vuoto: un guasto rumoroso al
+    'avvio batte un controllo che qualcuno CREDE attivo.
+    """
+    if dsn and not _DSN_RE.match(dsn):
+        raise RuntimeError(
+            "SENTRY_DSN e' impostato ma non ha la forma https://<chiave>@<host>/<progetto>: "
+            "la segnalazione errori sarebbe spenta senza dirlo. Correggilo o rimuovilo."
+        )
+
+
 def _endpoint(dsn: str | None) -> str | None:
     """DSN -> envelope endpoint, or None if there is nothing usable.
 
