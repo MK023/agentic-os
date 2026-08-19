@@ -4,5 +4,5 @@
 # unlocked resolved versions are a supply-chain risk — the same reasoning as
 # SHA-pinning GitHub Actions).
 fastapi==0.141.1
-uvicorn==0.52.1
+uvicorn==0.52.3
 httpx==0.28.1
