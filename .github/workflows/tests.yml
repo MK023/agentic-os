@@ -60,9 +60,6 @@ jobs:
       # the unhashed test tools would fail the install.
       # Quoted: an unquoted ":all: " would make YAML read a mapping mid-command.
       - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
-      # Pinnate come tutto il resto della pipeline: erano l'unico install non
-      # deterministico rimasto (le dipendenze di prodotto sono hash-locked).
-      #
       # `httpx2` sta QUI e non in requirements.in perche' e' una dipendenza di
       # TEST, non di produzione. Starlette 1.3.1 importa `httpx2 as httpx` se lo
       # trova e ricade su `httpx` con uno StarletteDeprecationWarning se non c'e'
@@ -70,7 +67,13 @@ jobs:
       # warning senza toccare `httpx==0.28.1`, che e' quello con cui il servizio
       # parla davvero a Prometheus. respx continua a moccare httpx: sono due
       # strade separate, il TestClient entra nell'app e main.py esce verso l'hub.
-      - run: pip install httpx2==2.10.0 respx==0.23.1 pytest==9.1.1 pytest-cov==7.1.0
+      # Hash-locked come le dipendenze di produzione. Prima erano pinnate al solo
+      # primo livello, e il commento qui affermava che bastasse: non bastava. Senza
+      # hash e senza --only-binary la chiusura transitiva si risolve a runtime e una
+      # sdist esegue il proprio setup.py sul runner — cioe' dove sono atterrati gli
+      # incidenti PyPI. Erano gli strumenti che verificano tutto il resto a essere
+      # l'unico anello non bloccato. Modificare requirements-dev.in, mai il .txt.
+      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt"
       - run: pytest services/public-status-api/test_main.py -v --cov=services/public-status-api --cov-report=xml:services/public-status-api/coverage.xml --cov-fail-under=100
 
   # La versione di Python è scritta in sei posti — cinque pin nei workflow, il

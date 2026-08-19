@@ -61,7 +61,13 @@ jobs:
           python-version: "3.14"
       # Pinnati come ogni altra cosa qui: un linter che cambia versione da solo
       # trasforma un gate in un generatore casuale di build rosse.
-      - run: pip install ruff==0.15.4 bandit==1.9.2
+      # Hash-locked come le dipendenze di produzione. Prima erano pinnate al solo
+      # primo livello, e il commento qui affermava che bastasse: non bastava. Senza
+      # hash e senza --only-binary la chiusura transitiva si risolve a runtime e una
+      # sdist esegue il proprio setup.py sul runner — cioe' dove sono atterrati gli
+      # incidenti PyPI. Erano gli strumenti che verificano tutto il resto a essere
+      # l'unico anello non bloccato. Modificare requirements-dev.in, mai il .txt.
+      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt"
       - run: ruff check .
       - run: ruff format --check .
       # -x sui test: gli assert sono il modo in cui i test si scrivono. La cartella
@@ -84,5 +90,5 @@ jobs:
           persist-credentials: false
       - name: zizmor sui workflow (blocca su HIGH)
         run: |
-          pip install --quiet zizmor==1.28.0
+          pip install --quiet --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt
           zizmor --min-severity=high .github/workflows/
