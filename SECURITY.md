@@ -42,7 +42,16 @@ A public hostname is not an access control. This follows the CVE-2026-28798
 pattern and is the reason this project's design starts from authentication at
 the ingestion layer.
 
-Prometheus never gets a hostname of its own. Its HTTP API has no authentication.
+Prometheus never gets a hostname of its own — **and the reason written here until
+2026-08-19 was wrong**. It said Prometheus "has no authentication"; the vendor's own
+security page says the opposite: *"Prometheus, and most exporters, support TLS.
+Including authentication of clients via TLS client certificates."* Native TLS and
+basic auth exist, via `--web.config.file`. They are simply **not configured here**,
+because the decision does not need them: the same page states these endpoints
+*"should not be exposed to publicly accessible networks like the internet"*, and no
+route means no exposure to authenticate against. Declaring a vendor limitation that
+does not exist is the same failure as declaring a control that does not exist — it
+just points the other way.
 
 The public surface of the whole system is three aggregate numbers (sessions,
 tokens, cost). No session content, no free-form PromQL, and no path from the
@@ -56,6 +65,16 @@ cache, so the origin computes one pass per minute whatever the incoming rate, an
 the resolution of that side channel is capped at the same minute. The endpoint is
 still unthrottled (see `CLAUDE.md`); the cache bounds what unlimited sampling buys,
 it does not throttle the caller.
+
+**What the Prometheus volume holds, stated plainly.** After the Collector's
+allow-list the labels are `model`, `type`, `query_source`, `start_type`,
+`terminal_type`, `session.id`, plus scrape metadata — no credential, no session
+content, no email. What 30 days of it *is*, though, is a behavioural profile at
+15-second resolution: when work starts, how long it lasts, how intense it is, which
+models. The public endpoint's version of that side channel is bounded to one minute
+by the cache; the volume is the same channel at full resolution and full history.
+Acceptable for a personal project, and worth knowing it is personal data rather than
+anonymous counters.
 
 ## Data handling
 

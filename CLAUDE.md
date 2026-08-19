@@ -86,7 +86,10 @@ those files are correct in both places. Never fork a config to "fix it for local
 - Public surface is exactly three numbers. No free-form PromQL, no session content.
 - OTLP ingest authenticates **inside the Collector** (`bearertokenauth`): a public
   Tunnel hostname is not an access control (CVE-2026-28798 pattern).
-- Prometheus never gets a Tunnel hostname — it has no auth of its own.
+- Prometheus never gets a Tunnel hostname. **Not** because it cannot authenticate —
+  it supports TLS and basic auth via `--web.config.file`, verified against the vendor's
+  security page — but because it is not configured to, and no route means nothing to
+  authenticate. Do not restate the old, false reason.
 - Secrets are Railway service variables in production, `docker/.env` locally (fake
   values, gitignored), and GitHub/Worker secrets elsewhere. Never in git.
 
@@ -118,9 +121,9 @@ those files are correct in both places. Never fork a config to "fix it for local
   Nothing was throttling the public endpoint. Being added in the site's Worker, where the
   route is served; until it ships the honest statement is that the endpoint is unthrottled.
   **Since 2026-08-19 that gap costs money, not just CPU**: the project is on Railway's
-  Hobby plan, billed on usage, and Railway has no per-service resource cap — one service
-  can reach 8 GB / 8 vCPU on a single replica (six times that if
-  replicas are ever raised). The workspace usage limit is therefore the only
+  Hobby plan, billed on usage. **Railway's schema DOES expose a per-service cap**
+  (`deploy.limitOverride`), contrary to what this line said on 2026-08-19 — it is
+  undocumented in config-as-code, unmeasured on Hobby, and undeclared here. The workspace usage limit is therefore the only
   backstop there is, and the Worker's rate limiter stopped being a tidiness item.
   An asserted control that does not exist is worse than a declared absence.
 
