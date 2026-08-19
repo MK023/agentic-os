@@ -50,20 +50,30 @@ jobs:
       # già stato sbagliato una volta di 2,8x. Un test scritto una volta e non
       # sorvegliato è una fotografia, non un vincolo.
       #
+      # Dal 19/08 comprende anche il **watchdog della persistenza**, e per la stessa
+      # ragione al quadrato: il guasto del 13-08 e' rimasto invisibile sei giorni
+      # perche' l'intervallo di ri-notifica era di fatto infinito. Era una POLITICA,
+      # e nessun test la sorvegliava — un `<` che diventa `<=`, o una condizione
+      # invertita, riaprirebbe esattamente quel silenzio senza rompere niente di
+      # rosso. E' il posto dove la coverage mente piu' che altrove: le righe sono
+      # tutte eseguite, ma l'unica cosa che conta e' se qualcuno se ne accorgerebbe.
+      #
       # I survivor di sentry.py restano deliberatamente NON bloccanti: asserire il
       # formato esatto sul filo di un reporter fail-open congelerebbe un dettaglio
       # che appartiene a Sentry, non a noi.
-      - name: mutmut sulle funzioni bloccanti (autorizzazione + percorso del costo)
+      - name: mutmut sulle funzioni bloccanti (autorizzazione, costo, watchdog)
         working-directory: services/public-status-api
         env:
-          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap"
+          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence"
         run: |
           set -uo pipefail
           # Se una funzione cambia nome il gate deve rompersi QUI. Senza questo
           # controllo il grep sui risultati non troverebbe più niente e passerebbe
           # verde per sempre: è il modo in cui un gate muore senza fare rumore.
-          # Vale per tutte e cinque, non solo per la prima — una guardia che copre
-          # un sottoinsieme lascia il buco esattamente dove non guarda.
+          # Vale per OGNI nome in FUNZIONI_BLOCCANTI, non solo per il primo — una
+          # guardia che copre un sottoinsieme lascia il buco dove non guarda. Scritto
+          # senza il conteggio apposta: "tutte e cinque" e' invecchiato nel commit
+          # che le ha portate a sette.
           for funzione in ${FUNZIONI_BLOCCANTI}; do
             if ! grep -q "def ${funzione}" main.py; then
               echo "FAIL: main.py non definisce più '${funzione}'." >&2

@@ -489,7 +489,14 @@ def test_a_prometheus_that_cannot_persist_is_reported(monkeypatch):
     assert response.json()["cost_usd_today"] == 1.42
     evento = _evento_inviato(sentry_call)
     assert evento["exception"]["values"][0]["type"] == "PrometheusNotPersisting"
-    assert "failed 7 TSDB compactions" in evento["exception"]["values"][0]["value"]
+    # Testo per intero, non un frammento: e' la frase che qualcuno leggera' alle 3 di
+    # notte, e "check the volume" e' l'unica istruzione operativa che contiene.
+    assert evento["exception"]["values"][0]["value"] == (
+        "Prometheus failed 7 TSDB compactions in the last hour — it still answers "
+        "queries, but it is not writing blocks; check the volume"
+    )
+    # Il tag e' come si trovano questi eventi fra tutti gli altri.
+    assert evento["tags"]["endpoint"] == "status"
 
 
 @respx.mock
@@ -671,6 +678,82 @@ def test_the_alert_repeats_exactly_at_the_interval_not_a_second_later(monkeypatc
 
 
 @respx.mock
+def test_a_single_compaction_failure_is_already_worth_saying(monkeypatch):
+    # `failures <= 0` e non `< 1`: una sola compaction fallita e' gia' il guasto del
+    # 13/08 al suo primo minuto. La soglia che "aspetta di essere sicura" e' come si
+    # arriva a scoprirlo sei giorni dopo.
+    _reset_watchdog(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("1")
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    assert sentry_call.call_count == 1
+    assert "failed 1 TSDB compactions" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+
+
+@respx.mock
+def test_the_check_runs_again_exactly_at_the_interval(monkeypatch):
+    # Il confine del controllo, gemello di quello sull'allarme: a intervallo esatto il
+    # controllo DEVE ripartire. Senza, `<` e `<=` sono indistinguibili.
+    orologio = _reset_watchdog(monkeypatch)
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    sonda = _mock_persistence("0")
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    assert sonda.call_count == 2
+
+
+@respx.mock
+def test_the_blind_alert_has_its_own_memory(monkeypatch):
+    # Le due condizioni hanno chiavi separate, e la chiave del cieco si dimentica da
+    # sola quando la serie torna. Se le chiavi collidessero (o non si cancellassero),
+    # un watchdog tornato cieco resterebbe muto per un'ora dopo essere guarito una
+    # volta — cioe' il guasto del guasto, che e' il caso che questa sonda esiste per
+    # non ripetere.
+    orologio = _reset_watchdog(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+
+    cieco = {"data": {"result": []}}
+    sano = {"data": {"result": [{"value": [0, "0"]}]}}
+
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json=cieco)
+    )
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 1
+
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json=sano)
+    )
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 1
+
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json=cieco)
+    )
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 2
+
+
+@respx.mock
 def test_the_watchdog_does_not_query_prometheus_on_every_public_request(monkeypatch):
     # Costo, non correttezza. L'endpoint pubblico non è throttlato e dal 19/08/2026 il
     # progetto è su un piano a consumo: senza intervallo, ogni richiesta pubblica
@@ -716,7 +799,12 @@ def test_a_watchdog_with_no_data_says_so_instead_of_going_quiet(monkeypatch):
     assert response.status_code == 200
     evento = _evento_inviato(sentry_call)
     assert evento["exception"]["values"][0]["type"] == "PrometheusWatchdogBlind"
-    assert "not scraping itself" in evento["exception"]["values"][0]["value"]
+    assert evento["exception"]["values"][0]["value"] == (
+        "prometheus_tsdb_compactions_failed_total returned no series — Prometheus is "
+        "not scraping itself, so this watchdog is blind, not healthy; check the "
+        "`prometheus` job in prometheus.yml"
+    )
+    assert evento["tags"]["endpoint"] == "status"
 
 
 def test_only_status_is_routed_at_all():
