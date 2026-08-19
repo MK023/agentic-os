@@ -22,6 +22,14 @@ receivers:
         endpoint: 0.0.0.0:4318
         auth:
           authenticator: bearertokenauth
+        # Un default esiste gia' (confighttp: "Default: 20971520 (20MiB)"), quindi
+        # questo non chiude un buco aperto — lo restringe di tre ordini di grandezza
+        # rispetto agli export reali di Claude Code, che sono qualche KB. Scritto
+        # esplicitamente perche' il punto non e' il valore ma il non dipendere da un
+        # default: quello del body size e' gia' cambiato una volta a monte, e
+        # `memory_limiter` non aiuta qui — agisce al confine del CONSUMATORE, cioe'
+        # dopo che il corpo e' stato letto, decompresso e deserializzato.
+        max_request_body_size: 4194304
 
 processors:
   # Primo della pipeline, come prescrive la documentazione OpenTelemetry: senza,
@@ -68,6 +76,26 @@ processors:
           # form to this and logs "please rewrite them accordingly" — an implicit
           # correction is a thing that changes silently on an upgrade.
           - keep_keys(datapoint.attributes, ["model", "type", "query_source", "start_type", "terminal_type", "session.id"])
+
+  # I nomi delle ETICHETTE hanno un allow-list; i nomi delle METRICHE non ne avevano
+  # nessuno, e quella era la meta' scoperta. Chi tiene OTLP_INGEST_TOKEN poteva
+  # scrivere `claude_code.token.usage` con i valori che voleva: le tre cifre pubbliche
+  # sul sito diventano le sue. E non si annullano aspettando — le query usano
+  # `max_over_time(...[25h])` su un contatore, quindi un picco iniettato resta
+  # appiccicato per venticinque ore.
+  #
+  # Il filter processor SCARTA quando la condizione e' vera ("If any condition is met,
+  # the telemetry is dropped"), quindi un allow-list si scrive negato: si scarta tutto
+  # cio' che non e' uno dei tre nomi attesi. Non e' elegante, e' la sintassi che il
+  # processor ha.
+  #
+  # I nomi sono quelli senza suffisso, perche' `translation_strategy` li rende tali —
+  # e' lo stesso accoppiamento che il gate in images.yml sorveglia.
+  filter/metric-allowlist:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'name != "claude_code.session.count" and name != "claude_code.token.usage" and name != "claude_code.cost.usage"'
 
   batch: {}
 
@@ -148,5 +176,7 @@ service:
       # in a batch buffer or handed to an exporter.
       # memory_limiter per primo: deve poter rifiutare i dati PRIMA che vengano
       # trasformati e accodati, altrimenti frena a valle del lavoro già fatto.
-      processors: [memory_limiter, transform/label-allowlist, batch]
+      # filter subito dopo memory_limiter: cio' che non ci interessa si scarta prima
+      # di trasformarlo e prima di accodarlo, come per il freno.
+      processors: [memory_limiter, filter/metric-allowlist, transform/label-allowlist, batch]
       exporters: [prometheus]
