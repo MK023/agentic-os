@@ -387,8 +387,10 @@ check blocking every merge. What was wrong was the *global* claim, repeated in
 the only reason it is written here rather than in an incident. The residual loss is
 bounded and worth stating: on those PRs `tests` still enforces `--cov-fail-under=100`
 and lint, bandit, checkov and gitleaks all still run; what is missing is Sonar's own
-rule set. **Twelve Dependabot PRs were merged on 2026-08-19 reading `sonar skipping`
-as normal.** It is normal. The documentation said it was impossible.
+rule set. **Nine Dependabot PRs were merged on 2026-08-19 reading `sonar skipping`
+as normal.** It is normal. The documentation said it was impossible. The count was
+first written here as twelve, from memory, in the paragraph whose whole subject is a
+claim made without measuring — `git log` says nine (#76–#78, #80–#85).
 
 **And the rule had already been broken, by `gitleaks`, for exactly that reason.**
 The job carried `if: pull_request.user.login != 'dependabot[bot]'`, so the ten

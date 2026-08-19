@@ -92,8 +92,10 @@ jobs:
 
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
   # the infrastructure this repo has now that deployment is Railway's config-as-code.
-  # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,
-  # soft-fails LOW/MEDIUM).
+  # Sonar covers the Python; the policy lives in .checkov.yml, and since 2026-08-19
+  # it is simply "any failed check blocks". Il `soft-fail-on: [LOW, MEDIUM]` di prima
+  # descriveva una gradazione mai osservata — si appoggia a metadati di severita' che
+  # Checkov open-source non porta, e con 0 check falliti non e' mai stata esercitata.
   checkov:
     permissions:
       contents: read

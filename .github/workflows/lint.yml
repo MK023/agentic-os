@@ -88,6 +88,14 @@ jobs:
           # Nessun push dalla CI: lasciare il token in .git/config allarga
           # solo il raggio di un eventuale compromesso di uno step successivo.
           persist-credentials: false
+      # Stesso interprete del lock. requirements-dev.txt e' compilato per 3.14 e
+      # contiene estensioni compilate (setproctitle, libcst): finora questo job era
+      # l'unico a installarlo senza fissare la versione, quindi girava sul default
+      # del runner. Funzionava perche' --generate-hashes raccoglie gli hash di tutte
+      # le piattaforme, non perche' qualcosa lo verificasse.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - name: zizmor sui workflow (blocca su HIGH)
         run: |
           pip install --quiet --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt
