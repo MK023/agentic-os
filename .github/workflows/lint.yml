@@ -96,6 +96,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+      - name: zizmor sui workflow (blocca su HIGH)
+        run: |
+          pip install --quiet --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt
+          zizmor --min-severity=high .github/workflows/
+
+      # DOPO zizmor, non prima: questo controllo usa PyYAML, che arriva con
+      # requirements-dev.txt installato nello step qui sopra. Messo prima falliva con
+      # ModuleNotFoundError — un gate che non parte non e' un gate, ed e' la stessa
+      # famiglia del pavimento su mutmut.
+      #
       # Uno step duplicato in un job e' invisibile a tutto il resto: il YAML e'
       # valido, actionlint e zizmor non se ne occupano, ed entrambe le copie passano,
       # quindi la CI resta verde. E' successo il 19-08-2026 riscrivendo due gate: le
@@ -127,7 +137,3 @@ jobs:
           print("nessuno step duplicato")
           PY
 
-      - name: zizmor sui workflow (blocca su HIGH)
-        run: |
-          pip install --quiet --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt
-          zizmor --min-severity=high .github/workflows/
