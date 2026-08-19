@@ -242,11 +242,14 @@ async def _query_one(client: httpx.AsyncClient, query: str) -> dict:
 PERSISTENCE_QUERY = "sum(increase(prometheus_tsdb_compactions_failed_total[1h]))"
 
 # Il watchdog sta sul percorso caldo dell'unico endpoint pubblico, e quell'endpoint
-# non è throttlato (SECURITY.md lo dichiara). Dal 19/08/2026 il progetto è su un piano
-# a consumo: senza questo intervallo ogni richiesta pubblica comprava QUATTRO query a
-# Prometheus invece di tre — un moltiplicatore di spesa regalato a chiunque conosca
-# l'URL. Un controllo al minuto resta molto più fitto della condizione osservata, che
-# si misura in giorni.
+# non è throttlato. Dal 19/08/2026 il progetto è su un piano a consumo, quindi quella
+# quarta query era spesa, non solo carico: questo intervallo la toglie.
+#
+# Toglie QUELLA, e va detto con precisione: le tre query pubbliche restano una per
+# richiesta e non le limita niente. Il guadagno è 4→3, cioè il 25%, non la chiusura
+# del vettore — il vettore lo chiude il rate limiter nel Worker del sito, che non è
+# ancora spedito. Sopravvalutare una mitigazione è lo stesso errore del "ci pensa il
+# CDN" che questo repo ha già dovuto correggere una volta.
 PERSISTENCE_CHECK_INTERVAL_S = 60.0
 _persistence_checked_at: float | None = None
 
@@ -261,6 +264,11 @@ _persistence_checked_at: float | None = None
 # a non farla sembrare risolta senza trasformare l'issue in un firehose. È anche il
 # passo minimo perché una regola Sentry sulla FREQUENZA (non sulla creazione
 # dell'issue) abbia qualcosa da contare — senza ripetizione non scatterebbe mai.
+# Entrambi gli intervalli sono per-PROCESSO. Oggi combaciano con "per servizio"
+# perché il Dockerfile lancia uvicorn senza --workers e Railway gira a una replica: se
+# una delle due cose cambia, gli allarmi diventano N all'ora e i controlli N al
+# minuto. Accettabile, ma è un accoppiamento fra un'impostazione di deploy e una
+# politica di allerta, e non si vede da nessuna delle due parti.
 INFRA_ALERT_INTERVAL_S = 3600.0
 
 # monotonic, non time(): qui si misura una durata. Un orologio di sistema spostato
@@ -281,6 +289,11 @@ async def _report_infra_throttled(key: str, exc: Exception) -> None:
     now = time.monotonic()
     if last_sent is not None and now - last_sent < INFRA_ALERT_INTERVAL_S:
         return
+    # Segnato PRIMA dell'invio, deliberatamente: `capture_exception` inghiotte ogni
+    # errore di consegna, quindi un Sentry irraggiungibile costerebbe comunque l'ora
+    # di silenzio — ma segnare dopo trasformerebbe un suo 5xx in una raffica di
+    # tentativi su ogni richiesta pubblica. Si preferisce perdere un evento che
+    # amplificare un guasto altrui; è la stessa scelta fail-open di sentry.py.
     _INFRA_ALERTS_SENT[key] = now
     await capture_exception(exc, tags={"endpoint": "status"})
 
@@ -296,15 +309,19 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     is a cron nobody has to run and no scheduler has to own. It runs at most once per
     PERSISTENCE_CHECK_INTERVAL_S: the polling rate sets the floor, not the bill.
     """
-    # Prima del try: se il controllo è saltato non c'è niente da inghiottire, e la
-    # query costosa non parte proprio.
+    # Dentro il try, non prima: la promessa scritta qui sopra è che NIENTE in questa
+    # funzione possa far cadere /status, e vale per la funzione, non per il suo corpo.
+    # `time.monotonic()` non solleva in produzione, ma l'invariante non era "non
+    # solleva di fatto", era "non può". La query costosa resta comunque dietro il
+    # cancello: il `return` avviene prima di toccare la rete.
     global _persistence_checked_at
-    now = time.monotonic()
-    if _persistence_checked_at is not None and now - _persistence_checked_at < PERSISTENCE_CHECK_INTERVAL_S:
-        return
-    _persistence_checked_at = now
-
     try:
+        now = time.monotonic()
+        ultimo = _persistence_checked_at
+        if ultimo is not None and now - ultimo < PERSISTENCE_CHECK_INTERVAL_S:
+            return
+        _persistence_checked_at = now
+
         series = (await _query_one(client, PERSISTENCE_QUERY))["data"]["result"]
     except Exception:  # noqa: BLE001 — see the docstring; silence is the contract
         return
@@ -326,8 +343,14 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
         )
         return
 
+    # La serie c'è: qualunque cosa dica, il watchdog non è cieco. Dimenticare qui, e
+    # non solo sul ramo sano più sotto, è ciò che rende accurata la "prima comparsa"
+    # del prossimo incidente invece di lasciarla scivolare fino a un'ora dopo.
+    _INFRA_ALERTS_SENT.pop("tsdb-watchdog-blind", None)
+
     failures = float(series[0]["value"][1])
     if failures <= 0:
+        _INFRA_ALERTS_SENT.pop("tsdb-compaction", None)
         return
     await _report_infra_throttled(
         "tsdb-compaction",

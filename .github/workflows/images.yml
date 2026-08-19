@@ -259,29 +259,56 @@ jobs:
           print(f"tariffe allineate: {trovate}")
           PY
 
-      # Stessa famiglia del gate qui sopra, altra coppia di meta'. I due limiti di
-      # retention di Prometheus vivono in due file — railway/prometheus/Dockerfile per
-      # la produzione, docker/docker-compose.yml per il locale — e il compose dice a
-      # parole "stessi due limiti della produzione". Era vero quando e' stato scritto,
-      # e restare vero non dipendeva da niente. Il 19/08/2026 il volume e' passato da
-      # 500 MB a 5 GB e i numeri sono cambiati in entrambi: se fosse cambiato uno
-      # solo, il locale avrebbe smesso di somigliare alla produzione in silenzio, che
-      # e' l'unica cosa per cui quel file esiste.
-      - name: i limiti di retention sono gli stessi in produzione e in locale
+      # Stessa famiglia del gate qui sopra, ma le meta' sono TRE, e questo gate e'
+      # nato sbagliando proprio quello: scritto per confrontare Dockerfile e compose,
+      # ignorava il pannello Grafana — che nello stesso commit era rimasto a 300MB ed
+      # e' l'unica cosa che GUARDA questo guasto. Un cap di retention vive in
+      # railway/prometheus/Dockerfile (produzione), docker/docker-compose.yml (locale)
+      # e nelle soglie del pannello "Blocchi TSDB su disco". Il compose prometteva a
+      # parole di essere allineato alla produzione: vero quando scritto, e non
+      # dipendeva da niente per restare vero. Un commento non e' un gate.
+      #
+      # Il pannello sarebbe andato in rosso PERMANENTE dal sesto giorno su un hub
+      # sano — cioe' il modo piu' efficace di insegnare a ignorarlo.
+      - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
           python3 - <<'PY'
-          import re, sys
-          def limiti(percorso):
-              testo = open(percorso).read()
-              return {
-                  chiave: re.search(rf"--storage\.tsdb\.retention\.{chiave}=([^\"'\s\\]+)", testo).group(1)
-                  for chiave in ("time", "size")
-              }
-          prod = limiti("railway/prometheus/Dockerfile")
-          locale = limiti("docker/docker-compose.yml")
+          import json, re, sys
+
+          def flag(percorso, chiave):
+              # Solo righe non commentate: un `# - --storage...=3GB` lasciato sopra a
+              # un flag cambiato verrebbe letto come se fosse quello attivo, e il gate
+              # passerebbe su una divergenza vera.
+              for riga in open(percorso):
+                  if riga.lstrip().startswith("#"):
+                      continue
+                  trovato = re.search(rf"--storage\.tsdb\.retention\.{chiave}=([^\"'\s\\]+)", riga)
+                  if trovato:
+                      return trovato.group(1)
+              sys.exit(f"::error::{percorso} non dichiara --storage.tsdb.retention.{chiave}")
+
+          prod = {c: flag("railway/prometheus/Dockerfile", c) for c in ("time", "size")}
+          locale = {c: flag("docker/docker-compose.yml", c) for c in ("time", "size")}
           if prod != locale:
-              print(f"::error::retention divergente. Produzione: {prod} — locale: {locale}. "
-                    "I due file sono le due meta' della stessa decisione: si cambiano insieme.")
-              sys.exit(1)
-          print(f"retention allineata: {prod}")
+              sys.exit(f"::error::retention divergente. Produzione: {prod} — locale: {locale}. "
+                       "I due file sono due meta' della stessa decisione: si cambiano insieme.")
+
+          # `3GB` per Prometheus e' powers-of-2 ("Based on powers-of-2, so 1KB is 1024B").
+          unita = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+          numero, simbolo = re.fullmatch(r"([0-9.]+)([KMGT]B)", prod["size"]).groups()
+          cap = float(numero) * unita[simbolo]
+
+          dash = json.load(open("docker/grafana/dashboards/claude-code.json"))
+          pannello = next(p for p in dash["panels"] if p["title"].startswith("Blocchi TSDB"))
+          passi = pannello["fieldConfig"]["defaults"]["thresholds"]["steps"]
+          atteso = {"giallo": round(cap * 0.80), "rosso": round(cap * 0.95)}
+          trovato = {"giallo": passi[1]["value"], "rosso": passi[2]["value"]}
+          if atteso != trovato:
+              sys.exit(f"::error::le soglie del pannello non sono ancorate al cap {prod['size']}. "
+                       f"Attese {atteso}, trovate {trovato}: il pannello che sorveglia il disco "
+                       "andrebbe in rosso su un hub sano, ed e' cosi' che si insegna a ignorarlo.")
+          if prod["size"] not in pannello["title"]:
+              sys.exit(f"::error::il titolo del pannello non dice {prod['size']}: {pannello['title']!r}")
+
+          print(f"retention allineata nei tre posti: {prod}")
           PY

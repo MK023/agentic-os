@@ -23,12 +23,17 @@ here would also mean a machine to run it on, which is the thing we just removed.
 **Railway Hobby, from 2026-08-19, because the free plan had no room left to give.**
 Prometheus had been failing compaction once a minute since 2026-08-13 — `no space
 left on device` — and the fix could not be a smaller retention: the volume was
-already at **0.5 GB, which is exactly the free/trial maximum**, and Railway offers
-volume resizing on paid plans only. There was no configuration change available, at
+already at **0.5 GB, which is exactly the free/trial maximum**, and Railway's plans page reserves
+self-serve volume resizing for *"Pro users and above"*. Measured, not read: the
+resize from 500 MB to 5 GB was performed on Hobby on 2026-08-19 and worked. Where the
+doc and the platform disagree, this line records what the platform did — but do not
+plan on it holding. There was no configuration change available, at
 any size, that would have helped. Hobby is $5/month including $5 of usage credits;
 measured consumption across the five services is ~0.96 GB RAM and ~0.015 vCPU, which
-at $10/GB and $20/vCPU is **~$10/month**. Pro ($20, 50 GB) buys nothing this project
-needs: the volume is 0.24 GB.
+at $10/GB and $20/vCPU is **~$10/month**. Pro ($20) buys nothing this project needs: its
+volume ceiling is far higher, but the volume in use is 0.24 GB. (Railway's own pages
+disagree on that ceiling — 50 GB on the volumes reference, 1 TB on the plans page —
+so no figure is quoted here; it changes nothing about the choice.)
 
 The upgrade bought two ceilings, not one. The volume went 500 MB → 5 GB (and was
 wiped by hand, so the history before that date is gone — today's public numbers
@@ -47,9 +52,14 @@ wrong rather than merely pending.
 At the measured ~50 MB/day, 30 days is ~1.5 GB, so on a 5 GB volume **time** binds
 first and size is the safety net — the exact inverse of the 7d/300MB pair it
 replaces, which was tuned to 500 MB and would have truncated history to 6% of a disk
-already paid for. The 40% margin stays for the same reason as before: compaction
-writes the new block *before* deleting the old ones, and the WAL shares the volume
-without being counted inside `retention.size`. The original 7-day window was a cost
+already paid for. The margin stays, but one half of the reason it used to give was
+backwards and is corrected here: compaction does write the new block *before*
+deleting the old ones and `retention_size` is enforced after the fact rather than
+reserved — but the WAL is **not** outside the accounting. Prometheus: *"Only the
+persistent blocks are deleted to honor this retention although WAL and m-mapped
+chunks are counted in the total size."* They are excluded from deletion, not from
+the count. (The margin is also ~36%, not 40%: `3GB` is powers-of-2, so 3.22 GB
+decimal against a 5 GB volume.) The original 7-day window was a cost
 decision, not a technical one, and the cost changed: storage bills on **used**, not
 provisioned, at $0.15/GB/month, so ~1.5 GB is ~$0.23/month.
 
@@ -63,8 +73,8 @@ days in #75. A comment is not a gate.
 **Per-service resource caps do not exist on Railway, so the usage limit is the only
 one.** The CLI exposes replicas and regions, nothing for CPU or memory, and the
 scaling documentation says a service scales *"up to the specified vCPU and Memory
-limits of your plan"* — meaning any one of the five services can reach 8 GB / 8 vCPU
-alone. This changes what a spending limit is for: not one layer among several, but
+limits of your plan"* — meaning any one of the five services can reach 8 GB / 8 vCPU on a single
+replica, and six times that if anyone ever raises the replica count. This changes what a spending limit is for: not one layer among several, but
 the single backstop. It also changes the severity of the endpoint being unthrottled,
 which until now was an availability question and is now a billing one.
 
@@ -155,6 +165,12 @@ was down; something was doomed. It surfaced only by reading the service's own lo
 and a volume check on 2026-07-30 had already looked at this and passed it, because it
 measured *growth* (50 MB) and never divided it into *capacity*. Accumulating was the
 signal we wanted, not the question that mattered.
+
+> **Superseded on 2026-08-19** — the volume is 5 GB and the pair is now 30d / 3GB;
+> see "Retention is 30d / 3GB" under Platform. The arithmetic below is kept because
+> it is the reasoning that produced the 40% margin, but every number in it, and the
+> free-credits premise it closes on, describes the 500 MB volume that is gone. The
+> WAL clause is also wrong — see the correction above.
 
 Now `retention.time=7d` **and** `retention.size=300MB`, whichever binds first. The
 arithmetic, so the next person can redo it rather than trust it: measured growth is
@@ -252,9 +268,19 @@ for every configured target, so a dead target reads `0` rather than vanishing;
 `rate()` over a vanished series has nothing to evaluate and stays silent forever.
 Alongside it, `prometheus_tsdb_compactions_failed_total` (a counter, so
 `increase(...[1h])`) and `prometheus_tsdb_storage_blocks_bytes` (a gauge, with
-thresholds anchored to `--storage.tsdb.retention.size=300MB`) make the 13/08
-failure visible in the one place someone actually looks. Both names verified
-against the v3.13.2 source rather than recalled.
+thresholds anchored to `--storage.tsdb.retention.size`, 80% yellow and 95% red)
+make the 13/08 failure visible in the one place someone actually looks. Both names
+verified against the v3.13.2 source rather than recalled.
+
+**Anchored, and since 2026-08-19 anchored by a gate rather than by intention.** The
+cap moved to `3GB` and those thresholds stayed at 240/285 MiB in the same commit —
+which would have painted the panel permanently red from about day six on a perfectly
+healthy hub, and a panel that is always red is a panel nobody reads. The cap lives in
+three places (the production Dockerfile, the compose file, this panel), so the CI step
+that compares the first two now also recomputes the panel's thresholds from the cap
+and checks the title carries the same number. Note what the gauge does *not* say: it
+counts blocks only, while `retention.size` also counts the WAL and m-mapped chunks,
+so the panel reads lower than the number the cap is enforced against.
 
 The panels sit at the **top** of the dashboard, which is why every pre-existing
 panel moved down four grid rows. Health below the fold is health nobody reads,
@@ -520,9 +546,11 @@ called. Neither half works alone.
 
 The watchdog also stopped running on every request. It shares the read path of the
 one public endpoint, and that endpoint is unthrottled: before 2026-08-19 the cost of
-that was CPU on free credits, after it is money. Four Prometheus queries per public
-request instead of three is a multiplier handed to anyone who knows the URL. It now
-runs at most once per minute — still far denser than a condition measured in days.
+that was CPU on free credits, after it is money. Four Prometheus queries per public request instead of
+three is 33% of the load bought by an unauthenticated caller — and removing it is a
+25% cut, not the closing of the vector: the other three queries still run once per
+request, unthrottled, which is what the Worker's limiter is for. It now runs at most
+once per minute — still far denser than a condition measured in days.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.

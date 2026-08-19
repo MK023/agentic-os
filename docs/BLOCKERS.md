@@ -156,6 +156,10 @@ had already been decided and shipped.
   `/{lang}/agentic-os`. Its degraded path improved again on 2026-08-13 (site
   PR #202): an outage now shows the last good numbers, labelled with their age,
   instead of three dashes.
-- **The Prometheus volume check** — closed by capping retention by size as well as
-  time (PR #51), after the volume filled and compaction failed for hours. The
-  arithmetic behind `300MB` is in `DECISIONS.md`.
+- **The Prometheus volume check** — capping retention by size as well as time
+  (PR #51) was necessary and not sufficient: the cap was `300MB` on a 500 MB volume
+  and the volume filled anyway, with compaction failing once a minute from
+  2026-08-13 to 2026-08-19 — six days, not hours, and invisible for all but the
+  first because the alert fired once per process. Closed on 2026-08-19 by the plan
+  change (volume 500 MB → 5 GB) and re-tuned to `30d` / `3GB`. The arithmetic, and
+  what measuring corrected about it, is in `DECISIONS.md`.

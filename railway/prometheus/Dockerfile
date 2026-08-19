@@ -28,12 +28,21 @@ COPY docker/prometheus.yml /etc/prometheus/prometheus.yml
 # 300 MB di prima erano tarati su 500: lasciati lì avrebbero troncato la storia al
 # 6% di un disco già pagato — sbagliati nella direzione opposta, ma sbagliati.
 #
-# 3 GB su 5 disponibili. Il margine del 40% non è prudenza generica: la compaction
-# scrive il blocco nuovo PRIMA di cancellare i vecchi, e il WAL sta sullo stesso
-# volume ma NON è contato dentro retention.size. Alla crescita misurata (~50
-# MB/giorno) 30 giorni sono ~1.5 GB, quindi qui a scattare per primo è il TEMPO e
-# la dimensione resta la rete di sicurezza — l'opposto del rapporto precedente, ed
-# è il motivo per cui la finestra ora si può dichiarare in giorni senza mentire.
+# 3 GB su 5 disponibili — e `3GB` qui è 3 GiB, perché Prometheus usa potenze di 2
+# ("Based on powers-of-2, so 1KB is 1024B"): 3.22 GB decimali, quindi il margine
+# reale su un volume da 5 GB decimali è ~36%, non il 40% tondo.
+#
+# Il margine non è prudenza generica: la compaction scrive il blocco nuovo PRIMA di
+# cancellare i vecchi, e retention.size si applica DOPO, non riserva spazio. Quello
+# che invece va corretto rispetto a quanto questo file diceva prima: il WAL **è**
+# contato dentro retention.size — "WAL and m-mapped chunks are counted in the total
+# size" — insieme agli m-mapped chunks. Erano esclusi solo dalla cancellazione, non
+# dal conteggio: si eliminano soltanto i blocchi persistenti per rispettare il tetto.
+#
+# Alla crescita misurata (~50 MB/giorno) 30 giorni sono ~1.5 GB, quindi qui a
+# scattare per primo è il TEMPO e la dimensione resta la rete di sicurezza —
+# l'opposto del rapporto precedente, ed è il motivo per cui la finestra ora si può
+# dichiarare in giorni senza mentire.
 #
 # La retention a 30 giorni è tornata sostenibile perché lo storage si paga sul
 # consumato ($0.15/GB/mese): ~1.5 GB sono ~$0.23 al mese. Era una decisione di

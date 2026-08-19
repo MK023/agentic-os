@@ -1,4 +1,5 @@
 import json
+import time
 
 import httpx
 import main
@@ -435,6 +436,13 @@ class _OrologioFinto:
     def __init__(self) -> None:
         self.adesso = 1_000.0
 
+    def __getattr__(self, nome: str):
+        # Delega tutto il resto al modulo vero. Senza, il giorno che main.py usasse
+        # anche `time.time()` questo finto solleverebbe AttributeError da una riga del
+        # percorso pubblico, e il test si presenterebbe come "/status risponde 500"
+        # invece che come "l'orologio finto è incompleto".
+        return getattr(time, nome)
+
     def monotonic(self) -> float:
         return self.adesso
 
@@ -581,6 +589,84 @@ def test_a_failure_that_lasts_keeps_calling(monkeypatch):
     # PERSISTENCE_CHECK_INTERVAL_S dallo scadere dell'ora, non nell'istante esatto.
     orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
     assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 2
+
+
+def test_the_alert_intervals_are_the_ones_we_decided():
+    # I due intervalli sono POLITICA, non meccanismo, e l'incidente del 13/08 e' stato
+    # un guasto di politica: il meccanismo funzionava, l'intervallo era di fatto
+    # infinito. Ogni altro test qui usa `main.INFRA_ALERT_INTERVAL_S` come riferimento,
+    # quindi resterebbe verde anche portandolo a un giorno. Questa e' l'unica riga che
+    # si accorge di un cambio di valore.
+    assert main.INFRA_ALERT_INTERVAL_S == 3600.0
+    assert main.PERSISTENCE_CHECK_INTERVAL_S == 60.0
+
+
+def test_the_fake_clock_is_a_clock_and_not_just_one_attribute():
+    # `_reset_watchdog` sostituisce l'INTERO modulo time dentro main. Se il finto
+    # esponesse solo monotonic(), il giorno che main.py usasse time.time() il test
+    # fallirebbe con AttributeError su una riga del percorso pubblico — cioe' come
+    # "/status risponde 500" invece che come "l'orologio finto e' incompleto".
+    orologio = _OrologioFinto()
+    assert orologio.monotonic() == orologio.adesso
+    assert orologio.strftime is time.strftime
+
+
+@respx.mock
+def test_a_recovered_fault_alerts_again_immediately(monkeypatch):
+    # Senza questo, il timestamp sopravvive alla guarigione: un incidente NUOVO che
+    # comincia venti minuti dopo l'allarme precedente resta muto per quaranta, e la
+    # sua "prima comparsa" su Sentry e' un'ora piu' tardi di quando e' iniziato. Il
+    # ricordo va cancellato quando la condizione rientra, altrimenti l'intervallo
+    # protegge dal rumore ma falsifica la cronologia.
+    orologio = _reset_watchdog(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, "7"]}]}})
+    )
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 1
+
+    # Il guasto rientra: qualcuno ha allargato il volume.
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, "0"]}]}})
+    )
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 1
+
+    # E torna, ben dentro l'ora. Deve richiamare subito: e' un incidente nuovo.
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, "3"]}]}})
+    )
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 2
+
+
+@respx.mock
+def test_the_alert_repeats_exactly_at_the_interval_not_a_second_later(monkeypatch):
+    # Il confine, esplicito: con `<` al posto di `<=` (o viceversa) questo cambia, e
+    # senza un test sul valore esatto quel mutante sopravvive senza che nulla lo veda.
+    orologio = _reset_watchdog(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("7")
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    orologio.avanza(main.INFRA_ALERT_INTERVAL_S)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
     assert sentry_call.call_count == 2
 
 

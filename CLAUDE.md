@@ -119,7 +119,8 @@ those files are correct in both places. Never fork a config to "fix it for local
   route is served; until it ships the honest statement is that the endpoint is unthrottled.
   **Since 2026-08-19 that gap costs money, not just CPU**: the project is on Railway's
   Hobby plan, billed on usage, and Railway has no per-service resource cap — one service
-  can reach 8 GB / 8 vCPU on its own. The workspace usage limit is therefore the only
+  can reach 8 GB / 8 vCPU on a single replica (six times that if
+  replicas are ever raised). The workspace usage limit is therefore the only
   backstop there is, and the Worker's rate limiter stopped being a tidiness item.
   An asserted control that does not exist is worse than a declared absence.
 
