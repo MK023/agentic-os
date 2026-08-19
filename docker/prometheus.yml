@@ -36,6 +36,17 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector.railway.internal:8888"]
 
+  # Il connettore, per la stessa ragione degli altri due applicata all'unico ingresso.
+  # Se cloudflared muore, tutto il sistema e' irraggiungibile dall'esterno mentre
+  # dentro continua a funzionare benissimo: nessuna serie di Claude Code cambia,
+  # perche' e' il canale di INGRESSO a essere rotto, non la telemetria. Finora
+  # l'unica cosa che poteva accorgersene era una sonda in un altro repository.
+  # `cloudflared_tunnel_ha_connections` e `cloudflared_tunnel_request_errors` sono i
+  # due nomi che contano; `up` copre il caso in cui il processo non risponda affatto.
+  - job_name: cloudflared
+    static_configs:
+      - targets: ["cloudflared.railway.internal:2000"]
+
   # Prometheus che parla di sé, per lo stesso motivo del job qui sopra applicato al
   # servizio che finora era l'unico a non essere osservato da nessuno.
   # Il 13/08/2026 il suo volume si è riempito e la compaction ha fallito una volta al

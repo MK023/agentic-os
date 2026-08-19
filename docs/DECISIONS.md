@@ -657,6 +657,16 @@ A standing decision for Phase 4 (session RAG), not a gap today.
 (direct embedding + pgvector + a direct Anthropic call), and fewer dependencies is
 the whole posture.
 
+**`TUNNEL_TOKEN` is not one row among six, and the table read as though it were.**
+Whoever holds it can start their own connector registered against the same tunnel,
+and Cloudflare distributes requests across registered connectors — so a share of live
+traffic arrives at someone else *after* the edge has already satisfied Access. That
+traffic carries, in plaintext at that point, the Worker's `CF-Access-Client-Secret`,
+the status API's bearer, and `OTLP_INGEST_TOKEN` on the `otel.` path. **One token
+yields three of the other five.** It is also the cheapest rotation in the table —
+one variable, one service, no client anywhere to update — which is the exact inverse
+of `OTLP_INGEST_TOKEN`, whose three-place rotation the table does warn about.
+
 ## Where each secret lives, and what rotating one costs
 
 Doppler is the source of truth. Railway service variables are the runtime copy. The

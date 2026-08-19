@@ -15,4 +15,25 @@ USER 65532:65532
 
 # --no-autoupdate: the image tag is pinned on purpose; a connector that updates
 # itself in place would quietly undo that.
-CMD ["tunnel", "--no-autoupdate", "run"]
+#
+# --metrics: il connettore e' l'UNICO ingresso del sistema, ed era l'unico servizio a
+# non dire niente di se'. Ogni altro qui ha uno scrape dedicato, aggiunto dopo essere
+# stato bruciato: il Collector su 8888, Prometheus su localhost:9090. Se il tunnel
+# muore, l'unica cosa che se ne accorge e' una sonda esterna che vive in un ALTRO
+# repository, e per sua stessa ammissione vede solo i guasti che durano.
+#
+# Su questa porta c'e' anche /ready, che la doc Cloudflare descrive cosi': "returns
+# 200 if and only if it has an active connection to Cloudflare's network". E' la
+# differenza fra "il processo e' partito" e "il tunnel e' connesso" — cioe' fra cio'
+# che Railway sa oggi e cio' che conta.
+#
+# `healthcheckPath: /ready` NON e' dichiarato in railway.json, e l'omissione e'
+# deliberata: Railway sonda la porta di destinazione del servizio, e questo servizio
+# non ne espone una — e' un connettore in USCITA. Se la sonda finisse sulla porta
+# sbagliata, ogni deploy resterebbe bloccato in attesa di un 200 che non arriva, cioe'
+# un guasto peggiore di quello che il controllo dovrebbe prevenire. Non e'
+# verificabile in locale (senza un token valido cloudflared esce prima di aprire la
+# porta, misurato), quindi va provato una volta sul servizio vero prima di scriverlo
+# qui. Lo scrape su :2000 sotto, invece, non ha questo rischio: se la porta non
+# risponde, `up` va a 0 e lo si vede, senza bloccare niente.
+CMD ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run"]
