@@ -173,6 +173,27 @@ jobs:
           exit-code: "0"
           format: table
 
+      # Il Collector ha il suo `validate` qui sotto dal primo giorno; Prometheus non
+      # aveva niente. E il test promtool era il caso peggiore: il file porta in cima
+      # l'istruzione per eseguirlo — "promtool test rules scripts/..." — e nessuno lo
+      # eseguiva. La CI ne confrontava le TARIFFE (gate della #75) senza mai lanciarlo,
+      # quindi una query rotta dentro quel file sarebbe rimasta rotta in silenzio. Un
+      # test che spiega come eseguirsi e non viene eseguito e' documentazione, non un
+      # test: e' la stessa forma di "un commento non e' un gate", applicata a un file
+      # che sembrava gia' un controllo.
+      #
+      # Col binario della nostra immagine, non con uno scaricato: e' lo stesso
+      # principio del validate del Collector.
+      - name: la config di Prometheus e il test promtool girano davvero
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            agentic-prometheus:ci check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/scripts:/scripts:ro" \
+            agentic-prometheus:ci test rules /scripts/cost-per-session.promql-test.yml
+
       - name: validate della config del Collector (col binario che la eseguirà)
         env:
           OTLP_INGEST_TOKEN: dummy
@@ -505,6 +526,47 @@ jobs:
 
           print(f"immagini pinnate e allineate: {sorted(da_compose)}")
           PY
+      # Prometheus non ha autenticazione CONFIGURATA (ne supporta — vedi SECURITY.md —
+      # semplicemente non la accendiamo) ed e' raggiungibile da tutta la rete privata
+      # del progetto. In quelle condizioni una sola parola nel CMD cambia il confine:
+      # --web.enable-admin-api sblocca /api/v1/admin/tsdb/delete_series, cioe'
+      # cancellazione di serie e snapshot da parte di chiunque, senza credenziali;
+      # --web.enable-lifecycle sblocca /-/quit, cioe' lo spegnimento remoto del
+      # componente che non ha ridondanza; i due receiver scrivono DIRETTAMENTE nel
+      # TSDB scavalcando il Collector, e con lui l'allow-list che tiene fuori
+      # user.email. Verificato sul binario v3.13.2: tutti e quattro sono `false` di
+      # default, quindi oggi la postura e' giusta per OMISSIONE. Questo la rende una
+      # decisione.
+      #
+      # La tentazione e' concreta e ha gia' un movente: il modo documentato per
+      # recuperare spazio nel TSDB e' proprio l'admin API, e il volume si e' riempito
+      # due volte. Il momento in cui qualcuno la accendera' e' un'emergenza, che e'
+      # esattamente quando nessuno rilegge il confine di sicurezza.
+      - name: prometheus non accende endpoint che non sa autenticare
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          dockerfile = pathlib.Path("railway/prometheus/Dockerfile")
+          testo = dockerfile.read_text()
+          cmd = re.search(r"^CMD \[(.*?)\]", testo, re.S | re.MULTILINE)
+          if not cmd:
+              sys.exit(f"::error::{dockerfile} non ha un CMD leggibile: gate cieco")
+
+          vietati = [f for f in re.findall(r"--[a-z.\-]+", cmd.group(1)) if f.startswith("--web.")]
+          if vietati:
+              print("::error::Prometheus non ha autenticazione configurata ed e' raggiungibile "
+                    "da tutta la rete privata: un endpoint --web.* lo espone a chiunque ci stia "
+                    "dentro, senza credenziali.")
+              for flag in vietati:
+                  print(f"::error::{dockerfile}: {flag}")
+              print("::error::Se serve davvero, va deciso in DECISIONS.md e questo gate va "
+                    "cambiato nello stesso commit — non aggirato durante un incidente.")
+              sys.exit(1)
+          print("nessun endpoint --web.* acceso su prometheus")
+          PY
+
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
           python3 - <<'PY'

@@ -3,6 +3,21 @@ global:
 
 scrape_configs:
   - job_name: otel-collector
+    # Il tetto sulla cardinalita', e sta QUI perche' e' qui che si paga. Le etichette
+    # hanno un allow-list sui NOMI, ma i VALORI sono quelli che manda il client:
+    # `session.id` e' un UUID per esecuzione — deliberatamente, altrimenti due sessioni
+    # in parallelo collassano in una serie sola — quindi chi tiene OTLP_INGEST_TOKEN
+    # puo' creare serie senza limite. `memory_limiter` protegge la RAM del COLLECTOR;
+    # niente proteggeva il disco di Prometheus, che si e' gia' riempito due volte.
+    #
+    # Il compromesso va detto: superata la soglia fallisce l'INTERO scrape, quindi si
+    # perdono metriche invece che riempire il volume. E' la scelta rumorosa — `up` va
+    # a 0 e il pannello che lo guarda esiste gia' — contro quella silenziosa, che qui
+    # sarebbe la storia troncata di cui nessuno si accorge.
+    #
+    # 5000 e' molto sopra il consumo reale (poche decine di serie attive, con
+    # metric_expiration a 5 minuti) e molto sotto il punto in cui il TSDB soffre.
+    sample_limit: 5000
     static_configs:
       # Nome DNS interno di Railway. In locale il compose dà ai container lo stesso
       # alias di rete, così questo file è identico nei due ambienti invece di essere
