@@ -8,6 +8,7 @@ no free-form query parameter, no pass-through to PromQL, no session content.
 import asyncio
 import os
 import secrets
+import time
 from typing import Annotated
 
 import httpx
@@ -240,7 +241,31 @@ async def _query_one(client: httpx.AsyncClient, query: str) -> dict:
 # zero there. Same function, opposite verdict — the data shape decides, not the habit.
 PERSISTENCE_QUERY = "sum(increase(prometheus_tsdb_compactions_failed_total[1h]))"
 
-_INFRA_ALERTS_REPORTED: set[str] = set()
+# Il watchdog sta sul percorso caldo dell'unico endpoint pubblico, e quell'endpoint
+# non è throttlato (SECURITY.md lo dichiara). Dal 19/08/2026 il progetto è su un piano
+# a consumo: senza questo intervallo ogni richiesta pubblica comprava QUATTRO query a
+# Prometheus invece di tre — un moltiplicatore di spesa regalato a chiunque conosca
+# l'URL. Un controllo al minuto resta molto più fitto della condizione osservata, che
+# si misura in giorni.
+PERSISTENCE_CHECK_INTERVAL_S = 60.0
+_persistence_checked_at: float | None = None
+
+# Una notifica per vita del processo era troppo poco, e si è visto in produzione: il
+# 13/08/2026 la compaction ha iniziato a fallire una volta al minuto, Sentry ha
+# ricevuto UN evento, e per i sei giorni successivi — con il guasto sempre in corso —
+# non ne ha ricevuti altri. Sull'issue si leggeva "ultimo evento cinque giorni fa",
+# che è l'aspetto di un guasto RIENTRATO: l'allarme non taceva, mentiva. Si è riarmato
+# il 19/08 solo perché un deploy non correlato ha riavviato il processo, per caso.
+#
+# Un'ora, non un minuto: la condizione si misura in giorni, e un evento all'ora basta
+# a non farla sembrare risolta senza trasformare l'issue in un firehose. È anche il
+# passo minimo perché una regola Sentry sulla FREQUENZA (non sulla creazione
+# dell'issue) abbia qualcosa da contare — senza ripetizione non scatterebbe mai.
+INFRA_ALERT_INTERVAL_S = 3600.0
+
+# monotonic, non time(): qui si misura una durata. Un orologio di sistema spostato
+# all'indietro congelerebbe l'allarme finché il ritardo non è colmato.
+_INFRA_ALERTS_SENT: dict[str, float] = {}
 
 
 class PrometheusNotPersisting(Exception):
@@ -251,10 +276,12 @@ class PrometheusWatchdogBlind(Exception):
     """The watchdog's own input is missing. Reported, never raised."""
 
 
-async def _report_infra_once(key: str, exc: Exception) -> None:
-    if key in _INFRA_ALERTS_REPORTED:
+async def _report_infra_throttled(key: str, exc: Exception) -> None:
+    last_sent = _INFRA_ALERTS_SENT.get(key)
+    now = time.monotonic()
+    if last_sent is not None and now - last_sent < INFRA_ALERT_INTERVAL_S:
         return
-    _INFRA_ALERTS_REPORTED.add(key)
+    _INFRA_ALERTS_SENT[key] = now
     await capture_exception(exc, tags={"endpoint": "status"})
 
 
@@ -266,8 +293,17 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     protect is worse than no watchdog: a broken probe must degrade to silence, never
     to an outage. It also means the probe can never be the reason /status fails, which
     is what lets it live on the hot path at all — the widget polls every 20s, so this
-    is a cron nobody has to run and no scheduler has to own.
+    is a cron nobody has to run and no scheduler has to own. It runs at most once per
+    PERSISTENCE_CHECK_INTERVAL_S: the polling rate sets the floor, not the bill.
     """
+    # Prima del try: se il controllo è saltato non c'è niente da inghiottire, e la
+    # query costosa non parte proprio.
+    global _persistence_checked_at
+    now = time.monotonic()
+    if _persistence_checked_at is not None and now - _persistence_checked_at < PERSISTENCE_CHECK_INTERVAL_S:
+        return
+    _persistence_checked_at = now
+
     try:
         series = (await _query_one(client, PERSISTENCE_QUERY))["data"]["result"]
     except Exception:  # noqa: BLE001 — see the docstring; silence is the contract
@@ -280,7 +316,7 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     # docker/prometheus.yml already spells out the general rule — no series means no
     # rule can fire — and this is that rule applied to the watchdog's own input.
     if not series:
-        await _report_infra_once(
+        await _report_infra_throttled(
             "tsdb-watchdog-blind",
             PrometheusWatchdogBlind(
                 "prometheus_tsdb_compactions_failed_total returned no series — "
@@ -293,7 +329,7 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     failures = float(series[0]["value"][1])
     if failures <= 0:
         return
-    await _report_infra_once(
+    await _report_infra_throttled(
         "tsdb-compaction",
         PrometheusNotPersisting(
             f"Prometheus failed {int(failures)} TSDB compactions in the last hour — "

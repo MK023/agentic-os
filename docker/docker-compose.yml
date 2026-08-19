@@ -63,8 +63,8 @@ services:
       # continua dalla RAM. Qui il volume è un volume Docker senza tetto, quindi
       # il limite non serve a salvare il disco — serve a far somigliare il locale
       # alla produzione, che è il motivo per cui questo file esiste.
-      - --storage.tsdb.retention.time=7d
-      - --storage.tsdb.retention.size=300MB
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=3GB
 
   grafana:
     image: grafana/grafana:13.1.4

@@ -20,6 +20,54 @@ Compose instead"* — everything Swarm adds (multi-host networking, cross-node s
 discovery, cluster reconciliation) exists for more than one node. An orchestrator
 here would also mean a machine to run it on, which is the thing we just removed.
 
+**Railway Hobby, from 2026-08-19, because the free plan had no room left to give.**
+Prometheus had been failing compaction once a minute since 2026-08-13 — `no space
+left on device` — and the fix could not be a smaller retention: the volume was
+already at **0.5 GB, which is exactly the free/trial maximum**, and Railway offers
+volume resizing on paid plans only. There was no configuration change available, at
+any size, that would have helped. Hobby is $5/month including $5 of usage credits;
+measured consumption across the five services is ~0.96 GB RAM and ~0.015 vCPU, which
+at $10/GB and $20/vCPU is **~$10/month**. Pro ($20, 50 GB) buys nothing this project
+needs: the volume is 0.24 GB.
+
+The upgrade bought two ceilings, not one. The volume went 500 MB → 5 GB (and was
+wiped by hand, so the history before that date is gone — today's public numbers
+dropped from 5/33.8M/$35.87 to 3/9.8M/$8.68 in the same hour, and nothing in CI
+noticed, because the smoke probe checks `null` and `stale`, never magnitude). The
+per-service memory limit went **1 GB → 8 GB**, which matters more than it looks:
+while compaction fails the head block is never flushed, so RAM grows monotonically —
+at 329 MB against a 1 GB limit, the disk fault had an OOM behind it.
+
+**The plan change is also the trigger this repo already wrote down for Loki.** The
+deferral said it holds *"if the plan changes in October"*. It changed in August. The
+condition fired early; the decision is due, and the date in that paragraph is now
+wrong rather than merely pending.
+
+**Retention is 30d / 3GB, and both numbers are hand-derived from the volume size.**
+At the measured ~50 MB/day, 30 days is ~1.5 GB, so on a 5 GB volume **time** binds
+first and size is the safety net — the exact inverse of the 7d/300MB pair it
+replaces, which was tuned to 500 MB and would have truncated history to 6% of a disk
+already paid for. The 40% margin stays for the same reason as before: compaction
+writes the new block *before* deleting the old ones, and the WAL shares the volume
+without being counted inside `retention.size`. The original 7-day window was a cost
+decision, not a technical one, and the cost changed: storage bills on **used**, not
+provisioned, at $0.15/GB/month, so ~1.5 GB is ~$0.23/month.
+
+**Those two numbers live in two files, so now a CI step compares them.** Production
+reads them from `railway/prometheus/Dockerfile`, local from
+`docker/docker-compose.yml`, and the compose file claimed in a comment that they were
+*"the same two limits as production"*. That was true when written and depended on
+nothing to stay true — the same shape as the stale pricing test that survived two
+days in #75. A comment is not a gate.
+
+**Per-service resource caps do not exist on Railway, so the usage limit is the only
+one.** The CLI exposes replicas and regions, nothing for CPU or memory, and the
+scaling documentation says a service scales *"up to the specified vCPU and Memory
+limits of your plan"* — meaning any one of the five services can reach 8 GB / 8 vCPU
+alone. This changes what a spending limit is for: not one layer among several, but
+the single backstop. It also changes the severity of the endpoint being unthrottled,
+which until now was an availability question and is now a billing one.
+
 **One copy of every configuration file**, in `docker/`. The Railway images copy them
 at build time; the local compose file mounts them *and* gives each container a
 network alias equal to its Railway internal DNS name, so hostnames inside those files
@@ -454,6 +502,27 @@ was correct, and it applied to the paragraph itself: a CLI that reads configurat
 is no more the runtime than a fixture is. **The only measurement that settled it was
 the artefact production emitted on its own.** When the question is "what does the
 container actually have", ask something running inside it.
+
+**An alert that fires once per process is an alert that lies.** The TSDB watchdog
+added in #52 did exactly what it was designed to do on 2026-08-13 and then went quiet
+for six days while the fault it watches ran continuously. The dedup was a
+module-level `set`: one notification per process lifetime. On Sentry the issue read
+*"last seen 5 days ago"* — indistinguishable from a fault that had been **fixed**,
+and it was read that way, out loud, before the logs contradicted it. The alarm
+re-armed on 2026-08-19 only because an unrelated dependency bump redeployed the
+service and emptied the set.
+
+It is now a timestamp per key with a one-hour expiry, so a condition that persists
+keeps saying so. One hour also happens to be the smallest unit that makes a Sentry
+rule on **frequency** (rather than on issue creation) have anything to count —
+without repetition, no such rule can fire, which is the other half of why nothing
+called. Neither half works alone.
+
+The watchdog also stopped running on every request. It shares the read path of the
+one public endpoint, and that endpoint is unthrottled: before 2026-08-19 the cost of
+that was CPU on free credits, after it is money. Four Prometheus queries per public
+request instead of three is a multiplier handed to anyone who knows the URL. It now
+runs at most once per minute — still far denser than a condition measured in days.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.

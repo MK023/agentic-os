@@ -258,3 +258,30 @@ jobs:
               sys.exit(1)
           print(f"tariffe allineate: {trovate}")
           PY
+
+      # Stessa famiglia del gate qui sopra, altra coppia di meta'. I due limiti di
+      # retention di Prometheus vivono in due file — railway/prometheus/Dockerfile per
+      # la produzione, docker/docker-compose.yml per il locale — e il compose dice a
+      # parole "stessi due limiti della produzione". Era vero quando e' stato scritto,
+      # e restare vero non dipendeva da niente. Il 19/08/2026 il volume e' passato da
+      # 500 MB a 5 GB e i numeri sono cambiati in entrambi: se fosse cambiato uno
+      # solo, il locale avrebbe smesso di somigliare alla produzione in silenzio, che
+      # e' l'unica cosa per cui quel file esiste.
+      - name: i limiti di retention sono gli stessi in produzione e in locale
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          def limiti(percorso):
+              testo = open(percorso).read()
+              return {
+                  chiave: re.search(rf"--storage\.tsdb\.retention\.{chiave}=([^\"'\s\\]+)", testo).group(1)
+                  for chiave in ("time", "size")
+              }
+          prod = limiti("railway/prometheus/Dockerfile")
+          locale = limiti("docker/docker-compose.yml")
+          if prod != locale:
+              print(f"::error::retention divergente. Produzione: {prod} — locale: {locale}. "
+                    "I due file sono le due meta' della stessa decisione: si cambiano insieme.")
+              sys.exit(1)
+          print(f"retention allineata: {prod}")
+          PY

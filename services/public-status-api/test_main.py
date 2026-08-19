@@ -423,6 +423,36 @@ def test_sentry_event_omits_release_when_the_deploy_sha_is_absent(monkeypatch):
     assert "release" not in _evento_inviato(sentry_call)
 
 
+class _OrologioFinto:
+    """Il tempo come parametro, non come attesa.
+
+    Il watchdog ha due intervalli (una notifica all'ora, un controllo al minuto) e
+    testarli aspettando davvero significherebbe un test da un'ora. `main` chiama
+    `time.monotonic()`, quindi basta sostituire il modulo: `avanza()` è il salto
+    temporale che il test vuole misurare.
+    """
+
+    def __init__(self) -> None:
+        self.adesso = 1_000.0
+
+    def monotonic(self) -> float:
+        return self.adesso
+
+    def avanza(self, secondi: float) -> None:
+        self.adesso += secondi
+
+
+def _reset_watchdog(monkeypatch) -> _OrologioFinto:
+    # I due globali si azzerano insieme, sempre: sono stato di processo condiviso fra
+    # i test, e uno lasciato sporco fa passare (o fallire) il test successivo per
+    # ragioni che non hanno niente a che vedere con quello che asserisce.
+    monkeypatch.setattr(main, "_INFRA_ALERTS_SENT", {})
+    monkeypatch.setattr(main, "_persistence_checked_at", None)
+    orologio = _OrologioFinto()
+    monkeypatch.setattr(main, "time", orologio)
+    return orologio
+
+
 def _mock_persistence(value: str):
     return respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
         return_value=httpx.Response(200, json={"data": {"result": [{"value": [0, value]}]}})
@@ -436,7 +466,7 @@ def test_a_prometheus_that_cannot_persist_is_reported(monkeypatch):
     # the head block lives in RAM. The assertion that matters is BOTH halves — the
     # alert fires AND the three numbers are still served. A watchdog that degraded
     # the endpoint would be a worse bug than the one it reports.
-    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    _reset_watchdog(monkeypatch)
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
         return_value=httpx.Response(200)
@@ -459,7 +489,7 @@ def test_a_healthy_prometheus_is_silent(monkeypatch):
     # Zero must not report. Stated as its own test because the cheapest way to make
     # the test above pass is an unconditional capture, and that would page on every
     # single poll of a perfectly healthy hub.
-    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    _reset_watchdog(monkeypatch)
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
         return_value=httpx.Response(200)
@@ -479,7 +509,7 @@ def test_a_broken_watchdog_never_breaks_the_endpoint(monkeypatch):
     # The probe's own query fails. The endpoint must still answer 200 with the three
     # numbers: silence is the contract, an outage is not. This is the test that lets
     # the watchdog live on the read path of a public endpoint at all.
-    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    _reset_watchdog(monkeypatch)
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     _mock_scalars()
     _mock_cost([_serie("claude-opus-5", "input", 284_000)])
@@ -498,11 +528,11 @@ def test_a_broken_watchdog_never_breaks_the_endpoint(monkeypatch):
 
 
 @respx.mock
-def test_the_persistence_alert_is_reported_once_not_every_poll(monkeypatch):
+def test_the_persistence_alert_is_not_repeated_on_every_poll(monkeypatch):
     # Same reasoning as the pricing gaps: the widget polls every 20s, and a condition
     # that stays true until a human fixes a volume would otherwise burn the Sentry
     # quota on one identical event per poll, forever.
-    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    _reset_watchdog(monkeypatch)
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
         return_value=httpx.Response(200)
@@ -518,13 +548,72 @@ def test_the_persistence_alert_is_reported_once_not_every_poll(monkeypatch):
 
 
 @respx.mock
+def test_a_failure_that_lasts_keeps_calling(monkeypatch):
+    # Il guasto vero, e la ragione di questa PR. Fino al 19/08/2026 la notifica era
+    # una per VITA DEL PROCESSO: il 13/08 la compaction ha iniziato a fallire, Sentry
+    # ha ricevuto un evento, e per sei giorni — con il guasto sempre in corso — non ne
+    # ha ricevuti altri. Su Sentry l'issue mostrava "ultimo evento cinque giorni fa",
+    # cioè esattamente l'aspetto di un guasto RIENTRATO. Un allarme che tace mentre la
+    # condizione dura non è un allarme silenzioso: è un allarme che mente.
+    orologio = _reset_watchdog(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("7")
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 1
+
+    # Un secondo prima della scadenza non deve richiamare: senza questa metà, il
+    # test passerebbe anche con l'intervallo rimosso del tutto.
+    orologio.avanza(main.INFRA_ALERT_INTERVAL_S - 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 1
+
+    # Oltre l'ora, e oltre la finestra del controllo: i due intervalli sono annidati,
+    # perché la notifica può ripartire solo su un controllo che è davvero avvenuto.
+    # Scritto prima con un salto di 2 secondi, questo test falliva — e aveva ragione
+    # lui: quel salto descrive una sequenza che in produzione non esiste, dove il
+    # widget interroga ogni 20s. La conseguenza vera è che l'allarme riparte entro
+    # PERSISTENCE_CHECK_INTERVAL_S dallo scadere dell'ora, non nell'istante esatto.
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sentry_call.call_count == 2
+
+
+@respx.mock
+def test_the_watchdog_does_not_query_prometheus_on_every_public_request(monkeypatch):
+    # Costo, non correttezza. L'endpoint pubblico non è throttlato e dal 19/08/2026 il
+    # progetto è su un piano a consumo: senza intervallo, ogni richiesta pubblica
+    # comprava QUATTRO query a Prometheus invece di tre, cioè un moltiplicatore di
+    # spesa a disposizione di chiunque conosca l'URL.
+    orologio = _reset_watchdog(monkeypatch)
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    sonda = _mock_persistence("0")
+
+    for _ in range(5):
+        assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    assert sonda.call_count == 1
+
+    orologio.avanza(main.PERSISTENCE_CHECK_INTERVAL_S + 1)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert sonda.call_count == 2
+
+
+@respx.mock
 def test_a_watchdog_with_no_data_says_so_instead_of_going_quiet(monkeypatch):
     # The failure the watchdog itself can have. If Prometheus stops scraping itself,
     # the metric disappears; an empty result parses to 0.0 and a `<= 0` check reads
     # that as "healthy". Silent and blind become the same output, which is the exact
     # failure class this watchdog was added to end — and the lesson the Collector job
     # in docker/prometheus.yml already spells out: no series means no rule can fire.
-    monkeypatch.setattr(main, "_INFRA_ALERTS_REPORTED", set())
+    _reset_watchdog(monkeypatch)
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
         return_value=httpx.Response(200)
