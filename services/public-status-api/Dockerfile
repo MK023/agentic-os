@@ -1,6 +1,8 @@
-# Pinned to a patch version, not the moving 3.12-slim tag — same reasoning as the
+# Pinned to a patch version, not the moving 3.14-slim tag — same reasoning as the
 # compose file's image pins.
-FROM python:3.14.0-slim
+# Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
+# sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
+FROM python:3.14.0-slim@sha256:0aecac02dc3d4c5dbb024b753af084cafe41f5416e02193f1ce345d671ec966e
 
 WORKDIR /app
 COPY requirements.txt .
@@ -19,7 +21,7 @@ USER 65534:65534
 # Compose has no Kubernetes liveness probe to lean on, so this is the only
 # automatic signal that the container is serving rather than merely running.
 # Shell form, so $STATUS_API_TOKEN is expanded at check time. Uses stdlib urllib
-# instead of curl: python:3.12-slim is Debian-slim and ships no curl, and adding
+# instead of curl: python:3.14-slim is Debian-slim and ships no curl, and adding
 # an apt layer just to healthcheck would be a bigger image for no gain.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD python -c "import os,urllib.request as u; u.urlopen(u.Request('http://localhost:8000/status', headers={'Authorization': 'Bearer ' + os.environ['STATUS_API_TOKEN']}), timeout=4)" || exit 1

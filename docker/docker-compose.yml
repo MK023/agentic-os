@@ -13,7 +13,7 @@
 # capability beyond default userspace networking.
 services:
   cloudflared:
-    image: cloudflare/cloudflared:2026.8.2
+    image: cloudflare/cloudflared:2026.8.2@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -28,7 +28,7 @@ services:
       - status-api
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.158.0-386
+    image: otel/opentelemetry-collector-contrib:0.158.0-386@sha256:93e4793719dd55d0d9499328e7b45af219116cc9d1bcb95df5b3a0f8cade831d
     restart: unless-stopped
     networks:
       default:
@@ -42,7 +42,7 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
 
   prometheus:
-    image: prom/prometheus:v3.13.2
+    image: prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
     restart: unless-stopped
     networks:
       default:
@@ -67,7 +67,7 @@ services:
       - --storage.tsdb.retention.size=3GB
 
   grafana:
-    image: grafana/grafana:13.1.4
+    image: grafana/grafana:13.1.4@sha256:9be3a3ccdb06bcbb127f888b0c4c1d151837443e478887897a63a27d7b348043
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]

@@ -5,7 +5,9 @@
 # checkov:skip=CKV_DOCKER_2: Railway ignores the Dockerfile HEALTHCHECK — it uses its
 # own healthcheckPath, and these images ship no shell or HTTP client to probe with
 # anyway. What actually verifies the hub after a deploy is scripts/verify-hub.sh.
-FROM cloudflare/cloudflared:2026.8.2
+# Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
+# sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
+FROM cloudflare/cloudflared:2026.8.2@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
 
 # This one is not cosmetic: the published image sets no USER, so the connector runs
 # as root. A tunnel that only makes outbound connections needs no privilege at all.

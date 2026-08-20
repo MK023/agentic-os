@@ -78,6 +78,32 @@ replica, and six times that if anyone ever raises the replica count. This change
 the single backstop. It also changes the severity of the endpoint being unthrottled,
 which until now was an availability question and is now a billing one.
 
+**Base images are pinned by digest as well as tag, since 2026-08-19.** The argument
+was already written down in this file for the gitleaks binary — *"alone, a version
+pin is a label, and a GitHub release asset can be replaced under the same label"* —
+and had never been carried across to the five base images, where the same property
+holds: a tag is a mutable pointer, and an upstream namespace compromise re-pushes
+`grafana/grafana:13.1.4` with different bytes while the repository diff stays empty.
+Dependabot maintains digest-pinned tags natively, so the cost is one line per file.
+
+**And it is the only provenance control that means anything here — the absence of an
+SBOM and of build attestation stays deliberate, for a reason the docs never stated.**
+This repository never *publishes* an artefact: Railway builds the images from the
+Dockerfiles on its own infrastructure and runs them, and the CI-built `agentic-*:ci`
+images die with the runner. There is no published digest for anyone — the maintainer
+included — to verify a signature or an attestation against, so signing would produce
+a signature no verifier ever checks. That is the theatre the README refuses. Pinning
+the inputs by digest is the same control applied where it can actually be checked.
+
+**Both lockfiles are compiled on the interpreter production runs, and a gate watches
+the header.** `pip-compile` resolves environment markers against the running Python,
+so `requirements.txt`'s header saying 3.12 while the Dockerfile, the six workflow
+pins and `sonar.python.version` all said 3.14 meant the lock described a resolution
+nothing executes. Regenerated on 3.14 — no version changed, which is the honest
+outcome: the risk was structural, not yet realised. `scripts/check-python-versions.sh`
+now watches the two lockfile headers as the seventh and eighth places, because the
+version being written in many places is precisely why it drifts.
+
 **One copy of every configuration file**, in `docker/`. The Railway images copy them
 at build time; the local compose file mounts them *and* gives each container a
 network alias equal to its Railway internal DNS name, so hostnames inside those files
