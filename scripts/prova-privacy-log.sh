@@ -60,11 +60,18 @@ docker run -d --rm --name privacy-minio --network "$RETE" \
   -e MINIO_ROOT_USER=provaprova -e MINIO_ROOT_PASSWORD=provaprova \
   "$IMG_MINIO" server /data >/dev/null
 # `mc` nella stessa immagine: crea il bucket che Loki si aspetta.
+bucket_creato=""
 for _ in $(seq 1 30); do
-  docker run --rm --network "$RETE" --entrypoint sh "$IMG_MINIO" -c \
-    "mc alias set m http://privacy-minio:9000 provaprova provaprova >/dev/null 2>&1 && mc mb --ignore-existing m/loki-prova >/dev/null 2>&1" && break
+  if docker run --rm --network "$RETE" --entrypoint sh "$IMG_MINIO" -c \
+    "mc alias set m http://privacy-minio:9000 provaprova provaprova >/dev/null 2>&1 && mc mb --ignore-existing m/loki-prova >/dev/null 2>&1"; then
+    bucket_creato=si; break
+  fi
   sleep 1
 done
+# Senza questa riga l'errore veniva ingoiato: `/ready` di Loki non guarda l'object
+# storage e le letture recenti arrivano dall'ingester, quindi la prova sarebbe passata
+# verde senza aver mai toccato un bucket.
+[ -n "$bucket_creato" ] || { echo "FALLITO: bucket MinIO non creato dopo 30 tentativi"; exit 1; }
 
 docker run -d --rm --name privacy-loki --network "$RETE" \
   --network-alias loki.railway.internal -p 3198:3100 \
@@ -91,21 +98,30 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-# Un payload che contiene TUTTO cio' che non deve arrivare, nei tre posti in cui puo'
-# stare: resource attribute, scope attribute, log record attribute. Piu' una chiave
-# che nessuna versione ha mai mandato — e' il caso su cui una delete-list fallirebbe.
+# Un payload che contiene TUTTO cio' che non deve arrivare, in OGNI posto in cui puo'
+# stare — e l'elenco dei posti e' cresciuto il 2026-08-20, quando un audit ha notato
+# che la prima versione metteva `prova` nel body: quella dimensione non era mai
+# esercitata, quindi il test passava per costruzione e non per proprieta'.
+# I sei posti: resource attribute, il VALORE di service.name (unica label di indice, e
+# keep_keys filtra le chiavi non i valori), scope attribute, NOME e VERSIONE dello
+# scope (campi, non attributi: Loki li mette in structured metadata per costruzione),
+# log record attribute, e il BODY. Piu' una chiave che nessuna versione ha mai
+# mandato — il caso su cui una delete-list fallirebbe.
 ORA=$(python3 -c "import time;print(int(time.time()*1e9))")
 CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:4398/v1/logs \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"resourceLogs":[{
   "resource":{"attributes":[
-    {"key":"service.name","value":{"stringValue":"claude-code"}},
+    {"key":"service.name","value":{"stringValue":"claude-code-NON-DEVE-ARRIVARE-nel-valore"}},
     {"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE@example.com"}},
     {"key":"host.arch","value":{"stringValue":"NON-DEVE-ARRIVARE-arm64"}}]},
-  "scopeLogs":[{"scope":{"attributes":[
+  "scopeLogs":[{"scope":{
+      "name":"NON-DEVE-ARRIVARE-nome-scope",
+      "version":"NON-DEVE-ARRIVARE-versione-scope",
+      "attributes":[
       {"key":"scope.secret","value":{"stringValue":"NON-DEVE-ARRIVARE-scope"}}]},
     "logRecords":[{
       "timeUnixNano":"'"$ORA"'",
-      "body":{"stringValue":"prova"},
+      "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body prompt=segreto user.email=vittima@example.com"},
       "attributes":[
         {"key":"event.name","value":{"stringValue":"tool_result"}},
         {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
@@ -121,14 +137,17 @@ echo "push OTLP verso il Collector: HTTP $CODICE"
 
 sleep 12
 
-echo "--- (a) le label di indice"
+echo "--- (a) le label di indice, e i loro VALORI"
 curl -s "http://localhost:3198/loki/api/v1/labels" | tee "$TMP/labels.json"; echo
+# I valori, non solo i nomi: `keep_keys` filtra le CHIAVI, quindi un mittente puo'
+# scrivere quello che vuole DENTRO service.name, che e' l'unica label di indice.
+curl -s "http://localhost:3198/loki/api/v1/label/service_name/values" | tee "$TMP/valori.json"; echo
 echo "--- (b) tutto cio' che Loki ha memorizzato per quello stream"
 curl -sG "http://localhost:3198/loki/api/v1/query_range" \
   --data-urlencode 'query={service_name="claude-code"}' \
   --data-urlencode "start=$((ORA - 300000000000))" --data-urlencode "end=$((ORA + 300000000000))" > "$TMP/query.json"
 
-python3 - "$TMP/labels.json" "$TMP/query.json" <<'PY'
+python3 - "$TMP/labels.json" "$TMP/query.json" "$TMP/valori.json" <<'PY'
 import json, sys
 labels = json.load(open(sys.argv[1])).get("data") or []
 query  = open(sys.argv[2]).read()
@@ -138,16 +157,26 @@ fallimenti = []
 # (a) nessuna label d'identita' nell'indice
 sporche = [l for l in labels if any(x in l for x in ("user", "organization", "prompt", "scope_secret", "host_arch", "inventata"))]
 if sporche: fallimenti.append(f"(a) l'indice contiene {sporche}")
+valori = json.load(open(sys.argv[3])).get("data") or []
+# Il VALORE, non solo il nome. Senza questa riga, un mittente che scrive
+# `service.name: claude-code-<qualunque cosa>` produce uno stream nuovo, la query
+# di (c) non lo trova, e il test fallisce lamentandosi che manca il record utile —
+# rosso giusto, diagnosi sbagliata, e la cardinalita' dell'indice non la nomina
+# nessuno.
+if valori != ["claude-code"]:
+    fallimenti.append(f"(a) service_name vale {valori}, non esattamente ['claude-code']: il mittente controlla il valore dell'unica label di indice, e ogni valore nuovo e' uno stream nuovo")
 
 # (b) niente di proibito, in NESSUNA forma: ne' label, ne' structured metadata, ne' body
 if "NON-DEVE-ARRIVARE" in query:
-    posti = sorted({p for p in ("user.email","user_email","user_id","organization_id","prompt","scope_secret","host_arch","chiave_inventata_domani") if p in query})
+    posti = sorted({p for p in ("user.email","user_email","user_id","organization_id","prompt","scope_secret","host_arch","chiave_inventata_domani","scope_name","scope_version","nel-body","nome-scope","versione-scope") if p in query})
     fallimenti.append(f"(b) il payload proibito e' interrogabile — chiavi coinvolte: {posti}")
 
 # (c) cio' che serve C'E'. Un allow-list che scarta tutto passerebbe (a) e (b) e
 #     sembrerebbe un successo: questo e' il controllo che lo smaschera.
 if not risultato: fallimenti.append("(c) nessuno stream: il record utile non e' arrivato affatto")
-for atteso in ("DEVE-ARRIVARE-sessione", "DEVE-ARRIVARE-Bash", "DEVE-ARRIVARE-timeout"):
+# `tool_result` e' il BODY: ancorarlo a event.name lo rende sicuro, svuotarlo lo
+# renderebbe inutile, e le due cose si distinguono solo cercandolo.
+for atteso in ("DEVE-ARRIVARE-sessione", "DEVE-ARRIVARE-Bash", "DEVE-ARRIVARE-timeout", "tool_result"):
     if atteso not in query: fallimenti.append(f"(c) manca {atteso}: l'allow-list scarta anche cio' che serve")
 
 print("label di indice:", labels)

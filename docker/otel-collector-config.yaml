@@ -125,6 +125,14 @@ processors:
           # un punto d'iniezione documentato e il set del client non e' un
           # contratto, quindi si tiene solo cio' che serve a Loki come label.
           - keep_keys(resource.attributes, ["service.name"])
+          # `keep_keys` filtra le CHIAVI, non i valori — e `service.name` e'
+          # l'unico attributo tenuto ED e' l'unica label di indice in Loki.
+          # Misurato il 2026-08-20: un mittente col token scriveva
+          # `service.name: claude-code-...victim@example.com` e quel testo
+          # diventava una label di indice, con la cardinalita' che ne segue
+          # (il tetto e' `max_global_streams_per_user`, 5000 di default: un
+          # limite, non una difesa). Un solo produttore, un solo valore lecito.
+          - set(resource.attributes["service.name"], "claude-code")
       - context: scope
         statements:
           # TERZO statement, e non era nel piano: senza, gli attributi di SCOPE
@@ -137,6 +145,16 @@ processors:
           # nessun attributo di scope, quindi la lista vuota non toglie niente a
           # nessuno — e vale su cio' che una versione futura ci mettesse.
           - keep_keys(scope.attributes, [])
+          # Gli ATTRIBUTI di scope li chiude la riga sopra; `name` e `version`
+          # sono campi a parte, e Loki li mette in structured metadata per
+          # costruzione — `otlp_config` non ha nessuna chiave per governarli.
+          # Misurato: sono l'unica classe su cui NON esistono due barriere, una
+          # sola e' possibile, ed e' questa. Il client manda
+          # `com.anthropic.claude_code.events` / la propria versione: la seconda
+          # e' gia' in `service.version`, che non teniamo, e la prima non dice
+          # niente che `event.name` non dica meglio.
+          - set(scope.name, "claude-code")
+          - set(scope.version, "")
       - context: log
         statements:
           # `prompt_length` e `response_length` SONO in lista, e sono l'unica
@@ -154,6 +172,19 @@ processors:
           # response, error, tool_parameters, tool_input, body, command_name,
           # server_name (contenuto: redatto per default, riacceso da una
           # variabile d'ambiente).
+          # IL BODY, che nessuna delle due allow-list tocca. `keep_keys`
+          # governa gli attributi; `otlp_config` di Loki non ha alcun concetto
+          # di body; e la riga finisce verbatim, indicizzata e conservata. Sul
+          # body la difesa era una delete-list di lunghezza zero — esattamente
+          # la forma che questo progetto rifiuta ovunque.
+          #
+          # Misurato il 2026-08-20 sul client 2.1.235: il body E' gia' solo il
+          # nome dell'evento, sette valori distinti tutti `claude_code.*`.
+          # Quindi questa riga oggi non toglie niente a nessuno — ancora il
+          # body a un valore che l'allow-list approva gia', cosi' il giorno in
+          # cui il fornitore ci mettesse il messaggio (la doc NON documenta il
+          # contenuto del body: non e' un contratto) il default e' chiuso.
+          - set(log.body, log.attributes["event.name"])
           - keep_keys(log.attributes, ["event.name", "event.sequence", "session.id", "prompt.id", "tool_name", "tool_use_id", "success", "error_type", "duration_ms", "decision", "source", "model", "query_source", "status", "status_code", "attempt", "error_code", "error_name", "transport_type", "server_scope", "prompt_length", "response_length"])
 
   batch: {}
