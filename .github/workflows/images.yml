@@ -542,6 +542,24 @@ jobs:
       # recuperare spazio nel TSDB e' proprio l'admin API, e il volume si e' riempito
       # due volte. Il momento in cui qualcuno la accendera' e' un'emergenza, che e'
       # esattamente quando nessuno rilegge il confine di sicurezza.
+      # hadolint sui cinque Dockerfile. Checkov ne copre alcune regole, hadolint
+      # altre: sono liste diverse, non la stessa lista due volte. Aggiunto dopo aver
+      # controllato che trovi qualcosa di VERO — quattro file puliti e un solo
+      # rilievo, gia' deciso e documentato — perche' un gate che produce solo rumore
+      # viene ignorato, e questo repo ha gia' pagato per gate ignorati.
+      #
+      # DL3025 e' derogato con la ragione accanto, non silenziato globalmente: il
+      # HEALTHCHECK di status-api e' in forma shell APPOSTA, perche' $STATUS_API_TOKEN
+      # deve espandersi al momento del controllo e non a quello della build.
+      - name: hadolint sui Dockerfile
+        run: |
+          set -euo pipefail
+          for dockerfile in railway/*/Dockerfile services/public-status-api/Dockerfile; do
+            echo "== ${dockerfile}"
+            docker run --rm -i hadolint/hadolint:v2.14.0-alpine@sha256:7aba693c1442eb31c0b015c129697cb3b6cb7da589d85c7562f9deb435a6657c \
+              hadolint --no-color --ignore DL3025 - < "${dockerfile}"
+          done
+
       - name: prometheus non accende endpoint che non sa autenticare
         run: |
           set -euo pipefail
