@@ -115,7 +115,9 @@ REQUEST_TIMEOUT = httpx.Timeout(10.0)
 QUERIES = {
     "sessions_today": 'sum(max_over_time(claude_code_session_count{job="otel-collector"}[25h]))',
     "tokens_today": 'sum(max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))',
-    "cost_usd_today": 'sum by (model, type) (max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))',
+    "cost_usd_today": (
+        'sum by (model, type) (max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
+    ),
 }
 
 # Anthropic list prices, USD per million tokens, as published on 2026-07-30. These
