@@ -646,6 +646,13 @@ jobs:
           print(f"ok: {len(citati)} hostname citati, tutti con il loro alias: {sorted(citati)}")
           PY
 
+      # I gate accanto confrontano TESTO fra i file accoppiati. Il testo puo' essere
+      # identico in tutti e tre e sbagliato in tutti e tre insieme, perche' il nome
+      # vero delle metriche lo decide `translation_strategy` e nessuno dei tre file
+      # la esegue. Questo chiede al Collector cosa espone davvero.
+      - name: il contratto delle metriche regge fra Collector, status API e pannello
+        run: bash scripts/prova-contratto-metriche.sh
+
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
           python3 - <<'PY'
