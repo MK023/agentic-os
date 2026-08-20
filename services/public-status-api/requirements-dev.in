@@ -29,7 +29,7 @@ bandit==1.9.2
 # dei workflow ed e' stata persa il 19-08-2026 unendo i due comandi di installazione:
 # rimessa qui, accanto alla riga che descrive, dove non puo' separarsene.
 httpx2==2.10.0
-mutmut==3.6.0
+mutmut==3.7.0
 pip-audit==2.10.1
 pytest==9.1.1
 pytest-cov==7.1.0
