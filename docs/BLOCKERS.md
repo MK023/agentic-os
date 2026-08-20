@@ -204,7 +204,8 @@ had already been decided and shipped.
   / $30 hard has existed since 2026-08-20 (PR #99). It is confirmed by the operator and
   **not readable from here**: Railway's MCP surface does not expose billing, so no tool
   in this repository can re-read it and no gate notices if it disappears. Same class as
-  `PORT`. This is not a rate limiter, and the public endpoint is still unthrottled.
+  `PORT`. This is not a rate limiter — the rate limiter is the site Worker's, per IP,
+  60 requests / 60s, shipped 2026-08-16 and measured against production 2026-08-20.
 
 - **The Sentry rule that notified once in six days** — the alert fired on the first
   event of a process and then went quiet, which is how a Prometheus compaction failure
