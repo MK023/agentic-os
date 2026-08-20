@@ -282,14 +282,16 @@ had already been decided and shipped.
 
 ## Deliberately still open, and why
 
-- **Three of five services have no `healthcheckPath`.** Railway wants a literal 200
-  with no credentials. Prometheus (`/-/healthy`) and Grafana (`/api/health`) would
-  answer, but each would expose an unauthenticated route — and Grafana's hostname is
-  public, behind Access. The Collector's only route is the ingest, which authenticates
-  and answers `401`; giving it one means the `health_check` extension and a new port.
-  All three are already watched by a Prometheus `up` scrape **while they run**, which
-  is more than a healthcheck does — Railway stops probing once a deploy is promoted. If
-  any of them ever gets a path, `PORT` goes first.
+- ~~Three of five services have no `healthcheckPath`.~~ **Decided 2026-08-20: they do
+  not get one, and this is no longer an open item.** Railway wants a literal 200 with
+  no credentials, so Prometheus (`/-/healthy`) and Grafana (`/api/health`) would each
+  have to expose an *unauthenticated* route — and Grafana's hostname is public, behind
+  Access. The Collector's only route is the ingest, which authenticates and answers
+  `401`; giving it one means the `health_check` extension **and a new port on the one
+  service that accepts writes from the internet**. Against that, a Prometheus `up`
+  scrape already watches all three every 15s **for as long as they run**, which is more
+  than a healthcheck does — Railway stops probing once a deploy is promoted. Full
+  reasoning in `DECISIONS.md`. If it is ever reopened, `PORT` goes first.
 
 - ~~The dry run in `LOCAL_DRY_RUN.md` has no trigger.~~ **It has one since
   2026-08-20**: `telemetry-baseline.yml` asks the npm registry weekly what version
