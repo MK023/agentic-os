@@ -9,7 +9,12 @@
 Personal observability hub for AI-assisted work. Phase 1: OTel Collector →
 Prometheus → Grafana plus a tiny FastAPI status API, five services on **Railway**
 behind a Cloudflare Tunnel, with a public widget living in the
-`marcobellingeri.dev` repo. The priority here is **the public/private boundary**:
+`marcobellingeri.dev` repo. **Phase 1.5 adds a sixth service, `loki`** — a private
+log store whose chunks and index live on **Cloudflare R2**, so a full Railway volume
+cannot take them with it; the local disk holds only the active index and the
+`tsdb_shipper` cache. Written and gated, **but its Railway service and R2 bucket do not
+exist yet**: six is the count in `docker/` and `railway/`, not the count that is running.
+The priority here is **the public/private boundary**:
 three aggregate numbers are public, everything else stays inside the project.
 
 ## Layout
@@ -27,7 +32,8 @@ three aggregate numbers are public, everything else stays inside the project.
   status alone. Railway ignores the Dockerfile `HEALTHCHECK`; it uses its own
   `healthcheckPath`, declared since 2026-08-20 on status-api (`/healthz`) and
   cloudflared (`/ready`) and **requiring a `PORT` service variable to work at all**.
-  On the other three `SUCCESS` still only means "the container started", **and that is
+  On the other four — `loki` included since Phase 1.5, same reason written in
+  `railway/loki/Dockerfile` — `SUCCESS` still only means "the container started", **and that is
   a closed decision, not a gap**: their health routes would be unauthenticated, and a
   Prometheus `up` scrape already watches them every 15s for as long as they live, which
   is more than a healthcheck does — Railway stops probing once the deploy is live.
@@ -35,8 +41,9 @@ three aggregate numbers are public, everything else stays inside the project.
 ## Commands
 
 ```bash
-docker build -f railway/prometheus/Dockerfile -t p .   # same for the other three
-docker compose -f docker/docker-compose.yml config --quiet     # needs the 5 env vars set to anything
+docker build -f railway/prometheus/Dockerfile -t p .   # same for the other four
+docker compose -f docker/docker-compose.yml config --quiet     # needs the 9 env vars set to anything
+bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker only
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
@@ -106,7 +113,13 @@ those files are correct in both places. Never fork a config to "fix it for local
 - **No going back to a VPS.** Decided 2026-07-29 and settled: the point of this
   platform is that there is no machine to maintain.
 - **Never put the `prometheus` exporter in a `logs` pipeline** — metrics-only, the
-  Collector refuses to start.
+  Collector refuses to start. **Since Phase 1.5 a gate watches this line**, and it is
+  worth knowing which of the two it is: until then it was a sentence in a file no gate
+  reads, and there was not even a `logs` pipeline to get wrong. Now
+  `.github/workflows/images.yml` reads the pipeline and fails on that exporter, naming
+  the consequence — the Collector does not start, so the *metrics* stop with it and the
+  three public numbers freeze. A rule that is watched and a rule that is merely written
+  look identical on the page and behave nothing alike.
 - **Never turn the label allow-list into a delete-list**, and never assume
   `resource_to_telemetry_conversion: false` does that job: Claude Code sends identity
   as *data point* attributes, so a real email address reaches Prometheus without the
@@ -116,6 +129,22 @@ those files are correct in both places. Never fork a config to "fix it for local
 - **Never delete `session.id`** along with the identity attributes: the counters are
   cumulative per process, so without it concurrent sessions collapse into one series
   and the last export wins — two sessions read as one.
+- **Never reduce the log path to one barrier, and never move the catch-all.** Two
+  allow-lists on purpose: `transform/log-allowlist` in the Collector — **three**
+  statements, `resource`, `scope` *and* `log`, all `keep_keys` — and `otlp_config` in
+  `docker/loki.yaml` with `ignore_defaults: true` plus a `drop` catch-all **last** in all
+  three sections. The `scope` statement is the one that looks droppable and is not:
+  without it the scope attributes crossed the Collector untouched and only Loki's list
+  stopped them, so the two "independent" barriers were not independent — measured
+  2026-08-20 by running `scripts/prova-privacy-log.sh`, invisible to any gate that reads
+  the config's shape. Identity rides on the **log records**, not on the resource, and the
+  vendor sends it on every event with no environment variable to turn it off, so the
+  allow-list is the only control on it and not a backup for one. Redaction of `prompt`
+  and `response` is a *default*, and four `OTEL_LOG_*` variables switch it back off. The
+  order is not cosmetic either: a catch-all at the top of `resource_attributes` makes
+  Loki answer `400`, loudly; at the top of `log_attributes` the push returns `204`,
+  `-verify-config` calls the config valid, and every useful piece of structured metadata
+  disappears in silence. Exactly one gate sees that second case.
 - **Never guess Claude Code metric names.** The exporter's suffix behaviour is pinned
   precisely so they stop depending on unit metadata.
 - **Never let a gate skip because its credential is missing** (the `sonar` job stays

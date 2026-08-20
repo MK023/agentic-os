@@ -584,11 +584,29 @@ installed again. The `rm -rf` of `ensurepip` is therefore part of the fix, not t
 — and its path is asked of the interpreter, because hard-coding `python3.14` would make
 the removal disappear silently at the next minor bump with nothing turning red.
 
+**`smoke.yml`'s failure message is chosen by the code that came back, not by the code it
+expected.** The helper asserting the ingest takes a list of acceptable codes, and until
+2026-08-20 it picked its explanation from that list: an expected `403` printed "the edge
+stopped blocking", an expected `401` printed "anyone can write to the TSDB". Opening
+`/v1/logs` is what made that wrong. With two paths allowed through the WAF and two
+different components answering, `401` and `403` are both healthy codes that differ only
+in *who* replied — so a reverted WAF rule would have printed "anyone can write to the
+TSDB" in front of a route that was still closed, which is the worst kind of false alarm:
+the one that sends somebody looking in the wrong place at 3am. The message now branches
+on the **received** code. A swap between `401` and `403` is always "the reachable surface
+moved"; only a `2xx` means neither control answered. Routing on the *path* had been wrong
+earlier the same day for the same reason — the explanation belongs to the outcome, not to
+the request.
+
 ## Logs
 
-**No logs pipeline today.** The Prometheus exporter supports the metrics signal only,
-so a `logs` pipeline pointing at it fails Collector startup — `OTEL_LOGS_EXPORTER` is
-deliberately left unset rather than exporting into nothing.
+**No logs pipeline today** — true until 2026-08-20, and kept because the reason
+outlived the state. The Prometheus exporter supports the metrics signal only, so a `logs`
+pipeline pointing at it fails Collector startup, which is why `OTEL_LOGS_EXPORTER` was
+deliberately left unset rather than exporting into nothing. Phase 1.5 added the pipeline
+(see the end of this section): it exports to Loki and never to `prometheus`, and a gate
+now enforces that half, because until then it was a sentence in `CLAUDE.md` about a
+pipeline that did not exist.
 
 **Grafana Loki: evaluated 2026-07-29, deferred to a Phase 1.5 with its own spec.**
 The objection that mattered turned out to be unfounded — Claude Code redacts prompts,
@@ -660,6 +678,92 @@ be public without becoming content?"*. That question is answerable — counts an
 aggregates the same way sessions and tokens are — but it needs its own pass, and the
 answer is not "publish what Loki has". Whatever it turns out to be, it goes through the
 same allow-list discipline as the labels: default deny, added deliberately.
+
+**Phase 1.5 was implemented on 2026-08-20, and it is on a branch — not in production.**
+The shape is the one this section specced: Claude Code → the existing OTLP ingest → a
+new and *separate* `logs` pipeline in the Collector → Loki 3.7.6 single binary → chunks
+and index on Cloudflare R2, with Grafana querying it over the private network. The hub
+goes from five services to six. The storage choice the 2026-07-29 evaluation called
+"part of the design, not a detail" is settled the way it was specced, and for the reason
+it was specced: R2 holds the chunks, so a full Railway volume cannot take them with it,
+and the local disk keeps only the active index and the `tsdb_shipper` cache. The
+filesystem backend was disqualified because it puts storage pressure on the one component
+here with a disk failure on its record; R2 is what removes that, not a preference.
+
+**Loki gets no Tunnel hostname, and the reason is that it has no route** — not that it
+cannot authenticate. Same correction already made above for Prometheus, written down here
+before somebody re-derives the false version: `auth_enabled: false` in `docker/loki.yaml`
+is about **multi-tenancy** (the `X-Scope-OrgID` header), not about access. A config key
+whose name reads like "authentication off" is exactly the kind of thing a later reader
+turns into a security claim in either direction.
+
+**What measuring overturned, and it was the assumption the plan was built on.** The
+evaluation above says "the same identity attributes ride on log records", and the plan
+inherited the metrics-shaped worry with it: keep identity out of the *resource*. Measured
+on 2026-08-20 against client 2.1.235 with `OTEL_LOGS_EXPORTER=otlp`, the resource carries
+`host.arch`, `os.type`, `os.version`, `service.name`, `service.version` — and **no
+identity at all**. Identity rides on the **log records**, on every single event:
+`organization.id`, `user.email`, `user.id`, `user.account_id`, `user.account_uuid`. The
+vendor's documentation marks them *always included*, and no environment variable turns
+them off — so the Collector's allow-list is **the only control standing on identity, not
+a second line of defence**. Three more things the same run settled:
+
+- **`prompt` and `response` do arrive `<REDACTED>` by default**, which is what the
+  2026-07-29 evaluation leaned on when it called these events "metadata, not content" —
+  and a default is not a control. `OTEL_LOG_USER_PROMPTS`,
+  `OTEL_LOG_ASSISTANT_RESPONSES`, `OTEL_LOG_TOOL_DETAILS` and `OTEL_LOG_RAW_API_BODIES`
+  each switch one field back on, one field each.
+- **The tool events exist only if the session actually used a tool.** `tool_result` and
+  `tool_decision` never show up otherwise — so an allow-list written from a tool-less
+  session would have silently dropped precisely what Phase 1.5 exists to answer.
+- **22 keys are kept, out of the 64 measured.**
+
+**Two allow-lists, and the third statement nobody had planned.** Barrier one is
+`transform/log-allowlist` in the Collector: three statements — `resource`, `scope`,
+`log` — all `keep_keys`. Barrier two is `otlp_config` in `docker/loki.yaml`:
+`ignore_defaults: true` plus a `drop` catch-all at the **bottom** of all three sections.
+The plan had only two statements, `resource` and `log`. With those, the **scope**
+attributes crossed the Collector untouched: removing Loki's allow-list alone left
+`scope.secret` queryable while identity and record content stayed out. Two barriers that
+declared themselves independent were not independent on that third set — the same shape
+of error the spec had already corrected once (PR #119), found this time by *running* the
+thing rather than by reading it, because no gate on the config's shape could see it.
+`keep_keys(scope.attributes, [])` closed it, and each barrier now holds on its own,
+verified by breaking one at a time.
+
+**`use_thanos_objstore: true` is load-bearing and reads like decoration.** The `latest`
+documentation declares it `true` by default; the 3.7.6 version reference says
+`default = false`. Without the line Loki would fall back to the legacy clients and ignore
+the entire `object_store` block — correct credentials, wrong storage, no error. This is
+the docs-before-code rule paying out on a single word: "latest" is not the version that
+runs.
+
+**The order of Loki's allow-list fails in two different ways, and only one of them is
+loud.** Catch-all at the top of `resource_attributes`: the stream ends up with no label
+and Loki answers `400`. Catch-all at the top of `log_attributes`: the push returns `204`,
+`-verify-config` says `config is valid`, and every piece of useful structured metadata
+disappears in silence — the answer to "which tool call failed", gone, with everything
+green. Exactly one check sees the second case: the allow-list gate in
+`.github/workflows/images.yml`, which requires the catch-all last in all three sections.
+
+**Opening `/v1/logs` at the edge changes the reachable surface, so it is asserted where
+the rest of the ingest is.** The WAF custom rule on `otel.` used to pass only
+`POST /v1/metrics` carrying an `Authorization` header; version 3 of the rule, applied
+2026-08-20 through the Rulesets API, passes `POST /v1/logs` on the same condition —
+presence of the header, never its value. Measured against production straight after: no
+header gets `403` from the edge on **both** paths, a wrong bearer gets `401` from the
+Collector on **both**, and `/v1/traces` still gets `403`. Propagation is not instant —
+immediately after the PATCH `/v1/logs` was still answering `403`, and settled to `401`
+within a couple of minutes. Worth writing down, because a probe's first red run after a
+rule change is otherwise read as a broken rule. `smoke.yml` asserts the new route with a
+*wrong* bearer, the only shape the edge lets through.
+
+**The cost of the sixth service is not written here, because it has not been measured.**
+The €2.05 over 12 days above is five services on the plan that was running then; a Loki
+figure produced today would be an estimate, and this section has already watched one
+estimate ($10-13/month) get halved by the first real bill. It gets written after a week
+of real running — which cannot start until the R2 bucket, its S3 credentials and the
+Railway service exist, and those are Marco's.
 
 ## Observability of this project itself
 

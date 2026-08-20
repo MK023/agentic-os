@@ -8,8 +8,10 @@ in front of it, not only on the public endpoint. Everything settled lives in
 `DECISIONS.md`; everything verified lives in the commit that verified it. This
 file is only what is still open.
 
-**No engineering task blocks anything.** What follows is one thing to watch, one
-thing nobody downstream can fix, and a handful of judgement calls.
+**No engineering task blocks anything.** What follows is two things to watch, one
+thing nobody downstream can fix, and a handful of judgement calls — plus, since
+2026-08-20, three pieces of infrastructure that only Marco can create before Phase 1.5
+runs at all.
 
 ## 1. Claude Code's metric names, against a future version
 
@@ -163,6 +165,23 @@ named in one repo can be filled in another, and neither repo notices on its own.
 This one sat here as "a decision rather than a task" for the fifteen hours after it
 had already been decided and shipped.
 
+## 4. The WAF rule passes two paths now, and closing one again is manual
+
+Since 2026-08-20 the custom rule on `otel.marcobellingeri.dev` lets through
+`POST /v1/logs` as well as `POST /v1/metrics`, both only with an `Authorization` header
+present (never its value). That is **a change to the reachable surface**, not a config
+detail: it was opened for one reason, Loki ingesting Claude Code's log events.
+
+**If Loki ever leaves, `/v1/logs` has to be closed by hand, in the Cloudflare dashboard,
+in the same breath.** Nothing in this repository does it and nothing would notice: the
+rule lives outside git, and every gate would stay green in front of a route that no
+longer serves anybody. An open path nobody needs is exactly the surface this project
+spends a WAF rule reducing. `smoke.yml` catches the *opposite* mistake and only that one
+— it requires an exact `401` on `/v1/logs`, so closing the route at the edge while the
+assertion stands turns the probe red and names the moved surface. Leaving the route open
+after the reason for it is gone stays silent. That asymmetry is why this is written down
+as a task instead of trusted to a check.
+
 ## Still Marco's call
 
 - ~~Whether to add `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` /
@@ -198,26 +217,29 @@ had already been decided and shipped.
   `projectServiceUsage` are readable queries. Nothing watches the balance because no
   Railway token exists in CI, not because the platform hides it. See the table in
   `SECURITY.md`.
-- Grafana Loki as a Phase 1.5 — **not now, and no longer waiting on a date.** The
-  criterion was applied on 2026-08-14 after sixteen days of real use: the questions Phase
-  1 actually left unanswered were about the hub's own containers, and a targeted metric
-  plus a Sentry event answered each of them for the price of a query. It reopens on
-  either of two triggers, whichever comes first: a question that recurs **twice** and no
-  metric or Sentry event can answer, or **a paid Railway plan** — the free-credit budget
-  and the deploy queue are what make a sixth service expensive, and those belong to the
-  plan, not to Loki. Full reasoning, including why "richer data on the public site" is a
-  design question rather than a free upgrade, in `DECISIONS.md`.
+- ~~Grafana Loki as a Phase 1.5.~~ **Closed 2026-08-20: the design pass happened and
+  the code is written.** The trigger had fired on 2026-08-19 with the plan change, and
+  the pass produced `docs/superpowers/specs/2026-08-20-loki-fase-1.5-design.md` and
+  `docs/superpowers/plans/2026-08-20-loki-fase-1.5.md`; what changed about the design
+  while it was being built, and what measuring overturned in it, is in the Logs section
+  of `DECISIONS.md`. The caveat this entry had carried is untouched and stays closed:
+  **nothing log-derived goes on the public site**, the public surface is still exactly
+  three aggregate numbers, and Loki has no Tunnel route at all. What is *not* closed is
+  the infrastructure — see the three items below.
 
-  ~~The second trigger now has a date: the plan changes on 2026-09-01.~~ **The second
-  trigger has fired: the plan changed on 2026-08-19**, twelve days before the date this
-  paragraph was carrying. The condition was always "a paid plan", never a calendar — the
-  calendar was only how it was expected to arrive. So Loki has been "due for its design
-  pass" since 2026-08-19, not since some future date, and this file said otherwise for a
-  day. The pass starts from the caveat already written down: the public surface stays
-  three aggregate numbers, so the question to answer first is *which log-derived
-  aggregate can be public without becoming content*. Usage billing also changes the sum
-  it has to justify — a sixth service is now a line on a bill, not a slice of a fixed
-  free budget.
+- **Create the R2 bucket and its S3 credentials.** Loki's chunks and index live there;
+  without them the service starts against nothing. Marco's, like every other real
+  resource in this project.
+
+- **Create the `loki` service on Railway** from `railway/loki/`. Until it exists there
+  are six services in the repository and five on the platform, and this file says so
+  rather than letting the count drift.
+
+- **Set the four `LOKI_R2_*` service variables** — `LOKI_R2_BUCKET`,
+  `LOKI_R2_ENDPOINT`, `LOKI_R2_ACCESS_KEY_ID`, `LOKI_R2_SECRET_ACCESS_KEY`. The endpoint
+  goes in **without** a scheme: `-verify-config` accepts the `https://` form the
+  Cloudflare dashboard hands you and Loki dies at startup on it, which is the one error
+  in that file no gate can see.
 
 ## Closed since the last revision of this file
 

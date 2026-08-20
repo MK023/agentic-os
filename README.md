@@ -7,6 +7,13 @@ private hub: OTel Collector → Prometheus → Grafana plus a small FastAPI stat
 API, running as five services on **Railway** behind a **Cloudflare Tunnel**, with a
 sanitized public widget on [marcobellingeri.dev](https://marcobellingeri.dev).
 
+**Phase 1.5, written and gated, not deployed**: a private **Loki** log store as a sixth
+service, fed by a *separate* `logs` pipeline in the same Collector, with chunks and index
+on **Cloudflare R2** so the Railway volume holds only the active index and the shipper
+cache. It answers "which tool call failed in that session", which no metric here can. It
+gets no Tunnel route and the public surface does not change. It does not run until an R2
+bucket and a Railway service exist, and those are not code.
+
 [![tests](https://github.com/MK023/agentic-os/actions/workflows/tests.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/tests.yml)
 [![lint](https://github.com/MK023/agentic-os/actions/workflows/lint.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/lint.yml)
 [![sicurezza](https://github.com/MK023/agentic-os/actions/workflows/security.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/security.yml)
@@ -46,6 +53,10 @@ The public surface of the whole system is exactly three aggregate numbers.
 ```
 
 
+The diagram is Phase 1, which is what runs. Phase 1.5 adds one branch and changes
+nothing else on it: a second pipeline out of the same Collector, `logs` into `loki`, with
+no hostname, no Tunnel route and no path to the public widget.
+
 The three numbers are **indicative, not accounting**. Prometheus's own docs rule
 it out for billing-grade accuracy; that is the tool's stated scope, not a defect.
 
@@ -56,7 +67,7 @@ it out for billing-grade accuracy; that is the tool's stated scope, not a defect
 | `railway/` | Production: one Dockerfile + one config-as-code file per service, and the deployment guide (`railway/README.md`). **Start here** for infra. |
 | `docker/` | The local environment **and the single copy of every configuration file**. Railway images copy them at build time; Compose mounts them. |
 | `services/public-status-api/` | FastAPI service exposing the three whitelisted numbers. The only application code. |
-| `scripts/` | `verify-hub.sh`, the post-deploy smoke test. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
+| `scripts/` | `verify-hub.sh`, the post-deploy smoke test; `prova-privacy-log.sh`, the executed proof that identity and content do not reach the log store. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
 | `docs/` | Decisions, deployment, telemetry setup, local dry run. Index at the bottom. |
 
 ## Running it
@@ -69,12 +80,13 @@ Code client and check the privacy boundary.
 The gates, runnable locally:
 
 ```bash
-docker compose -f docker/docker-compose.yml config --quiet   # needs the 5 env vars set to anything
+docker compose -f docker/docker-compose.yml config --quiet   # needs the 9 env vars set to anything
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt
 zizmor --min-severity=high .github/workflows/
 checkov --config-file .checkov.yml -d .
 bash scripts/check-image-users.sh
+bash scripts/prova-privacy-log.sh                            # ~90s, Docker only
 ```
 
 ## Security
@@ -90,8 +102,15 @@ The short version:
 - **Metric labels are an allow-list**, so an attribute nobody has seen yet becomes
   a missing label, not a leak. `session_id` stays because without it concurrent
   sessions collapse into one series. This is measured, not theorised.
-- **Prometheus never gets a hostname**. Grafana and the status API sit behind
-  Cloudflare Access (email policy / service token + own bearer, two layers).
+- **Prometheus never gets a hostname**, and neither will Loki — in both cases because
+  there is no route, not because they cannot authenticate. Grafana and the status API sit
+  behind Cloudflare Access (email policy / service token + own bearer, two layers).
+- **Log attributes pass two allow-lists**, one in the Collector and one in Loki, each
+  able to hold on its own. This is the half that had to be *run* rather than read:
+  identity is on the log records and the vendor sends it always, redaction of prompts is
+  a default rather than a control, and one missing statement had quietly made the two
+  barriers dependent on each other. `scripts/prova-privacy-log.sh` is the proof, and it
+  runs in CI.
 - **Every image runs non-root and pinned to a version**, with one documented
   platform exception. Two different guards, because the sentence used to credit one
   guard with both jobs: `scripts/check-image-users.sh` reads `USER` and nothing else,
@@ -144,6 +163,36 @@ so the skip is deliberate; but a skipped required check reads as green, which th
 repository has already measured once. What is lost on those PRs is Sonar's own rule
 set, not coverage — `tests` enforces `--cov-fail-under=100` unconditionally, and
 lint, bandit, checkov and gitleaks all still run.
+
+**Four gates arrived with Phase 1.5, and three of them exist because a sentence was not
+a gate.** `images.yml` now checks that the `logs` pipeline does not contain the
+`prometheus` exporter — a rule `CLAUDE.md` had carried for weeks in a file no gate reads,
+about a pipeline that did not exist yet; that the log path is **two allow-lists and not a
+delete-list**, requiring `keep_keys` in *every* statement of the Collector's processor
+across all three contexts, plus `ignore_defaults` and the three catch-all `drop`s in
+Loki, and no identity or content key inside either list; and that **every service under
+`railway/` is both built and named by a later step**, which the comment above the build
+loop had only warned about in prose. The fourth executes instead of reading:
+`scripts/prova-privacy-log.sh` stands MinIO, Loki and the Collector up on a Docker
+network, pushes an OTLP payload carrying identity, content and a key nobody has ever
+seen, and then queries Loki back.
+
+**That last one is the only check here that verifies a security property rather than a
+shape**, and how it can fail is the interesting part. It asserts three things: the index
+is clean, nothing forbidden is queryable *in any form* — label, structured metadata or
+line — and `session.id`, `tool_name` and `error_type` **are** present, because an
+allow-list that dropped everything would pass the first two and read as a success. Two
+limits are declared rather than glossed: the payload is **synthetic**, so it proves the
+allow-lists discard what is put in front of them and not that the client sends only that;
+and the storage is MinIO rather than R2 — a single key differs, `insecure`, and the
+script checks that `limits_config` is identical to the file that ships. The recipe is
+`docs/LOCAL_DRY_RUN.md` §4-bis.
+
+**The allow-list gate was born broken**, which is why it is described in this much
+detail. Its first version looked for `keep_keys` in the whole processor's text, so
+turning the `log` context into a `delete_key` stayed green: the substring survived in the
+`resource` statement. It was caught by proving the gate red against a real break, not by
+changing the value it expected — a gate tested against its own branch tests nothing.
 
 One check runs *after* the merge rather than before it: `smoke.yml` hits the
 public endpoint on a schedule and fails on three things — a status that is not
@@ -237,7 +286,9 @@ Grafana/Prometheus is what the repo builds and how it is observed.
 **Live.**
 
 Tagged **v1.0.0** on 2026-08-13. The five services run, the Tunnel serves its
-three hostnames, and the public endpoint answers with real numbers. `smoke.yml`
+three hostnames, and the public endpoint answers with real numbers. Loki is **not** among
+them: Phase 1.5 is written, gated and proven locally, and it starts running the day the
+R2 bucket and the Railway service exist. `smoke.yml`
 watches it from outside on a schedule; `scripts/verify-hub.sh` is the fuller
 post-deploy check and stays manual.
 

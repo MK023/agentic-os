@@ -23,8 +23,10 @@ disclosure.
 
 ## What this project exposes, and what it deliberately does not
 
-The hub runs five services on Railway. **None of them has a public platform
-domain.** The only ingress is a Cloudflare Tunnel with three hostnames:
+The hub runs five services on Railway today, and six once Loki lands — the Phase 1.5
+log store is written and gated but its Railway service and R2 bucket do not exist yet, so
+nothing below describes it as running. **None of them has a public platform domain.** The
+only ingress is a Cloudflare Tunnel with three hostnames:
 
 - `grafana.`: Cloudflare Access with a single-email policy.
 - `status.`: Cloudflare Access with Service Auth, plus the application's own
@@ -36,12 +38,17 @@ domain.** The only ingress is a Cloudflare Tunnel with three hostnames:
   boundary gets described as stronger than it is.
 - `otel.`: no Access application, because Claude Code cannot send Access headers.
   Authentication is handled by the `bearertokenauth` extension **inside the OTel
-  Collector**. Since 2026-08-20 a WAF custom rule also blocks everything except
-  `POST /v1/metrics` **carrying an `Authorization` header** before it reaches the
-  tunnel — the header's presence only, never its value. Measured: a wrong or empty
-  bearer still reaches the Collector and still gets `401`; no header at all now gets
-  `403` from the edge. It narrows what can be *attempted*; it authenticates nothing,
-  and it is not what keeps the ingest closed.
+  Collector**. Since 2026-08-20 a WAF custom rule also blocks everything except a `POST`
+  to **two** paths — `/v1/metrics`, and `/v1/logs` since the Phase 1.5 logs pipeline —
+  each **carrying an `Authorization` header**, before it reaches the tunnel; the header's
+  presence only, never its value. Measured on both paths: a wrong or empty bearer still
+  reaches the Collector and still gets `401`; no header at all gets `403` from the edge.
+  `/v1/traces` is still `403`. It narrows what can be *attempted*; it authenticates
+  nothing, and it is not what keeps the ingest closed. **A second open path is a second
+  thing to assert**, so `smoke.yml` also sends a wrong bearer at `/v1/logs` and requires
+  the Collector's `401`: a route opened and not asserted is a route opened and forgotten.
+  Propagation is not instant — the new path answered `403` for a couple of minutes after
+  the rule was changed, which is a rule arriving, not a rule broken.
 
 A public hostname is not an access control. This follows the CVE-2026-28798
 pattern and is the reason this project's design starts from authentication at
@@ -57,6 +64,15 @@ because the decision does not need them: the same page states these endpoints
 route means no exposure to authenticate against. Declaring a vendor limitation that
 does not exist is the same failure as declaring a control that does not exist — it
 just points the other way.
+
+Loki never gets a hostname either, **for the same reason and not for a different
+one**: it has no route, so there is nothing to authenticate against. Two things it is
+*not*: it is not that Loki cannot authenticate, and it is not `auth_enabled: false` in
+`docker/loki.yaml`, which governs **multi-tenancy** — the `X-Scope-OrgID` header — and
+says nothing about access. A key that reads like "authentication off" is exactly what a
+later reader turns into a security claim, in whichever direction suits the sentence. The
+only thing that reaches Loki is the Collector, on Railway's private network, and Grafana
+querying it from behind Access.
 
 The public surface of the whole system is three aggregate numbers (sessions,
 tokens, cost). No session content, no free-form PromQL, and no path from the
@@ -101,8 +117,8 @@ re-verifies it, or declares itself unverified with the date of the last measurem
 
 | Control | Where it lives | Who re-verifies it | Last measured |
 |---|---|---|---|
-| WAF custom rule on `otel.` | Cloudflare dashboard | `smoke.yml` — three assertions requiring an exact `403` (no header, `GET /`, `POST /v1/traces`) | every scheduled run |
-| `bearertokenauth` on the ingest | in git (`docker/otel-collector-config.yaml`) | `smoke.yml` — two assertions requiring `401` with an empty and a wrong bearer | every scheduled run |
+| WAF custom rule on `otel.` — since 2026-08-20 it passes **two** paths, `POST /v1/metrics` and `POST /v1/logs` | Cloudflare dashboard | `smoke.yml` — three assertions requiring an exact `403` (no header, `GET /`, `POST /v1/traces`) | every scheduled run |
+| `bearertokenauth` on the ingest | in git (`docker/otel-collector-config.yaml`) | `smoke.yml` — three assertions requiring `401`: an empty and a wrong bearer on `/v1/metrics`, a wrong bearer on `/v1/logs` | every scheduled run |
 | Access policy on `grafana.` (single email) | Cloudflare dashboard | `sorveglianza.yml` — runs `scripts/verify-hub.sh` daily; a `200` without credentials is treated as the failure it is | every scheduled run |
 | Access + Service Auth on `status.` | Cloudflare dashboard | same job, same script: it calls `/status` exactly as the site's Worker does, with the Access service token *and* the bearer | every scheduled run |
 | Workspace usage limit ($15 soft / $30 hard) | Railway workspace | **still nobody for the *limit*** — see below. Since 2026-08-20 `sorveglianza.yml` watches the *consumption* instead, against ceilings in `docs/sorveglianza-baseline.json` | 2026-08-20, set and confirmed by the operator |

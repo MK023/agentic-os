@@ -105,11 +105,13 @@ processors:
   # Le chiavi sono l'ESITO DELLA MISURA del 2026-08-20 (client 2.1.235), non una
   # supposizione — vedi docs/telemetry-baseline.json e docs/LOCAL_DRY_RUN.md §4.
   #
-  # DUE statement, e il primo non e' ridondanza: `keep_keys(log.attributes, ...)`
-  # tocca solo gli attributi del RECORD, mentre l'exporter OTLP spedisce la
-  # resource per definizione e Loki la memorizza. Sulle metriche quel lato lo
-  # chiude `resource_to_telemetry_conversion: false`; sui log quell'interruttore
-  # non esiste.
+  # TRE statement, uno per contesto, e nessuno dei tre e' ridondante.
+  # `keep_keys(log.attributes, ...)` tocca solo gli attributi del RECORD: la
+  # resource l'exporter OTLP la spedisce per definizione e Loki la memorizza —
+  # sulle metriche quel lato lo chiude `resource_to_telemetry_conversion: false`,
+  # sui log quell'interruttore non esiste. E gli attributi di SCOPE non li tocca
+  # nessuno dei due: erano il buco misurato il 2026-08-20, vedi lo statement
+  # `scope` qui sotto.
   #
   # `log.attributes` e non `attributes` nudo: il Collector riscrive la forma nuda
   # e logga "please rewrite them accordingly". `validate` NON lo intercetta —
