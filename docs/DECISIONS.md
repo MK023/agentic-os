@@ -114,7 +114,13 @@ drawn about the runtime.
 What is *actually* known, and the distinction matters because overcorrecting would
 repeat the error in the other direction: the field is **in the schema**, it is **not
 in the config-as-code documentation** (checked), and **nobody has measured whether
-the Hobby plan enforces it**. So the honest statement is that the workspace usage
+the Hobby plan enforces it**. Two things were added to that on 2026-08-20, both read
+from Railway's public GraphQL collection, which needs no token:
+`serviceInstanceLimitOverride` and `serviceInstanceLimits` are **queries**, so the
+experiment below can be *verified* rather than merely declared; and `status-api`
+currently has **no override set** — its deploy config carries only
+`numReplicas: 1`. So the experiment is still unrun, and now it has a way to check
+its own result. So the honest statement is that the workspace usage
 limit is the only backstop anyone has *verified*, not the only one that exists.
 Declaring `limitOverride` on `status-api` — the one service reachable from the
 internet — is a cheap experiment, and it must be measured before this paragraph is
@@ -704,6 +710,20 @@ deployments, metrics and feature flags — nothing about billing or usage limits
 tool in this repository can read the configured value back, and no gate can notice if
 it is removed. That is the same class as `PORT`: a control that lives outside git,
 whose disappearance is silent.
+
+**Checked against the platform rather than against one tool's menu, 2026-08-20.**
+Railway publishes its GraphQL collection at a URL that needs no token, and reading it
+splits that paragraph in two. The *limit* is confirmed unreadable: the collection
+carries `usageLimitSet` and `usageLimitRemove` as mutations and no query that reads a
+workspace limit back — the only limit-bearing read, `agentUsage`, is about agent spend.
+But *spend* is a different matter: `usage`, `estimatedUsage` and `projectServiceUsage`
+are all queries taking a `workspaceId`. So wherever this project has written that the
+balance cannot be watched from here, the accurate sentence is that **it is not watched,
+because no Railway token exists in CI** — which is Marco's decision, the same one the
+three `verify-hub.sh` secrets are waiting on. Arguing from a tool's absence to a
+platform's absence is exactly the mistake this file already records twice, on
+`RAILWAY_GIT_COMMIT_SHA` and on `limitOverride`. The full table of controls that live
+outside git, and who re-verifies each, is in `SECURITY.md`.
 
 **A WAF custom rule fronts the OTLP ingest, and it is not the authentication.**
 Deployed 2026-08-20 on `otel.marcobellingeri.dev`: everything except `POST
