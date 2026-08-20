@@ -203,7 +203,7 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
    application components (status API here, widget in the site repo).
 
 2. **Coverage on new code**: 100% on the status API, **enforced** by
-   `--cov-fail-under=100` in CI (met: 25 tests, 100% on `main.py` and
+   `--cov-fail-under=100` in CI (met: 55 tests, 100% on `main.py` and
    `sentry.py`). No repo-wide threshold — line coverage on Dockerfiles and YAML
    means nothing. Until 2026-08-13 this number was measured and *not* enforced:
    a contract written in a README that no gate checks is a wish, and it is the
