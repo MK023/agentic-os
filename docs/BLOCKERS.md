@@ -46,30 +46,38 @@ failing, deliberately: a gate that cannot go green becomes a `continue-on-error`
 within a month.
 
 Exposure is low — Grafana has no platform domain and sits behind Cloudflare
-Access with a single-email policy. **The action is to watch, not to work**: when
-Dependabot proposes a newer `grafana/grafana`, check whether the count drops in
-the job log. If it is still stuck in a few weeks, an upstream issue is worth
-opening.
+Access with a single-email policy. **The action is to watch, not to work** — and as
+of 2026-08-20 the watch has a result that inverts its own instruction. This
+paragraph used to say "when Dependabot proposes a newer `grafana/grafana`, check
+whether the count drops". It was measured, and the count *rises*: see "13.2.0 is a
+regression" below. The standing action is now to **stay on 13.1.x and reject 13.2.0**,
+which `.github/dependabot.yml` does by name.
 
-**Triaged 2026-08-14 by the criteria the model actually asks for — exploitability,
-not existence.** "15 HIGH" is a count, and a count is not a risk assessment. Read
-what follows as a statement about **`13.1.3`'s CVE set**, which is not the set the
-image carries today — see "what changed since" at the end of this section:
+**Triaged by the criteria the model actually asks for — exploitability, not
+existence.** A count is not a risk assessment. First done 2026-08-14 on `13.1.3`'s
+set; **re-run 2026-08-20 on `13.1.4`'s**, which is what production carries, because
+the set had moved and the old numbers described an image nobody was running:
 
-- **CISA KEV: none of the eleven.** Catalogue of 1665 entries, released
-  2026-08-11. Nothing here is being exploited in the wild.
-- **EPSS: the worst is 0.0078** — CVE-2026-33814, a 0.78% chance of exploitation
-  in 30 days, 52nd percentile. Every other one is lower, down to 0.0016. This is
-  the ordinary background of open-source CVEs, not a signal.
-- **Reachability: the two `tempo` CVEs have no configured code path here.** The
-  only provisioned datasource is Prometheus (`docker/grafana/provisioning/
-  datasources/prometheus.yml`); there is no Tempo datasource and no S3 anywhere in
-  `docker/grafana/`. They ship inside the binary as vendored modules and nothing
-  calls them.
+- **CISA KEV: none of the thirteen.** Catalogue version `2026.08.19`, 1671 entries,
+  115 of them from 2026 — so a current catalogue that does contain this year, which is
+  what makes "none" mean something rather than "the feed is stale". Nothing here is
+  being exploited in the wild.
+- **EPSS: the worst is 0.0066** — CVE-2026-39821 (`x/net/idna` via `net/http`), a
+  0.66% chance of exploitation in 30 days, **48th percentile**. Every other one is
+  lower, down to 0.0016 for the `tempo` information-disclosure. Both numbers moved
+  *down* from the 2026-08-14 triage, whose worst was 0.0078: this is the ordinary
+  background of open-source CVEs, not a signal.
+- **Reachability: the two `tempo` CVEs have no configured code path here.**
+  Re-checked 2026-08-20: the only provisioned datasource is still Prometheus
+  (`docker/grafana/provisioning/datasources/prometheus.yml`), there is no Tempo
+  datasource, and the only match for "tempo" under `docker/grafana/` is the Italian
+  word inside a dashboard comment. No S3 at all. They ship inside the binary as
+  vendored modules and nothing calls them.
 - **`13.1.3` was the newest release** (checked against the upstream release list on
   2026-08-14; it shipped 2026-08-07). So "wait for Dependabot" was, at the time,
   waiting for something that did not exist yet — the absence of a bump was not
-  neglect. That has since stopped being true; see below.
+  neglect. **That stopped being true on 2026-08-18, and the newer release turned out
+  to be worse rather than late** — see "13.2.0 is a regression" below.
 
 So the watch is not just cheap, it is **correct by the same criteria that would
 have made it blocking**. What would change the posture is a **KEV entry**, not a
@@ -84,8 +92,11 @@ Dependabot bumped `grafana/grafana` to **13.1.4** on 2026-08-19 (PR #80), pinned
 digest in `docker/docker-compose.yml` and `railway/grafana/Dockerfile`. The `images`
 job on `7d92dcd` (2026-08-20) reports **13 distinct HIGH CVEs** across the image's
 three scanned Go binaries — 2 in `github.com/grafana/tempo`, 11 against `stdlib
-v1.26.3` and 9 against `stdlib v1.26.4`, the last two overlapping. **`CVE-2026-33814`,
-the CVE the 14/08 triage named as its worst by EPSS, is not among them.**
+v1.26.3` and 9 against `stdlib v1.26.4`, the last two overlapping. An independent
+local scan of `grafana/grafana:13.1.4` on the same day, same tool and flags, returns
+the same 13, which is the check that the CI count is the image's and not the build's.
+**`CVE-2026-33814`, the CVE the 14/08 triage named as its worst by EPSS, is not among
+them** — though 13.2.0 puts it back.
 
 So the count moved and so did the set: the KEV and EPSS lines above were measured
 against `13.1.3` and have **not** been re-measured. They are kept because the
@@ -94,10 +105,33 @@ current statement about production. The two `tempo` findings are the one part th
 carries over unchanged, and for the same reason: still no Tempo datasource, still no
 S3, still nothing that calls them.
 
-**Re-running the triage on `13.1.4`'s set is the open item here**, and it is still a
-watch rather than a task: the fixes remain upstream-only, exposure is unchanged
-(Access, single-email policy, no platform domain, no public numbers passing through
-Grafana), and what would change the posture is still a KEV entry, not a higher count.
+**`13.2.0` is a regression, and this is the part worth keeping.** Upstream published
+`v13.2.0` and `v13.1.4` on the same day, 2026-08-18. Scanned both on 2026-08-20 with
+the same tool and flags the CI uses — trivy 0.70.0, `--severity HIGH,CRITICAL
+--ignore-unfixed`:
+
+| | distinct HIGH/CRITICAL with a fix |
+|---|---|
+| `13.1.4` (what runs) | **13** |
+| `13.2.0` (the newer minor) | **28** |
+
+**It resolves zero of the thirteen and adds fifteen.** One of its binaries vendors
+`stdlib v1.25.7` — *older* than the 1.26.3/1.26.4 in 13.1.4 — alongside an older
+`x/net` (v0.51.0), `x/text`, `otel` and `grpc`, and it brings back **CVE-2026-33814**,
+the very CVE the 2026-08-14 triage had named as its worst.
+
+So "wait for Dependabot" would have made this worse, and it would have arrived
+**green**: the `images` job prints third-party image CVEs without failing, on purpose,
+so a bump from 13 to 28 changes nothing anybody sees. `.github/dependabot.yml` now
+ignores `grafana/grafana` **13.2.0 by name**, in both places the image is pinned. Only
+that version, not the 13.2.x line: a 13.2.1 rebuilt against a current Go should be
+re-measured and taken, and 13.1.x is still maintained, so staying here is not falling
+behind.
+
+**The rest is unchanged and still a watch rather than a task**: the fixes remain
+upstream-only, exposure is unchanged (Access, single-email policy, no platform domain,
+no public numbers passing through Grafana), and what would change the posture is still
+a KEV entry, not a higher count.
 
 ## 3. The smoke probe cannot see a short outage — closed from the other repo
 
