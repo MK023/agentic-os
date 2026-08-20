@@ -29,8 +29,13 @@ three aggregate numbers are public, everything else stays inside the project.
   cloudflared (`/ready`) and **requiring a `PORT` service variable to work at all**.
   On the other three `SUCCESS` still only means "the container started", **and that is
   a closed decision, not a gap**: their health routes would be unauthenticated, and a
-  Prometheus `up` scrape already watches them every 15s for as long as they live, which
+  Prometheus `up` scrape watches each of them every 15s for as long as they live, which
   is more than a healthcheck does — Railway stops probing once the deploy is live.
+  **That sentence was false for Grafana until 2026-08-20**: `docker/prometheus.yml`
+  scraped the Collector, cloudflared and itself, never Grafana, while this file already
+  claimed otherwise. The premise was made true rather than the decision rewritten. An
+  asserted control that is absent is worse than a declared gap: the reader stops looking
+  for it.
 
 ## Commands
 

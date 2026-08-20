@@ -600,6 +600,52 @@ jobs:
           print(f"nessun endpoint --web.* acceso su prometheus (ammessi solo i flag che restringono: {sorted(RESTRINGONO)})")
           PY
 
+      # La regola di casa dice: una sola copia di ogni config, e il compose da' a ogni
+      # container un alias di rete uguale al suo DNS interno Railway, cosi' gli
+      # hostname dentro quelle config sono corretti in ENTRAMBI gli ambienti.
+      # Non era vero. Trovato il 2026-08-20 facendo girare lo stack completo in
+      # locale: il job di scrape su `grafana.railway.internal` risultava `up = 0` con
+      # `no such host`, perche' Grafana, cloudflared e status-api non avevano alias.
+      # In produzione avrebbe funzionato — quindi il guasto era LOCALE e silenzioso,
+      # cioe' il tipo che fa dire "in locale non si puo' provare" e smettere di
+      # provare.
+      - name: ogni hostname .railway.internal ha il suo alias nel compose
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, sys, yaml
+          compose = yaml.safe_load(open("docker/docker-compose.yml"))
+          servizi = compose["services"]
+          alias = set()
+          for s in servizi.values():
+              rete = (s.get("networks") or {})
+              if isinstance(rete, dict):
+                  alias |= set((rete.get("default") or {}).get("aliases") or [])
+          citati = set()
+          for f in pathlib.Path("docker").rglob("*"):
+              if f.is_file() and f.suffix in (".yml", ".yaml", ".json"):
+                  citati |= set(re.findall(r"[a-z0-9-]+\.railway\.internal", f.read_text()))
+          # Un pavimento: se un rename o una riorganizzazione svuota l'insieme, questo
+          # gate direbbe "ok" piu' forte di prima. Una prova che riporta "tutto a posto"
+          # quando non c'era niente da guardare e' la stessa bugia di un allarme che non
+          # puo' scattare.
+          if len(citati) < 4:
+              print(f"::error::trovati solo {len(citati)} hostname .railway.internal sotto docker/: l'insieme si e' svuotato, il gate non sta guardando niente")
+              sys.exit(1)
+          fallimenti = []
+          for h in sorted(citati):
+              nome = h.split(".")[0]
+              if nome not in servizi:
+                  fallimenti.append(f"{h} e' citato in docker/ ma non esiste nessun servizio `{nome}` nel compose")
+              elif h not in alias:
+                  fallimenti.append(f"{h} e' citato in docker/ e il servizio `{nome}` NON dichiara quell'alias: in produzione risolve, in locale no, e il dry run misura una cosa diversa da quella che gira")
+          if fallimenti:
+              for f in fallimenti:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          print(f"ok: {len(citati)} hostname citati, tutti con il loro alias: {sorted(citati)}")
+          PY
+
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
           python3 - <<'PY'

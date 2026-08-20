@@ -96,3 +96,25 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # Grafana. Aggiunto il 2026-08-20 non per completezza ma perche' una frase lo
+  # dava gia' per fatto: la decisione chiusa "niente healthcheckPath" (DECISIONS.md,
+  # BLOCKERS.md, CLAUDE.md) si regge sull'argomento "tanto uno scrape `up` li guarda
+  # tutti, e piu' a lungo di un healthcheck". Per Grafana non era vero da nessuna
+  # parte. Delle due strade — riscrivere la decisione o rendere vera la premessa —
+  # questa e' quattro righe e lascia il sistema con un testimone in piu'.
+  # `/metrics` di Grafana non e' autenticato ma sta sulla rete privata, e non e'
+  # dietro il Tunnel: nessuna rotta nuova verso l'esterno.
+  #
+  # I tetti non sono decorazione. Il `sample_limit` stava solo su otel-collector,
+  # con scritto accanto "e' qui che si paga": era vero con tre job. Misurato subito
+  # dopo aver aggiunto questo, sullo stack vero: 3186 campioni per scrape da Grafana
+  # contro i ~305 del Collector. Un Grafana compromesso poteva servire un /metrics da
+  # centomila serie e Prometheus le prendeva tutte. Superata la soglia fallisce
+  # l'INTERO scrape, ed e' la scelta rumorosa voluta.
+  - job_name: grafana
+    sample_limit: 6000
+    label_limit: 30
+    label_value_length_limit: 128
+    static_configs:
+      - targets: ["grafana.railway.internal:3000"]
