@@ -691,13 +691,51 @@ for. The watchdog lost its own interval in the same change — two clocks for on
 cadence drift apart, and these two did: the cache timestamp is taken before the
 queries and the probe's after, so the probe would have run once every *two* windows.
 
-**The usage limit is named as the single backstop, and this repository has no record
-that it is set.** Recommended values are a $15 email alert and a $30 hard limit —
-deliberately far from the ~$10/month measured spend, because the hard limit takes
-every workload offline and a limit set near normal spend is a self-inflicted outage.
-Until the configured value and a verification date are written here, treat the
-backstop as **unverified**: naming a control without evidence it exists is the same
-failure this project already corrected once for edge rate limiting.
+**The usage limit is set: $15 soft, $30 hard, on the workspace, since 2026-08-20.**
+The paragraph this replaces said the recommended values were $15/$30 and that the
+backstop had to be treated as **unverified** until a configured value and a date were
+written here. They now are. The values are deliberately far from the ~$10/month
+measured spend, because the hard limit takes every workload offline and a limit set
+near normal spend is a self-inflicted outage.
+
+One honest limit remains, and it is not cosmetic: **this is confirmed by the operator,
+not measured from here.** Railway's MCP surface exposes projects, services, variables,
+deployments, metrics and feature flags — nothing about billing or usage limits — so no
+tool in this repository can read the configured value back, and no gate can notice if
+it is removed. That is the same class as `PORT`: a control that lives outside git,
+whose disappearance is silent.
+
+**A WAF custom rule fronts the OTLP ingest, and it is not the authentication.**
+Deployed 2026-08-20 on `otel.marcobellingeri.dev`: everything except `POST
+/v1/metrics` is blocked at the edge. Access control stays where it was —
+`bearertokenauth` inside the Collector — because a public hostname is not an access
+control and a rule that can be edited in a dashboard is not a credential check. What
+the rule buys is that scanners, wrong methods and non-existent paths stop before they
+cross the tunnel, which since 2026-08-19 is measured in money rather than CPU.
+
+Measured immediately after deploying, against production:
+
+| request | result | who answered |
+|---|---|---|
+| `POST /v1/metrics`, no `Authorization` | `401` | the Collector |
+| `POST /v1/metrics`, empty bearer | `401` | the Collector |
+| `GET /`, `GET /v1/metrics` | `403` | the edge |
+| `POST /v1/traces`, `POST /v1/logs` | `403` | the edge |
+| `POST /v1/metrics/` (trailing slash) | `403` | the edge |
+
+Real ingest kept landing across the change (86.6M → 90.5M tokens counted).
+
+Two things the rule deliberately does **not** do. It does not test the `Authorization`
+header, because `smoke.yml` proves the ingest authenticates by sending a request
+*without* one and requiring `401` — blocking that at the edge would turn the proof
+into a `403` that stays green even if the Collector's `auth:` block were deleted. And
+it never matches the header's **value**: a WAF rule is readable from the dashboard and
+the API, so a token in there is a secret outside the secret store. The trailing-slash
+case is blocked on purpose and is safe today because the OTLP HTTP exporter sends the
+path exactly; if that ever changes, the symptom is a silent stop in ingest.
+
+Free plan, so five custom rules total and no `Log` action — verified in the vendor's
+availability table, not assumed. This uses one.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.

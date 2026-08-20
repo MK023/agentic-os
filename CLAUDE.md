@@ -126,8 +126,13 @@ those files are correct in both places. Never fork a config to "fix it for local
   **Since 2026-08-19 that gap costs money, not just CPU**: the project is on Railway's
   Hobby plan, billed on usage. **Railway's schema DOES expose a per-service cap**
   (`deploy.limitOverride`), contrary to what this line said on 2026-08-19 — it is
-  undocumented in config-as-code, unmeasured on Hobby, and undeclared here. The workspace usage limit is therefore the only
-  backstop there is, and the Worker's rate limiter stopped being a tidiness item.
+  undocumented in config-as-code, unmeasured on Hobby, and undeclared here.
+  **Since 2026-08-20 there are two backstops, and neither is a rate limiter**: the
+  workspace usage limit ($15 soft / $30 hard, set by the operator — no tool here can
+  read it back) and a WAF custom rule on `otel.` that blocks everything except
+  `POST /v1/metrics` at the edge (measured: 401 on the two legitimate cases, 403 on
+  five others). The rule is defence in depth, never the auth — that stays
+  `bearertokenauth` inside the Collector. The Worker's rate limiter is still missing.
   An asserted control that does not exist is worse than a declared absence.
 
 ## References (read on demand)
