@@ -77,7 +77,7 @@ jobs:
       - name: mutmut sulle funzioni bloccanti (autorizzazione, costo, watchdog)
         working-directory: services/public-status-api
         env:
-          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence _token_configurato verifica_dsn"
+          FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence _check_zero_volume _etichetta_sicura _valore_pubblico _token_configurato verifica_dsn"
         run: |
           set -euo pipefail
           # Se una funzione cambia nome il gate deve rompersi QUI. Senza questo

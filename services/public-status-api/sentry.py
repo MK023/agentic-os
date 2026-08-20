@@ -64,7 +64,14 @@ def _endpoint(dsn: str | None) -> str | None:
     return f"https://{match.group(2)}/api/{match.group(3)}/envelope/"
 
 
-async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None:
+async def capture_exception(exc: Exception, *, tags: dict | None = None, value: str | None = None) -> None:
+    """`value` sostituisce `str(exc)` nel corpo dell'evento.
+
+    Serve per le eccezioni che NON abbiamo scritto noi: il messaggio di
+    `httpx.HTTPStatusError` contiene l'URL della richiesta, cioe' hostname interno e
+    query. Il tipo resta quello vero — e' la meta' che non e' un segreto, ed e' anche
+    come Sentry tiene separati due guasti diversi.
+    """
     dsn = os.environ.get("SENTRY_DSN")
     url = _endpoint(dsn)
     if not url:
@@ -78,7 +85,7 @@ async def capture_exception(exc: Exception, *, tags: dict | None = None) -> None
         "level": "error",
         "environment": "public-status-api",
         "tags": tags or {},
-        "exception": {"values": [{"type": type(exc).__name__, "value": str(exc)}]},
+        "exception": {"values": [{"type": type(exc).__name__, "value": value or str(exc)}]},
     }
     # Which deploy an error came from. Railway injects RAILWAY_GIT_COMMIT_SHA
     # into every deployment, so the release is a fact about what is running

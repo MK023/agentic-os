@@ -490,6 +490,7 @@ def _reset_stato_di_processo(monkeypatch) -> _OrologioFinto:
     # blocco — nel modo giusto, cioe' subito e rumorosamente.
     monkeypatch.setattr(main, "_INFRA_ALERTS_SENT", {})
     monkeypatch.setattr(main, "_status_cache", None)
+    monkeypatch.setattr(main, "_ZERO_PASSES", 0)
     orologio = _OrologioFinto()
     monkeypatch.setattr(main, "time", orologio)
     return orologio
@@ -1064,3 +1065,292 @@ def test_only_status_is_routed_at_all():
     # not an access control, and the schema names the auth scheme it protects.
     for percorso in ("/openapi.json", "/docs", "/redoc"):
         assert client.get(percorso).status_code == 404, percorso
+
+
+def test_a_trailing_slash_is_a_404_not_a_redirect_that_echoes_the_host():
+    # `redirect_slashes` e' acceso di default, quindi `/status/` rispondeva 307 PRIMA
+    # che l'autenticazione venisse valutata, con una `Location` assoluta costruita
+    # sull'header `Host` del chiamante — e in schema `http`, perche' uvicorn gira senza
+    # `--forwarded-allow-ips` e ignora `X-Forwarded-Proto`. Non era una falla aperta
+    # (h11 rifiuta CRLF negli header, quindi niente response splitting), ma era un
+    # valore controllato da fuori riflesso senza credenziali, e chi avesse seguito quel
+    # redirect avrebbe rispedito il bearer in chiaro verso un host scelto da altri.
+    #
+    # In produzione Access risponde 401 prima: cioe' e' il controllo di qualcun altro a
+    # salvare questo, che e' esattamente il ragionamento che SECURITY.md rifiuta per
+    # l'ingest OTLP. Nessun consumatore usa la barra finale — il Worker del sito
+    # interroga `https://status.marcobellingeri.dev/status` e verify-hub.sh
+    # `${STATUS_URL}/status` — quindi la rotta non ha varianti da servire.
+    risposta = client.get("/status/", headers={"Host": "attaccante.example"}, follow_redirects=False)
+
+    assert risposta.status_code == 404
+    assert "location" not in risposta.headers
+
+
+@respx.mock
+def test_the_answer_declares_that_it_must_not_be_stored_or_sniffed():
+    # Gli unici header di risposta erano `date`, `server`, `content-length` e
+    # `content-type`: una risposta autenticata, vecchia fino a un minuto per via della
+    # cache applicativa, che non diceva niente di se' stessa a chi la riceve.
+    #
+    # `no-store` e non un `max-age`: la finestra di freschezza di questi tre numeri e'
+    # gia' STATUS_CACHE_TTL_S, e una seconda cache a valle la sommerebbe alla prima —
+    # fino a due minuti di eta' per un numero che dichiara di valerne uno. E' la stessa
+    # ragione per cui il watchdog non ha un orologio suo: due orologi per la stessa
+    # cadenza si sfasano sempre. Il Worker del sito la pensa uguale e lo scrive
+    # (`messo in cache al bordo diventerebbe vecchio due volte`), e la sua copia
+    # last-known-good e' una Response che costruisce lui, non questa: `no-store` qui
+    # non gliela tocca.
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+
+    risposta = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert risposta.status_code == 200
+    assert risposta.headers["cache-control"] == "no-store"
+    assert risposta.headers["x-content-type-options"] == "nosniff"
+
+
+@respx.mock
+def test_the_cached_answer_declares_the_same_thing_as_the_fresh_one(monkeypatch):
+    # Gli header si mettono PRIMA del ramo che serve dalla cache, non dopo: una
+    # risposta su due senza `no-store` e' peggio di nessuna, perche' rende il difetto
+    # intermittente. Il 99% delle risposte in produzione esce da qui.
+    _reset_stato_di_processo(monkeypatch)
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    _mock_persistence("0")
+
+    prima = client.get("/status", headers={"Authorization": "Bearer test-token"})
+    seconda = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert seconda.json() == prima.json()
+    assert len(respx.calls) == 4  # tre query + la sonda, una volta sola: la seconda e' cache
+    assert seconda.headers["cache-control"] == "no-store"
+    assert seconda.headers["x-content-type-options"] == "nosniff"
+
+
+@respx.mock
+def test_the_upstream_report_names_the_failure_and_not_the_internal_url(monkeypatch):
+    # `str(httpx.HTTPStatusError)` contiene l'URL intero della richiesta, cioe' il DNS
+    # interno di Railway e la PromQL completa: le due cose che SECURITY.md dichiara
+    # private. Verso il chiamante non usciva niente (502 generico, corretto), ma
+    # uscivano verso Sentry, che e' un terzo. Il tipo dell'eccezione e lo stato HTTP
+    # bastano a sapere cosa e' successo; l'URL serviva solo a chi gia' lo conosce.
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    risposta = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert risposta.status_code == 502
+    evento = _evento_inviato(sentry_call)["exception"]["values"][0]
+    # Il TIPO resta: e' l'unica meta' del racconto che non e' un segreto, ed e' anche
+    # la chiave con cui il limitatore tiene separati due guasti diversi.
+    assert evento["type"] == "HTTPStatusError"
+    assert evento["value"] == "upstream query failed: HTTP 500"
+    intero = json.dumps(_evento_inviato(sentry_call))
+    assert "railway.internal" not in intero
+    assert "prometheus" not in intero
+    assert "claude_code" not in intero
+    assert "max_over_time" not in intero
+
+
+@respx.mock
+def test_an_upstream_that_is_not_an_http_status_still_says_nothing_extra(monkeypatch):
+    # L'altra meta' del ramo 502: KeyError/ValueError/ArithmeticError non hanno uno
+    # stato HTTP, e il loro `str` non e' scritto da noi. Nessun messaggio altrui
+    # nell'evento — il tipo lo dice gia'.
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    respx.get("http://prometheus:9090/api/v1/query").mock(
+        return_value=httpx.Response(200, json={"unexpected": "shape"})
+    )
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    risposta = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert risposta.status_code == 502
+    evento = _evento_inviato(sentry_call)["exception"]["values"][0]
+    assert evento["type"] == "KeyError"
+    assert evento["value"] == "upstream query failed"
+
+
+@respx.mock
+def test_a_label_from_the_ingest_side_cannot_write_freely_into_a_sentry_event(monkeypatch):
+    # `model` e `type` arrivano dalla serie Prometheus, cioe' da chi possiede
+    # OTLP_INGEST_TOKEN: finivano verbatim nel corpo di un evento Sentry. Il tetto
+    # MAX_PRICING_GAPS impediva gia' l'esaurimento di quota, non la stringa arbitraria.
+    # Cio' che serve sapere e' "esiste un modello sconosciuto", non i suoi duecento
+    # caratteri: si tronca e si sanifica prima di costruire l'eccezione.
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    veleno = "<script>alert(1)</script>\n" + "A" * 300
+    _mock_scalars()
+    _mock_cost([_serie(veleno, "input", 1_000)])
+    _mock_persistence("0")
+
+    risposta = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert risposta.status_code == 200
+    valore = _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+    assert "<" not in valore and ">" not in valore and "\n" not in valore
+    assert "A" * (main.MAX_LABEL_CHARS + 1) not in valore
+    # Sanificata, non cancellata: l'evento deve restare azionabile — dice ancora che
+    # e' un `model` e quale, per quanto se ne puo' ripetere.
+    assert valore.startswith("model 'scriptalert1scriptAAA")
+    assert main._etichetta_sicura(veleno) in valore
+    assert len(main._etichetta_sicura(veleno)) == main.MAX_LABEL_CHARS
+
+
+def test_the_label_sanitiser_keeps_the_names_that_actually_exist():
+    # Sanificare non deve rendere illeggibili i valori veri: i nomi dei modelli
+    # emessi in produzione hanno lettere, cifre, punti e trattini, e devono
+    # attraversare invariati — altrimenti il report che serve a correggere la
+    # tabella dei prezzi nomina una chiave che non esiste.
+    for vero in ("claude-opus-5", "claude-haiku-4-5-20251001", "cacheCreation", "input"):
+        assert main._etichetta_sicura(vero) == vero
+    # Un'etichetta assente resta distinguibile da una vuota.
+    assert main._etichetta_sicura(None) == "None"
+
+
+@respx.mock
+def test_three_zeros_that_last_are_said_out_loud_instead_of_being_served_in_silence(monkeypatch):
+    # Il guasto silenzioso che restava scoperto: un Prometheus VIVO con il TSDB
+    # svuotato risponde 200 con result vuoto, i tre numeri leggono zero, e
+    # `_check_persistence` trova la sua serie, legge zero fallimenti e tace. Verde
+    # ovunque, volume perso.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+
+    for _ in range(main.ZERO_PASSES_BEFORE_ALERT - 1):
+        assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+        orologio.avanza(main.STATUS_CACHE_TTL_S + 1)
+    # Il confine, non solo l'effetto: una soglia che scatta prima e' un allarme su una
+    # mattina tranquilla, e un allarme che grida al lunedi' mattina si spegne.
+    assert not sentry_call.called
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    evento = _evento_inviato(sentry_call)
+    assert evento["exception"]["values"][0]["type"] == "PublicNumbersAllZero"
+    assert evento["exception"]["values"][0]["value"] == (
+        "the three public numbers have read zero for 60 consecutive passes (~1h of "
+        "polling) while Prometheus answered 200 — either nothing has run since "
+        "yesterday, or the data is gone; check the prometheus-data volume before "
+        "assuming the first"
+    )
+    assert evento["tags"]["endpoint"] == "status"
+
+
+@respx.mock
+def test_a_single_number_that_moves_puts_the_zero_counter_back_to_the_start(monkeypatch):
+    # Il contatore misura zeri CONSECUTIVI. Senza l'azzeramento, una sessione ogni
+    # cinquanta passate non impedirebbe l'allarme, e l'allarme direbbe una cosa falsa —
+    # che i tre numeri sono fermi a zero — proprio mentre si muovono.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_persistence("0")
+    _mock_scalars(sessions="0", tokens="0")
+    vuota = _mock_cost([])
+
+    for _ in range(main.ZERO_PASSES_BEFORE_ALERT - 1):
+        assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+        orologio.avanza(main.STATUS_CACHE_TTL_S + 1)
+
+    # Una sessione. Il conteggio riparte da capo.
+    _mock_scalars(sessions="1", tokens="10")
+    vuota.mock(return_value=httpx.Response(200, json={"data": {"result": []}}))
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    orologio.avanza(main.STATUS_CACHE_TTL_S + 1)
+    assert main._ZERO_PASSES == 0
+
+    _mock_scalars(sessions="0", tokens="0")
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+
+    assert not sentry_call.called
+
+
+@respx.mock
+def test_an_unauthenticated_caller_reaches_neither_prometheus_nor_sentry(monkeypatch):
+    # Il commento accanto al ramo 502 affermava che quella cattura era "l'unica che un
+    # chiamante NON autenticato puo' far scattare a volonta'". Misurato, e' falso: senza
+    # token la risposta e' 401 e verso Prometheus non parte NIENTE, perche' quel ramo
+    # sta dentro la rotta autenticata. Il limitatore resta giustificato — il widget
+    # polla ogni 20s e i 502 non entrano in cache, quindi un Prometheus giu' compra
+    # comunque un evento per richiesta — ma per un'altra ragione, e un rischio affermato
+    # che non esiste manda a cercare nel posto sbagliato tanto quanto uno taciuto.
+    #
+    # (Il commento gemello sul 500 da latin-1 era invece vero: quel guasto scattava
+    # DENTRO `require_valid_token`, prima di qualunque credenziale valida.)
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    monte = respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(500))
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+
+    for _ in range(5):
+        assert client.get("/status").status_code == 401
+
+    assert monte.call_count == 0
+    assert sentry_call.call_count == 0
+
+
+@respx.mock
+def test_the_zero_alert_forgets_as_soon_as_a_number_moves_again(monkeypatch):
+    # La chiave del limitatore ("zero-volume") compare due volte: quando si dimentica
+    # sul ramo sano e quando si segnala. Se le due divergono, il primo periodo di zeri
+    # zittisce il secondo per un'ora — e il secondo e' quello in cui il volume e'
+    # davvero sparito. Nessuna asserzione la sorvegliava: sei mutanti di quella
+    # stringa sopravvivevano al run di mutmut del 20/08/2026.
+    #
+    # La soglia si abbassa a due apposta: il punto qui e' il limitatore, e sessanta
+    # passate da 61 secondi supererebbero da sole l'ora di INFRA_ALERT_INTERVAL_S,
+    # facendo passare il test per il motivo sbagliato.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setattr(main, "ZERO_PASSES_BEFORE_ALERT", 2)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_persistence("0")
+    vuota = _mock_cost([])
+
+    def passata(sessioni: str) -> None:
+        _mock_scalars(sessions=sessioni, tokens=sessioni)
+        vuota.mock(return_value=httpx.Response(200, json={"data": {"result": []}}))
+        assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+        orologio.avanza(main.STATUS_CACHE_TTL_S + 1)
+
+    for _ in range(4):
+        passata("0")
+    # Quattro passate, un evento solo: il limitatore fa il suo mestiere.
+    assert sentry_call.call_count == 1
+
+    passata("1")  # i numeri si muovono: il limitatore deve dimenticare
+    for _ in range(2):
+        passata("0")
+
+    # Il secondo evento arriva SUBITO, non un'ora dopo — e siamo ancora dentro
+    # INFRA_ALERT_INTERVAL_S, quindi puo' essere arrivato solo dal `pop`.
+    assert orologio.adesso - 1_000.0 < main.INFRA_ALERT_INTERVAL_S
+    assert sentry_call.call_count == 2

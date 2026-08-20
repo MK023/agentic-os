@@ -399,6 +399,20 @@ indistinguishable from a morning when nobody worked. The trade is worth making b
 the other side of it is a silent double count, but it moves the single point of failure
 rather than removing it.
 
+**Since 2026-08-20 it is at least no longer silent.** The sentence above was accurate
+and it described a gap nobody watched: `_check_persistence` reads
+`prometheus_tsdb_compactions_failed_total`, so a TSDB that is *empty but perfectly
+healthy* returns the series, reports zero failures, and says nothing. A lost volume was
+green everywhere — the exact shape of failure this repository exists to avoid.
+`_check_zero_volume` now runs on the same pass, at no extra query: sixty consecutive
+passes of three zeros — roughly an hour of continuous polling — raise a Sentry event.
+Sixty, not three, because the three numbers look back 25h and hours of genuine zeros sit
+between two sessions; an alert that fires every quiet morning is an alert someone
+silences. **The event declares what it cannot tell apart**: "nobody worked" and "the
+volume is gone" produce the identical signal from these three numbers, so it asks the
+reader to look at the volume rather than announcing a fault. Removing that ambiguity
+needs a second source — `up` on the Collector — not a bigger N.
+
 **Both halves ship through three separate Railway services** — the Collector config, the
 status API and the Grafana dashboard live in three images with three `watchPatterns`.
 The platform cannot land them atomically, and the dangerous order is real: 5m expiration
