@@ -1,0 +1,7 @@
+{
+  "_perche": "L'allow-list delle label protegge per default, ma nessun gate vede cosa comincia a mandare una versione FUTURA di Claude Code. Il dry run di docs/LOCAL_DRY_RUN.md copre quel buco; questo file e' il suo innesco. Si aggiorna DOPO aver rieseguito il dry run, mai prima: e' il verbale di una misura, non una configurazione.",
+  "pacchetto": "@anthropic-ai/claude-code",
+  "versione": "2.1.227",
+  "dry_run": "2026-08-16",
+  "_cosa_fu_misurato": "Quattro nomi di metrica invariati; il set di label esattamente l'allow-list (model, type, query_source, start_type, session_id, piu' gli otel_scope_* che aggiunge l'exporter); zero occorrenze di user_email / user_id / user_account* / organization_id; due sessioni headless con due session_id DISTINTI."
+}

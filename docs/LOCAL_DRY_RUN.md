@@ -137,7 +137,40 @@ and the datasource arrive by provisioning, nothing to import.
   as for per-request billing, Prometheus is not a good choice, as the collected data
   will likely not be detailed and complete enough."*
 
-## 5. Leave the laptop as you found it
+## 5. Write down that you ran it
+
+The label half of this dry run is the only check that exists against a *new* Claude
+Code version, and until 2026-08-20 it ran when somebody remembered. Now
+`.github/workflows/telemetry-baseline.yml` asks the npm registry once a week what
+version the client is on and goes red when its **minor** moves past what is recorded
+in `docs/telemetry-baseline.json`.
+
+So when you finish a run, update that file — the version you ran against and the
+date:
+
+```bash
+python3 - <<'EOF'
+import datetime, json, pathlib, re, subprocess
+# `claude --version` puo' stampare righe di nvm prima della sua: si cerca la
+# riga giusta, non la prima. Se il formato cambia questo esplode, ed e' quello
+# che deve fare — meglio di scrivere "Running" dentro il verbale.
+uscita = subprocess.check_output(["claude", "--version"], text=True)
+versione = re.search(r"\b(\d+\.\d+\.\d+)\b[^\n]*\(Claude Code\)", uscita).group(1)
+
+p = pathlib.Path("docs/telemetry-baseline.json")
+v = json.loads(p.read_text())
+v["versione"] = versione
+v["dry_run"] = datetime.date.today().isoformat()
+p.write_text(json.dumps(v, indent=2, ensure_ascii=False) + "\n")
+print(v["versione"], v["dry_run"])
+EOF
+```
+
+**Update it after the run, never to turn the job green.** The file is the record of a
+measurement; editing it without measuring turns a reminder into a lie, and a job that
+went green for the wrong reason is worse than one that was never written.
+
+## 6. Leave the laptop as you found it
 
 ```bash
 docker compose down -v && rm docker/.env
