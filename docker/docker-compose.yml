@@ -19,6 +19,9 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:2026.8.2@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
     restart: unless-stopped
+    networks:
+      default:
+        aliases: ["cloudflared.railway.internal"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     # --no-autoupdate come nel Dockerfile Railway: l'immagine è pinnata, un
@@ -80,6 +83,9 @@ services:
   grafana:
     image: grafana/grafana:13.1.4@sha256:9be3a3ccdb06bcbb127f888b0c4c1d151837443e478887897a63a27d7b348043
     restart: unless-stopped
+    networks:
+      default:
+        aliases: ["grafana.railway.internal"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
@@ -97,6 +103,9 @@ services:
   status-api:
     build: ../services/public-status-api
     restart: unless-stopped
+    networks:
+      default:
+        aliases: ["status-api.railway.internal"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:

@@ -295,8 +295,10 @@ had already been decided and shipped.
   Access. The Collector's only route is the ingest, which authenticates and answers
   `401`; giving it one means the `health_check` extension **and a new port on the one
   service that accepts writes from the internet**. Against that, a Prometheus `up`
-  scrape already watches all three every 15s **for as long as they run**, which is more
-  than a healthcheck does — Railway stops probing once a deploy is promoted. Full
+  scrape watches each of them every 15s **for as long as they run**, which is more
+  than a healthcheck does — Railway stops probing once a deploy is promoted. **The
+  premise had a hole until 2026-08-20**: Grafana was never scraped at all. It was added
+  rather than rewriting the decision it holds up. Full
   reasoning in `DECISIONS.md`. If it is ever reopened, `PORT` goes first.
 
 - ~~The dry run in `LOCAL_DRY_RUN.md` has no trigger.~~ **It has one since
