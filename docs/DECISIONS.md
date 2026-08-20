@@ -35,6 +35,30 @@ metrics port and `smoke.yml` are what watch a running system; this is a gate on 
 promotion, and reading it as more than that is how a green dashboard hides a dead
 service.
 
+**The other three services deliberately have no `healthcheckPath`, decided
+2026-08-20.** Grafana, Prometheus and the Collector could all answer one — Grafana has
+`/api/health`, Prometheus has `/-/healthy` and `/-/ready`, and the Collector has the
+`health_check` extension. None of them gets one, and the reason is not inertia:
+
+- **Railway wants a literal 200 with no credentials.** Grafana's and Prometheus'
+  health routes would satisfy that by opening an *unauthenticated* route, and Grafana
+  is the one service here with a public hostname (behind Access). The Collector's only
+  route is the ingest, which authenticates and answers `401`, so giving it a
+  healthcheck means the `health_check` extension **and a new listening port** — a new
+  surface on the one service that accepts writes from the internet.
+- **A Prometheus `up` scrape already watches all three, and watches more.** Railway
+  stops probing once a deploy is promoted; the scrape runs every 15 seconds for as
+  long as the service lives. A healthcheck would tell us less, later, in exchange for
+  surface.
+- **The gain is confined to the promotion.** On these three, `SUCCESS` would move from
+  "the container started" to "it served a 200 once" — which is worth having on
+  status-api, the one thing the public numbers pass through, and worth much less on
+  three services that a dashboard panel is already watching live.
+
+So this is closed, not pending. **If it is ever reopened, `PORT` goes first**: the
+2026-08-13 failure cost six days of production running old code with every gate green,
+and the order is written above precisely so it is not rediscovered.
+
 **status-api's `watchPatterns` did not include its own `railway.json`**, alone among
 the five services — it listed `services/public-status-api/**` and nothing else, while
 every other service lists `railway/<service>/**`. A commit touching only its Railway
