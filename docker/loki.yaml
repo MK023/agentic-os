@@ -1,0 +1,165 @@
+# Loki — Fase 1.5. Una sola copia di questa configurazione, come ogni altra in
+# docker/: l'immagine Railway la copia a build time, il compose la monta.
+#
+# `auth_enabled: false` NON significa "senza autenticazione": in Loki riguarda il
+# multi-tenancy (l'header X-Scope-OrgID), non l'accesso. Cio' che tiene chiuso
+# questo servizio e' che non ha nessun hostname del Tunnel, esattamente come
+# Prometheus. Non si riscriva la ragione falsa: e' gia' stata corretta una volta
+# in SECURITY.md.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  # Esplicito, NON perche' il default sia diverso: il default e' "" e ascolta
+  # gia' ovunque. Scritto per rendere leggibile che Grafana e il Collector sono
+  # altri container. Resta sulla rete privata Railway.
+  http_listen_address: 0.0.0.0
+
+common:
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+  # Single binary: una sola istanza, nessuna replica. La doc lo richiede
+  # esplicitamente per deploymentMode SingleBinary.
+  replication_factor: 1
+  path_prefix: /loki
+
+schema_config:
+  configs:
+    - from: 2026-08-20
+      store: tsdb
+      object_store: s3
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  # Riga PORTANTE, non una ripetizione del default. La doc `latest` dice che
+  # `use_thanos_objstore` vale true per default; su 3.7.6 e' FALSO — il reference
+  # della versione dichiara `default = false`, e il binario lo conferma. Senza
+  # questa riga Loki userebbe i client legacy e ignorerebbe tutto il blocco
+  # `object_store` qui sotto: credenziali giuste, storage sbagliato, nessun errore.
+  use_thanos_objstore: true
+  tsdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/index_cache
+    cache_ttl: 24h
+  object_store:
+    s3:
+      bucket_name: ${LOKI_R2_BUCKET}
+      # Endpoint R2: <ACCOUNT_ID>.r2.cloudflarestorage.com, SENZA schema.
+      # ATTENZIONE, misurato: la doc Cloudflare pubblica l'endpoint CON `https://`
+      # e `-verify-config` LO ACCETTA senza lamentarsi. Loki muore solo all'avvio
+      # ("Endpoint url cannot have fully qualified paths"). E' l'unico errore di
+      # questo file che il gate NON vede: chi incolla dal dashboard passa verde e
+      # la produzione non parte.
+      endpoint: ${LOKI_R2_ENDPOINT}
+      access_key_id: ${LOKI_R2_ACCESS_KEY_ID}
+      secret_access_key: ${LOKI_R2_SECRET_ACCESS_KEY}
+      # R2 vuole region `auto`. Dichiararla evita anche la GetBucketLocation che
+      # il client farebbe da solo con region vuota.
+      region: auto
+      # Il DEFAULT e' `auto`, NON `path`: questa riga e' una scelta, non una
+      # ripetizione del default. Ammessi: auto | path | virtual-hosted.
+      bucket_lookup_type: path
+      # insecure resta FALSE: l'endpoint R2 e' HTTPS. Metterlo a true qui
+      # significherebbe spedire le credenziali in chiaro verso internet.
+      insecure: false
+
+limits_config:
+  # Senza questa riga Loki RIFIUTA il payload: la structured metadata e' il
+  # meccanismo su cui poggia tutto il blocco qui sotto.
+  allow_structured_metadata: true
+
+  # ALLOW-LIST #2 — la seconda barriera, e non e' ridondanza: la prima sta nel
+  # Collector (`transform/log-allowlist`), questa vale su qualunque cosa arrivi
+  # all'endpoint OTLP di Loki, Collector compreso.
+  #
+  # `ignore_defaults: true` toglie le resource attribute dall'INDICE, NON le
+  # scarta: il fallback di Loki per un attributo che nessuna regola nomina e'
+  # `structured_metadata`. Misurato: con il solo `index_label` qui sotto, un
+  # payload con `user.email` fra le resource attribute produceva
+  #   indice:  ["service_name"]                       <- sembrava a posto
+  #   query:   {service_name="claude-code"} | user_email="victim@example.com"
+  #            -> 1 risultato, con organization_id accanto
+  # L'indirizzo non era una label, ma era memorizzato e interrogabile. Serve il
+  # catch-all `drop` in FONDO a tutte e tre le sezioni.
+  #
+  # `attributes:` e non `regex:`: `regex` e' un regex Prometheus ancorato dove il
+  # punto e' un metacarattere — misurato, `regex: service.name` matcha anche
+  # `serviceXname`.
+  #
+  # L'ORDINE E' LETALE: first-match-wins, il catch-all va SEMPRE IN FONDO — ma i
+  # due modi di sbagliarlo NON si somigliano, ed e' misurato. Catch-all in cima a
+  # `resource_attributes`: lo stream resta senza label e Loki risponde 400, rumoroso.
+  # Catch-all in cima a `log_attributes`: il push passa 204, `-verify-config` dice
+  # `config is valid`, e sparisce in silenzio tutta la structured metadata — cioe'
+  # la risposta a "quale tool call e' fallita", con tutto verde. Il secondo caso lo
+  # vede UN solo controllo: il gate "i log passano da due allow-list" in
+  # .github/workflows/images.yml, che pretende il drop catch-all in fondo a tutte e
+  # tre le sezioni. Non e' una formalita': e' l'unico gate sull'ordine.
+  otlp_config:
+    resource_attributes:
+      ignore_defaults: true
+      attributes_config:
+        - action: index_label
+          attributes: [service.name]
+        - action: drop
+          regex: .*
+    # Anche queste cadrebbero in structured metadata per default.
+    scope_attributes:
+      - action: drop
+        regex: .*
+    log_attributes:
+      # Le chiavi MISURATE il 2026-08-20 che rispondono alla domanda della Fase
+      # 1.5 — "quale tool call e' fallita in quella sessione" — e nient'altro.
+      # Structured metadata e NON label: `session.id` come label creerebbe uno
+      # stream per sessione, il primo anti-pattern di cardinalita' che la doc
+      # nomina.
+      #
+      # NON sono qui, deliberatamente: `user.email`, `user.id`, `user.account_id`,
+      # `user.account_uuid`, `organization.id` (identita', che il fornitore manda
+      # SEMPRE) e `prompt`, `response`, `error`, `tool_parameters`, `tool_input`,
+      # `body`, `command_name`, `server_name` (contenuto, redatto per default ma
+      # riacceso da una variabile d'ambiente: un default non e' un controllo).
+      - action: structured_metadata
+        attributes:
+          - event.name
+          - event.sequence
+          - session.id
+          - prompt.id
+          - tool_name
+          - tool_use_id
+          - success
+          - error_type
+          - duration_ms
+          - decision
+          - source
+          - model
+          - query_source
+          - status
+          - status_code
+          - attempt
+          - error_code
+          - error_name
+          - transport_type
+          - server_scope
+          - prompt_length
+          - response_length
+      # Ultima riga di un allow-list, non una delete-list: vale su ogni chiave che
+      # una versione futura del client inventa. Ammesse: drop | index_label |
+      # structured_metadata. Per ogni voce va indicato ESATTAMENTE uno fra
+      # `attributes` e `regex` — entrambi o nessuno fanno rifiutare la config.
+      - action: drop
+        regex: .*
+  retention_period: 720h
+
+compactor:
+  working_directory: /loki/compactor
+  # Senza questa chiave Loki RIFIUTA di partire quando retention_enabled e' true.
+  # Ma il VALORE non e' validato: `delete_request_store: bananas` passa
+  # -verify-config. Che `s3` sia giusto lo si verifica a runtime.
+  delete_request_store: s3
+  retention_enabled: true
