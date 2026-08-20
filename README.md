@@ -56,7 +56,7 @@ it out for billing-grade accuracy; that is the tool's stated scope, not a defect
 | `railway/` | Production: one Dockerfile + one config-as-code file per service, and the deployment guide (`railway/README.md`). **Start here** for infra. |
 | `docker/` | The local environment **and the single copy of every configuration file**. Railway images copy them at build time; Compose mounts them. |
 | `services/public-status-api/` | FastAPI service exposing the three whitelisted numbers. The only application code. |
-| `scripts/` | `verify-hub.sh`, the post-deploy smoke test. Railway ignores the Dockerfile `HEALTHCHECK`. |
+| `scripts/` | `verify-hub.sh`, the post-deploy smoke test. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
 | `docs/` | Decisions, deployment, telemetry setup, local dry run. Index at the bottom. |
 
 ## Running it
@@ -153,8 +153,10 @@ status proves nothing here: the site Worker fails open by design, answering `200
 with nulls when it cannot reach the hub, and since it also serves a cached
 last-known-good it can answer `200` with real-but-old numbers. Both look healthy
 from outside and are not. It blocks nothing and merges nothing; it turns a silent
-outage into a red run and an email. Railway ignores the Dockerfile `HEALTHCHECK`,
-so a `SUCCESS` deploy only ever meant "the container started".
+outage into a red run and an email. Railway ignores the Dockerfile `HEALTHCHECK`, and
+its own `healthcheckPath` — set since 2026-08-20 on status-api and cloudflared — is
+queried only until the deploy goes live, never after. So nothing on the platform side
+watches a running service: a `SUCCESS` deploy now means "it served a 200 once".
 
 **Its cadence is asked for, not guaranteed, and the gap is large.** The cron says
 `*/10`; measured across the first twelve real runs, the interval ran between 38

@@ -27,13 +27,27 @@ USER 65532:65532
 # differenza fra "il processo e' partito" e "il tunnel e' connesso" — cioe' fra cio'
 # che Railway sa oggi e cio' che conta.
 #
-# `healthcheckPath: /ready` NON e' dichiarato in railway.json, e l'omissione e'
-# deliberata: Railway sonda la porta di destinazione del servizio, e questo servizio
-# non ne espone una — e' un connettore in USCITA. Se la sonda finisse sulla porta
-# sbagliata, ogni deploy resterebbe bloccato in attesa di un 200 che non arriva, cioe'
-# un guasto peggiore di quello che il controllo dovrebbe prevenire. Non e'
-# verificabile in locale (senza un token valido cloudflared esce prima di aprire la
-# porta, misurato), quindi va provato una volta sul servizio vero prima di scriverlo
-# qui. Lo scrape su :2000 sotto, invece, non ha questo rischio: se la porta non
-# risponde, `up` va a 0 e lo si vede, senza bloccare niente.
+# `healthcheckPath: /ready` ORA e' dichiarato in railway.json. Era stato omesso
+# deliberatamente perche' Railway sonda la porta indicata dalla variabile `PORT` e su
+# questo servizio non esisteva: e' un connettore in USCITA, non espone niente di suo.
+# Il rischio era che ogni deploy restasse in attesa di un 200 che non arriva — e non
+# era teorico, e' esattamente come e' fallito status-api lo stesso giorno.
+#
+# Cosa e' cambiato: `PORT=2000` e' stata impostata sul servizio il 20-08-2026, e
+# 2000 e' la porta che il `--metrics` qui sotto apre davvero. Il valore vive su
+# Railway, fuori da git: se qualcuno lo cambiasse senza toccare questo CMD, i deploy
+# ricomincerebbero a fallire e nessun gate di questo repository potrebbe accorgersene.
+# I due numeri vanno insieme.
+#
+# `/ready` e non `/metrics`: "Cloudflared has a /ready endpoint which returns 200 if
+# and only if it has an active connection to Cloudflare's network" (guida Kubernetes
+# di Cloudflare, letta il 20-08-2026). E' la differenza fra "il processo e' partito" e
+# "il tunnel e' connesso" — cioe' l'intero motivo per cui questo controllo esiste.
+# Il timeout resta il default di Railway, 300 secondi: piu' che sufficiente per aprire
+# la connessione all'edge, quindi non c'e' niente da dichiarare.
+#
+# Railway NON risonda dopo la promozione ("does not monitor the healthcheck endpoint
+# after the deployment has gone live"): questo e' un cancello sul deploy, non
+# monitoraggio. Il tunnel che muore a regime lo vedono lo scrape su :2000 qui sotto e
+# lo smoke test, non questa riga.
 CMD ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run"]
