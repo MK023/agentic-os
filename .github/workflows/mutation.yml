@@ -87,10 +87,30 @@ jobs:
           # guardia che copre un sottoinsieme lascia il buco dove non guarda. Scritto
           # senza il conteggio apposta: "tutte e cinque" e' invecchiato nel commit
           # che le ha portate a sette.
+          #
+          # I file si LEGGONO da setup.cfg invece di essere nominati qui. Scrivere
+          # `main.py` era una SECONDA lista accanto a `source_paths`, e il 19-08-2026
+          # e' divergita: `verifica_dsn` e' stata aggiunta a FUNZIONI_BLOCCANTI ma
+          # vive in sentry.py, che mutmut mutila e questo grep non guardava. Dalla
+          # notte dopo il job usciva 1 PRIMA di generare un solo mutante — quindi non
+          # solo era rosso, ma le NOVE funzioni bloccanti non erano piu' sorvegliate
+          # da niente, comprese le due guardie d'avvio che il commento qui sopra
+          # dichiara coperte. Il pavimento dei 100 mutanti non poteva accorgersene:
+          # sta dopo, e non veniva mai raggiunto.
+          sorgenti=$(awk '/^source_paths=/{dentro=1;next} /^[a-z_]+=/{dentro=0} dentro&&NF{print $1}' setup.cfg)
+          if [ -z "${sorgenti}" ]; then
+            echo "FAIL: setup.cfg non dichiara source_paths." >&2
+            echo "Senza, questa guardia non sa dove cercare e mutmut non sa cosa mutilare." >&2
+            exit 1
+          fi
+          echo "sorgenti di mutmut, da setup.cfg: $(echo ${sorgenti})"
+
           for funzione in ${FUNZIONI_BLOCCANTI}; do
-            if ! grep -q "def ${funzione}" main.py; then
-              echo "FAIL: main.py non definisce più '${funzione}'." >&2
+            if ! grep -q -- "def ${funzione}" ${sorgenti}; then
+              echo "FAIL: nessuno dei sorgenti di mutmut definisce '${funzione}'." >&2
+              echo "Cercato in: $(echo ${sorgenti})" >&2
               echo "Se l'hai rinominata, aggiorna FUNZIONI_BLOCCANTI nello stesso commit." >&2
+              echo "Se l'hai spostata in un file nuovo, quel file va in source_paths: fuori di li' mutmut non la mutila, e sorvegliarla sarebbe una finzione." >&2
               exit 1
             fi
           done
