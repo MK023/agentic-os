@@ -81,6 +81,54 @@ by the cache; the volume is the same channel at full resolution and full history
 Acceptable for a personal project, and worth knowing it is personal data rather than
 anonymous counters.
 
+## Controls that live outside git, and who re-verifies them
+
+Several controls this file and `docs/DECISIONS.md` assert are **not in this
+repository**: they live in the Cloudflare dashboard, the Railway workspace and the
+Sentry project. They exist — each was measured on the date below — but a control
+nobody re-reads is one whose *disappearance* is silent, and the document would go on
+asserting it. That is the same failure this project has already corrected twice, just
+pointing the other way.
+
+The rule this table exists to enforce: **every line that asserts a control names who
+re-verifies it, or declares itself unverified with the date of the last measurement.**
+
+| Control | Where it lives | Who re-verifies it | Last measured |
+|---|---|---|---|
+| WAF custom rule on `otel.` | Cloudflare dashboard | `smoke.yml` — three assertions requiring an exact `403` (no header, `GET /`, `POST /v1/traces`) | every scheduled run |
+| `bearertokenauth` on the ingest | in git (`docker/otel-collector-config.yaml`) | `smoke.yml` — two assertions requiring `401` with an empty and a wrong bearer | every scheduled run |
+| Access policy on `grafana.` (single email) | Cloudflare dashboard | `scripts/verify-hub.sh`, **manual**: it needs `CF_ACCESS_CLIENT_ID`/`SECRET` as GitHub secrets to run in CI | **not recorded** — the date of the last manual run is nowhere, which is itself part of the gap |
+| Access + Service Auth on `status.` | Cloudflare dashboard | same, and same gap | **not recorded** |
+| Workspace usage limit ($15 soft / $30 hard) | Railway workspace | **nobody** — see below | 2026-08-20, set and confirmed by the operator |
+| Sentry alert rule (`Every event`, 60m throttle, three conditions) | Sentry project | **nobody** | 2026-08-20, read back from the Sentry API |
+| `PORT` on `status-api` and `cloudflared` | Railway service variables | **nobody**, but its absence fails every deploy loudly rather than silently | 2026-08-20, both services list `PORT` |
+
+**What Railway's API does and does not give you, measured rather than assumed.**
+The claim in `docs/DECISIONS.md` — that nothing here can read the usage limit back —
+was written from the MCP surface, which exposes projects, services, variables,
+deployments, metrics and feature flags and no billing at all. Railway also publishes
+its GraphQL collection at a URL that needs no token, and reading it on 2026-08-20
+sharpens the claim in both directions:
+
+- **The limit itself: still no read.** The collection carries `usageLimitSet` and
+  `usageLimitRemove` as *mutations* and no query that reads a workspace limit back.
+  The only limit-bearing read is `agentUsage`, whose `softLimitCents`/`hardLimitCents`
+  are about agent spend, not this. So the row above stays "nobody", and it is now
+  measured rather than inferred from one tool's menu.
+- **Spend itself: readable.** `usage`, `estimatedUsage` and `projectServiceUsage` are
+  all queries taking a `workspaceId`. So "no gate here can watch the balance" is
+  **wrong as an absolute**: what is missing is a Railway token in CI, which is the same
+  decision as the three secrets `verify-hub.sh` waits on — Marco's, not the CI's.
+- **Per-service caps: readable too.** `serviceInstanceLimitOverride` and
+  `serviceInstanceLimits` are queries, so the open experiment in `DECISIONS.md` about
+  whether Hobby enforces `deploy.limitOverride` can be *verified* through the API and
+  not only declared from the schema. Measured 2026-08-20: `status-api` has no override
+  set, only `numReplicas: 1`.
+
+None of this is a token being added anywhere. It is the difference between "the
+platform does not allow it" and "we have not set it up", and this repository has
+already paid once for writing the first when it meant the second.
+
 ## Data handling
 
 Metric labels are an **allow-list** enforced in the Collector.

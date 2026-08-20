@@ -148,8 +148,13 @@ had already been decided and shipped.
   stops for an empty balance produces no error, no red deploy and no failed check, only
   numbers that stop moving. Since 2026-08-20 there is a workspace usage limit ($15 soft
   / $30 hard) standing in front of that, set by hand in the dashboard: **no API this
-  project can reach reads it back**, so it is a backstop nobody here can verify, and no
-  gate can watch the balance.
+  project can reach reads the limit back** — measured against Railway's published
+  GraphQL collection, which has `usageLimitSet`/`usageLimitRemove` as mutations and no
+  matching query. So it is a backstop nobody here can verify. **The balance is a
+  different story and the earlier wording was wrong**: `usage`, `estimatedUsage` and
+  `projectServiceUsage` are readable queries. Nothing watches the balance because no
+  Railway token exists in CI, not because the platform hides it. See the table in
+  `SECURITY.md`.
 - Grafana Loki as a Phase 1.5 — **not now, and no longer waiting on a date.** The
   criterion was applied on 2026-08-14 after sixteen days of real use: the questions Phase
   1 actually left unanswered were about the hub's own containers, and a targeted metric
