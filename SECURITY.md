@@ -105,17 +105,33 @@ re-verifies it, or declares itself unverified with the date of the last measurem
 | `bearertokenauth` on the ingest | in git (`docker/otel-collector-config.yaml`) | `smoke.yml` — two assertions requiring `401` with an empty and a wrong bearer | every scheduled run |
 | Access policy on `grafana.` (single email) | Cloudflare dashboard | `sorveglianza.yml` — runs `scripts/verify-hub.sh` daily; a `200` without credentials is treated as the failure it is | every scheduled run |
 | Access + Service Auth on `status.` | Cloudflare dashboard | same job, same script: it calls `/status` exactly as the site's Worker does, with the Access service token *and* the bearer | every scheduled run |
-| Workspace usage limit ($15 soft / $30 hard) | Railway workspace | **nobody** — see below | 2026-08-20, set and confirmed by the operator |
-| Sentry alert rule (`Every event`, 60m throttle, three conditions) | Sentry project | **nobody** | 2026-08-20, read back from the Sentry API |
+| Workspace usage limit ($15 soft / $30 hard) | Railway workspace | **still nobody for the *limit*** — see below. Since 2026-08-20 `sorveglianza.yml` watches the *consumption* instead, against ceilings in `docs/sorveglianza-baseline.json` | 2026-08-20, set and confirmed by the operator |
+| Sentry alert rule (`Every event`, 60m throttle, three conditions) | Sentry project | `sorveglianza.yml` — daily, and it fails naming the six-day outage if `every_event` goes missing | every scheduled run |
 | `PORT` on `status-api` and `cloudflared` | Railway service variables | **nobody**, but its absence fails every deploy loudly rather than silently | 2026-08-20, both services list `PORT` |
 
-**Two of these rows changed on 2026-08-20, and the change is a workflow rather than a
+**Four of these rows changed on 2026-08-20, and the change is a workflow rather than a
 sentence.** `sorveglianza.yml` runs `verify-hub.sh` on a schedule, so the two Cloudflare
-Access policies stopped being "verified whenever somebody remembers". The remaining
-"nobody" rows — the Railway usage limit and the Sentry rule — need a Railway and a
-Sentry token in CI; those are being added in the same batch, and each probe is written
-only *after* its token exists, so that it asserts the payload the vendor actually
-returns rather than the one it was assumed to return.
+Access policies stopped being "verified whenever somebody remembers". The Sentry rule and the Railway
+consumption followed once their tokens existed — and writing them *after* the tokens,
+rather than before, is what caught two things a guess would have shipped:
+
+- **Sentry's `/projects/{org}/{project}/rules/` is a lossy legacy projection.** Sentry
+  has migrated to detectors + workflows, and the same rule appears under **three
+  different ids** across three views. On `/rules/` it shows **two** conditions instead
+  of three — `every_event` does not survive the conversion. A probe written there would
+  have gone red on a healthy alarm. The authoritative read is
+  `/organizations/{org}/workflows/`.
+- **An organization auth token cannot do this at all.** Its only scope is `org:ci`
+  (source maps, releases, code mappings) and every read returns `403` — measured. What
+  works is an **Internal Integration** with `Alerts: Read` and `Project: Read`, whose
+  token belongs to the organisation rather than to a person.
+
+The Railway probe deliberately **does not compute money**: the `MetricMeasurement` enum
+carries no monetary measure (introspected) and `estimatedUsage`'s units are
+undocumented — dividing `MEMORY_USAGE_GB` by the hours in a month yields ~$169 against a
+real bill of ~€5. Pricing it would mean guessing the unit *and* copying the rate table
+into a fourth place. What it catches is a **runaway**, which is the risk the unreadable
+spend limit would only stop afterwards.
 
 **What Railway's API does and does not give you, measured rather than assumed.**
 The claim in `docs/DECISIONS.md` — that nothing here can read the usage limit back —
