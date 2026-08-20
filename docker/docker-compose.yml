@@ -13,7 +13,7 @@
 # capability beyond default userspace networking.
 #
 # LOCALE, non di sistema: Railway non espone nessuna delle due impostazioni, quindi
-# in produzione nessuno dei cinque servizi le ha. Stanno qui perche' il locale deve
+# in produzione nessuno dei sei servizi le ha. Stanno qui perche' il locale deve
 # somigliare alla produzione dove puo', non perche' descrivano cio' che gira.
 services:
   cloudflared:

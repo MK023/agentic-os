@@ -236,6 +236,27 @@ exporters:
   # e' un 404 secco; `logs_endpoint` viene usato verbatim.
   otlp_http/loki:
     logs_endpoint: http://loki.railway.internal:3100/otlp/v1/logs
+    # La coda va LIMITATA, e non con un `memory_limiter` in piu'.
+    #
+    # Misurato il 2026-08-20 con la config spedita e `loki.railway.internal`
+    # inesistente — cioe' lo stato in cui questo ramo atterra, perche' il servizio
+    # Railway non c'e' ancora: il Collector accetta il push con **200** e accoda,
+    # ritentando all'infinito ("no such host", 4.7s, 8.5s, 11.2s...). Chi ha il
+    # token puo' riempire una coda che non drenera' mai.
+    #
+    # Perche' non un secondo `memory_limiter`: quel processor guarda la memoria del
+    # PROCESSO, quindi due istanze osservano lo stesso totale e non isolano niente —
+    # sarebbe cargo cult. Cio' che isola e' un tetto sulla coda: superato, l'export
+    # viene RIFIUTATO al client invece di essere accumulato, e la pipeline metriche
+    # (che condivide l'unico memory_limiter, e con essa i tre numeri pubblici) non
+    # viene mai spinta contro il proprio freno da un consumatore assente.
+    #
+    # `max_elapsed_time` finito e non zero: rinunciare a un batch di log e'
+    # recuperabile, restare appesi no. E' lo stesso ragionamento del memory_limiter.
+    sending_queue:
+      queue_size: 50
+    retry_on_failure:
+      max_elapsed_time: 60s
 
 service:
   # Telemetria interna del Collector. Conta i PAYLOAD IN ARRIVO, non il loro

@@ -743,8 +743,21 @@ loud.** Catch-all at the top of `resource_attributes`: the stream ends up with n
 and Loki answers `400`. Catch-all at the top of `log_attributes`: the push returns `204`,
 `-verify-config` says `config is valid`, and every piece of useful structured metadata
 disappears in silence — the answer to "which tool call failed", gone, with everything
-green. Exactly one check sees the second case: the allow-list gate in
-`.github/workflows/images.yml`, which requires the catch-all last in all three sections.
+green. Two checks see the second case, and they see it differently: the allow-list gate
+in `.github/workflows/images.yml` requires the catch-all last in all three sections —
+it reads the shape — and `scripts/prova-privacy-log.sh` fails assertion (c), because the
+useful structured metadata is gone from a real query. That pair is deliberate. An
+allow-list broken in the "drop everything" direction passes (a) and (b) and reads as a
+success, which is exactly why (c) exists and why a shape gate alone is not enough.
+
+**There is no `loki -verify-config` gate in CI, and that is a supersession rather than
+an omission.** The spec listed one. What shipped instead is `scripts/prova-privacy-log.sh`,
+which *starts* Loki against a real object store and queries it back — strictly stronger,
+because `-verify-config` was measured accepting an endpoint written `https://` that kills
+Loki at startup, and accepting `delete_request_store: bananas`. A config checker that
+validates key names and not values cannot be the last word on a config whose worst
+failure is a value. Written down because a missing gate and a superseded one read the
+same in a workflow file, and only one of them is a hole.
 
 **Opening `/v1/logs` at the edge changes the reachable surface, so it is asserted where
 the rest of the ingest is.** The WAF custom rule on `otel.` used to pass only

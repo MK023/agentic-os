@@ -6,6 +6,7 @@ on any machine you want observed:
 ```bash
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
 export OTEL_METRICS_EXPORTER=otlp
+export OTEL_LOGS_EXPORTER=otlp          # dalla Fase 1.5: senza, Loki resta vuoto
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.marcobellingeri.dev
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <the OTLP_INGEST_TOKEN from docker/.env>"
@@ -18,9 +19,29 @@ Three of these are easy to get subtly wrong:
   `OTEL_METRICS_EXPORTER_OTLP_TEMPORALITY_PREFERENCE`. A misspelled variable is
   silently ignored, leaving the default (`delta`) — and Prometheus wants
   `cumulative`.
-- **`OTEL_LOGS_EXPORTER` is deliberately left unset.** The hub's Collector runs a
-  metrics pipeline only (the Prometheus exporter supports the metrics signal
-  only), so enabling the logs exporter would just produce rejected exports.
+- **`OTEL_LOGS_EXPORTER=otlp` — set it, since Phase 1.5.** This line said the
+  opposite until 2026-08-20, and for a good reason that expired: the Collector used
+  to run a metrics pipeline only, so the logs exporter had nowhere to land. It now
+  runs a *second, separate* `logs` pipeline into Loki, and **this variable is the
+  switch that feeds it**. Leave it unset and the pipeline is wired correctly and
+  receives nothing — Grafana shows an empty log store, every gate stays green, and the
+  diagnosis will be "Loki is broken". This file is the only place that tells an
+  operator which variables to export, so a stale line here is not a documentation
+  bug, it is the outage.
+
+  What reaches Loki is **not** what the client sends: two allow-lists strip it down to
+  22 attributes plus the event name. Identity — `user.email`, `user.id`,
+  `organization.id`, `user.account_id`, `user.account_uuid` — rides on **every** log
+  record and the vendor marks it *always included*, so no environment variable turns
+  it off and the allow-list is the only control. See `SECURITY.md` and
+  `docs/LOCAL_DRY_RUN.md` §4-bis for the proof that runs.
+
+  **Do not set the four `OTEL_LOG_*` un-redaction variables** —
+  `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_ASSISTANT_RESPONSES`, `OTEL_LOG_TOOL_DETAILS`,
+  `OTEL_LOG_RAW_API_BODIES`. Each un-redacts a different field of session content, and
+  the last one ships whole request bodies. The allow-list drops those keys by name, so
+  setting one changes nothing here — but the reason to leave them alone is that a
+  default is not a control, and the next thing they touch may not be on the list.
 - **`OTEL_EXPORTER_OTLP_HEADERS`** is what the Collector's `bearertokenauth`
   extension checks. Without it every export is rejected with 401 rather than
   silently dropped, so a typo is visible: `docker compose logs otel-collector`

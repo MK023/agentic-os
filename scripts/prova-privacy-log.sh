@@ -26,7 +26,11 @@ RETE=prova-privacy-log
 TOKEN=token-di-prova-non-un-segreto
 IMG_LOKI=grafana/loki:3.7.6@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
 IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0-386@sha256:93e4793719dd55d0d9499328e7b45af219116cc9d1bcb95df5b3a0f8cade831d
-IMG_MINIO=minio/minio:RELEASE.2025-04-22T22-12-26Z
+# Pinnata per digest come ogni altra immagine del repository: un tag e' un'etichetta
+# e si puo' ripuntare sotto lo stesso nome. Era l'unica immagine del ramo senza, e
+# gira in CI su un checkout — con `contents: read` e nessun segreto, ma pinnarla costa
+# una riga.
+IMG_MINIO=minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
 
 pulisci() {
   docker rm -f privacy-loki privacy-coll privacy-minio >/dev/null 2>&1 || true
@@ -53,6 +57,21 @@ assert diverse == ["storage_config"], diverse
 yaml.safe_dump(prova, open(sys.argv[1], "w"))
 print("config di prova: identica a quella spedita tranne storage_config.object_store.s3.insecure")
 PY
+
+# Le tre immagini si scaricano PRIMA, con la ritentata. Questo script e' un gate
+# bloccante in CI, e cinquecento righe piu' su nello stesso workflow c'e' gia' la
+# lezione: il primo fallimento non deterministico di questa pipeline fu un
+# `TLS handshake timeout` verso auth.docker.io. Un gate che fallisce a caso smette di
+# essere un segnale.
+for img in "$IMG_MINIO" "$IMG_LOKI" "$IMG_COLL"; do
+  scaricata=""
+  for tentativo in 1 2 3; do
+    if docker pull -q "$img" >/dev/null 2>&1; then scaricata=si; break; fi
+    echo "pull di ${img%%@*} fallito (tentativo ${tentativo}), riprovo fra $((tentativo * 10))s" >&2
+    sleep $((tentativo * 10))
+  done
+  [ -n "$scaricata" ] || { echo "FALLITO: impossibile scaricare $img dopo tre tentativi"; exit 1; }
+done
 
 docker network create "$RETE" >/dev/null
 

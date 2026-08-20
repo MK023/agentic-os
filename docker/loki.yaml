@@ -69,6 +69,25 @@ storage_config:
       insecure: false
 
 limits_config:
+  # I TETTI D'INGESTIONE, dichiarati e non ereditati. I default del fornitore sono
+  # `ingestion_rate_mb: 4` e `ingestion_burst_size_mb: 6`: quattro MB al secondo
+  # sostenuti sono ~345 GB al giorno spediti verso R2, e R2 si paga. Il tetto di
+  # spesa del workspace Railway non limita una bolletta Cloudflare, e finora nessuna
+  # riga di questo progetto poneva la domanda — non era un parametro sbagliato, era
+  # un parametro mai posto.
+  #
+  # I numeri: una sessione di Claude Code misurata il 2026-08-20 produce ~90 log
+  # record, dell'ordine dei 100 KB in tutto. 1 MB/s sostenuto e' quattro ordini di
+  # grandezza sopra l'uso reale, quindi non e' un limite operativo: e' il punto oltre
+  # il quale rifiutare e' meglio che pagare. Vanno rivisti se un secondo produttore
+  # entra in scena.
+  ingestion_rate_mb: 1
+  ingestion_burst_size_mb: 2
+  # `service.name` e' l'unica label di indice E il Collector ne fissa il valore, quindi
+  # gli stream leciti sono uno. Dieci e' margine, non stima. Il default e' 5000: non
+  # illimitato, ma 5000 stream spazzatura nell'indice e altrettanti flush verso R2.
+  max_global_streams_per_user: 10
+
   # Senza questa riga Loki RIFIUTA il payload: la structured metadata e' il
   # meccanismo su cui poggia tutto il blocco qui sotto.
   allow_structured_metadata: true
@@ -97,9 +116,12 @@ limits_config:
   # Catch-all in cima a `log_attributes`: il push passa 204, `-verify-config` dice
   # `config is valid`, e sparisce in silenzio tutta la structured metadata — cioe'
   # la risposta a "quale tool call e' fallita", con tutto verde. Il secondo caso lo
-  # vede UN solo controllo: il gate "i log passano da due allow-list" in
-  # .github/workflows/images.yml, che pretende il drop catch-all in fondo a tutte e
-  # tre le sezioni. Non e' una formalita': e' l'unico gate sull'ordine.
+  # vedono DUE controlli, entrambi in CI: il gate "i log passano da due allow-list",
+  # che pretende il drop catch-all in fondo a tutte e tre le sezioni, e
+  # scripts/prova-privacy-log.sh, che fallisce sull'asserzione (c) perche' la
+  # structured metadata utile sparisce. Il gate legge la forma, la prova la misura:
+  # e' la ridondanza giusta, perche' un allow-list rotto nel verso "scarta tutto"
+  # supera (a) e (b) e sembra un successo.
   otlp_config:
     resource_attributes:
       ignore_defaults: true

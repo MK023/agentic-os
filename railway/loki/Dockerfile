@@ -1,8 +1,10 @@
 # checkov:skip=CKV_DOCKER_2: Railway ignora l'HEALTHCHECK del Dockerfile — usa il suo
 # healthcheckPath, che qui NON e' dichiarato: e' una decisione chiusa per i servizi
-# senza rotta pubblica (docs/DECISIONS.md). Cio' che sorveglia Loki e' lo scrape
-# Prometheus, che continua per tutta la vita del container invece di fermarsi quando
-# il deploy diventa live.
+# senza rotta pubblica (docs/DECISIONS.md). Cio' che sorveglia Loki e' il job
+# `loki` in docker/prometheus.yml, che scrape :3100 ogni 15s e continua per tutta la
+# vita del container invece di fermarsi quando il deploy diventa live. Quel job e'
+# stato scritto insieme a questa riga il 2026-08-20: la prima versione affermava lo
+# scrape senza che esistesse, che e' il difetto peggiore fra i due.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Verificato il 2026-08-20 che 3.7.6 e' l'ultima 3.x pubblicata
 # (v3.7.6, 2026-08-06) — un digest vecchio pinna un'immagine vecchia in silenzio.

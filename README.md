@@ -80,7 +80,7 @@ Code client and check the privacy boundary.
 The gates, runnable locally:
 
 ```bash
-docker compose -f docker/docker-compose.yml config --quiet   # needs the 9 env vars set to anything
+docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars only silence warnings; it exits 0 without them
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt
 zizmor --min-severity=high .github/workflows/

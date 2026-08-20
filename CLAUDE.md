@@ -35,14 +35,21 @@ three aggregate numbers are public, everything else stays inside the project.
   On the other four — `loki` included since Phase 1.5, same reason written in
   `railway/loki/Dockerfile` — `SUCCESS` still only means "the container started", **and that is
   a closed decision, not a gap**: their health routes would be unauthenticated, and a
-  Prometheus `up` scrape already watches them every 15s for as long as they live, which
-  is more than a healthcheck does — Railway stops probing once the deploy is live.
+  Prometheus `up` scrape watches every one of them every 15s for as long as they live,
+  which is more than a healthcheck does — Railway stops probing once the deploy is live.
+  **That sentence was false until 2026-08-20** and had been for months: `docker/prometheus.yml`
+  scraped the Collector, cloudflared and itself, never Grafana, and the Loki job did not
+  exist while this file already claimed it did. Six jobs now — the Collector has two
+  (`:8889` exported, `:8888` internal), and `status-api` is the one service deliberately
+  not scraped, because it is the one with both a `healthcheckPath` and an outside
+  witness in `smoke.yml`. An asserted control that is absent is worse than a declared
+  gap: the reader stops looking for it.
 
 ## Commands
 
 ```bash
 docker build -f railway/prometheus/Dockerfile -t p .   # same for the other four
-docker compose -f docker/docker-compose.yml config --quiet     # needs the 9 env vars set to anything
+docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars only silence warnings; it exits 0 without them
 bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker only
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
@@ -144,7 +151,8 @@ those files are correct in both places. Never fork a config to "fix it for local
   order is not cosmetic either: a catch-all at the top of `resource_attributes` makes
   Loki answer `400`, loudly; at the top of `log_attributes` the push returns `204`,
   `-verify-config` calls the config valid, and every useful piece of structured metadata
-  disappears in silence. Exactly one gate sees that second case.
+  disappears in silence. Two checks see that second case, and both run in CI: the
+  allow-list gate reads the shape, `scripts/prova-privacy-log.sh` measures it.
 - **Never guess Claude Code metric names.** The exporter's suffix behaviour is pinned
   precisely so they stop depending on unit metadata.
 - **Never let a gate skip because its credential is missing** (the `sonar` job stays

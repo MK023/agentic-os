@@ -139,7 +139,7 @@ and the datasource arrive by provisioning, nothing to import.
 
 - **The logs half was measured on 2026-08-20, against client 2.1.235, and it inverted
   what the Phase 1.5 plan assumed.** Turning on `OTEL_LOGS_EXPORTER=otlp` — the variable
-  `docs/CLAUDE_CODE_TELEMETRY.md` deliberately leaves unset for the metrics-only phase —
+  `docs/CLAUDE_CODE_TELEMETRY.md` left unset until that day, and now tells you to set —
   and pointing a throwaway `logs` pipeline at the debug exporter produced **two disjoint
   sets**:
 

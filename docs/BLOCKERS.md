@@ -225,7 +225,7 @@ as a task instead of trusted to a check.
   of `DECISIONS.md`. The caveat this entry had carried is untouched and stays closed:
   **nothing log-derived goes on the public site**, the public surface is still exactly
   three aggregate numbers, and Loki has no Tunnel route at all. What is *not* closed is
-  the infrastructure — see the three items below.
+  the infrastructure — see the four items below.
 
 - **Create the R2 bucket and its S3 credentials.** Loki's chunks and index live there;
   without them the service starts against nothing. Marco's, like every other real
@@ -241,6 +241,18 @@ as a task instead of trusted to a check.
   Cloudflare dashboard hands you and Loki dies at startup on it, which is the one error
   in that file no gate can see.
 
+- **Mount a Railway volume on `/loki`** — the item this list was missing until a review
+  asked for it, and the one whose absence is quiet. `docker/docker-compose.yml` declares
+  `loki-data:/loki` with the reason next to it: chunks and index go to R2, but
+  `tsdb_shipper` keeps the *active* index and its cache on local disk, and
+  `docker/loki.yaml` also puts `compactor.working_directory` and the WAL there. Without
+  a volume Railway gives ephemeral storage, so every restart loses the WAL and the
+  active index — recent logs vanish while everything reads healthy.
+  `railway/README.md` already carries the troubleshooting entry for this exact symptom
+  on Prometheus (`fs_type=OVERLAYFS_SUPER_MAGIC`). Decide `RAILWAY_RUN_UID=0` at the
+  same time if the volume comes up owned by root: the image runs as `10001`, and that
+  is the same trap documented for the other services.
+
 ## Closed since the last revision of this file
 
 - **The healthcheck that told the truth about nothing** — Railway ignores the
@@ -255,12 +267,16 @@ as a task instead of trusted to a check.
 
 - **The OTLP ingest was reachable for anything, not just for ingest** — since
   2026-08-20 a Cloudflare WAF custom rule on `otel.marcobellingeri.dev` blocks
-  everything except `POST /v1/metrics` carrying an `Authorization` header, presence
+  everything except a `POST` to `/v1/metrics` (and, since the same day, `/v1/logs`)
+  carrying an `Authorization` header, presence
   only, never the value. It is **defence in depth and not the authentication**: that
   stays `bearertokenauth` inside the Collector, and `smoke.yml` proves it with a
   *wrong* token, the only shape the edge still lets through (PRs #99, #100, #101). The
-  rule lives in the Cloudflare dashboard, outside git — the five assertions in
-  `smoke.yml` are the only thing that notices if it is switched off.
+  rule lives in the Cloudflare dashboard, outside git — the six assertions in
+  `smoke.yml` are the only thing that notices if it is switched off. **Since 2026-08-20
+  it passes two paths, not one**: `POST /v1/logs` as well, for the Phase 1.5 log
+  ingest — see §4 above, and note that only the *opposite* mistake is caught by a
+  check.
 
 - **The spend backstop was declared unverified** — a workspace usage limit of $15 soft
   / $30 hard has existed since 2026-08-20 (PR #99). It is confirmed by the operator and
@@ -317,8 +333,12 @@ as a task instead of trusted to a check.
   Access. The Collector's only route is the ingest, which authenticates and answers
   `401`; giving it one means the `health_check` extension **and a new port on the one
   service that accepts writes from the internet**. Against that, a Prometheus `up`
-  scrape already watches all three every 15s **for as long as they run**, which is more
-  than a healthcheck does — Railway stops probing once a deploy is promoted. Full
+  scrape watches each of them every 15s **for as long as they run**, which is more
+  than a healthcheck does — Railway stops probing once a deploy is promoted. **The
+  premise had a hole until 2026-08-20**: Grafana was never scraped, and the Loki job did
+  not exist. Both were added rather than rewriting the decision they hold up — six jobs
+  in `docker/prometheus.yml`, covering every service except `status-api`, which is the
+  one that already has both a `healthcheckPath` and an outside witness in `smoke.yml`. Full
   reasoning in `DECISIONS.md`. If it is ever reopened, `PORT` goes first.
 
 - ~~The dry run in `LOCAL_DRY_RUN.md` has no trigger.~~ **It has one since
