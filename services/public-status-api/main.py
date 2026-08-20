@@ -419,6 +419,17 @@ async def healthz() -> dict:
     `healthcheckPath` e' il meccanismo della piattaforma che lo impedisce, e vuole un
     200 letterale senza credenziali: /status, che risponde 401, non puo' esserlo.
 
+    ATTENZIONE, misurato il 20-08-2026: dichiarare `healthcheckPath` senza la
+    variabile `PORT` sul servizio FA FALLIRE IL DEPLOY. Railway manda la sonda alla
+    porta indicata da `PORT` ("not listening on the PORT variable ... can result in
+    your health check returning a service unavailable error"), qui non e' impostata,
+    e uvicorn ascolta su 8000: la sonda non raggiunge nessuno, il deploy risulta
+    FAILED e la piattaforma tiene su il container precedente. Il guasto e' peggiore
+    di quello che il controllo previene, ed e' successo davvero — il commit che ha
+    introdotto questa rotta e' rimasto NON dispiegato mentre tutto sembrava a posto.
+    La rotta resta perche' e' giusta e non costa niente; `healthcheckPath` torna in
+    railway.json solo DOPO che `PORT=8000` esiste sul servizio, in quest'ordine.
+
     Deliberatamente NON interroga Prometheus. Una sonda che dipende da monte
     dichiara "malato" il servizio proprio quando e' monte a esserlo, spegnendo
     l'ultima cosa che ancora funziona — e i tre numeri hanno gia' il loro 502.
