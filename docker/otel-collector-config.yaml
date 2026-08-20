@@ -123,6 +123,18 @@ processors:
           # un punto d'iniezione documentato e il set del client non e' un
           # contratto, quindi si tiene solo cio' che serve a Loki come label.
           - keep_keys(resource.attributes, ["service.name"])
+      - context: scope
+        statements:
+          # TERZO statement, e non era nel piano: senza, gli attributi di SCOPE
+          # attraversano il Collector intatti. Misurato il 2026-08-20 con
+          # scripts/prova-privacy-log.sh — togliendo la sola allow-list di Loki,
+          # `scope.secret` arrivava interrogabile, mentre identita' e contenuto
+          # del record no. Le due barriere si dichiaravano indipendenti e su
+          # questo terzo insieme non lo erano: e' esattamente la forma di errore
+          # gia' corretta una volta in spec (#119). Claude Code oggi non manda
+          # nessun attributo di scope, quindi la lista vuota non toglie niente a
+          # nessuno — e vale su cio' che una versione futura ci mettesse.
+          - keep_keys(scope.attributes, [])
       - context: log
         statements:
           # `prompt_length` e `response_length` SONO in lista, e sono l'unica

@@ -610,6 +610,19 @@ jobs:
       # giorno in cui si aggiunge un'immagine. Due condizioni, entrambe necessarie:
       # ogni servizio in railway/ deve essere COSTRUITO, e il suo tag deve essere
       # NOMINATO da uno step a valle, altrimenti si costruisce e nessuno lo guarda.
+      # I tre gate qui sotto guardano la FORMA delle due allow-list e non eseguono
+      # niente. Questo le ESEGUE: fa passare un payload OTLP dal Collector vero a
+      # Loki vero e poi interroga Loki. Su questo progetto una config valida ha gia'
+      # mentito — `-verify-config` accetta un endpoint che a runtime uccide Loki, e
+      # `validate` esce 0 su nomi deprecati che compaiono solo all'avvio.
+      #
+      # Il test ha i denti, ed e' stato provato: togliendo entrambe le barriere
+      # diventa rosso e nomina le chiavi trapelate; togliendone una sola resta verde,
+      # che e' la definizione di "due barriere indipendenti" e va riverificata quando
+      # una delle due cambia.
+      - name: identita' e contenuto non arrivano nel log store (prova eseguita)
+        run: bash scripts/prova-privacy-log.sh
+
       - name: ogni servizio railway e' costruito e scansionato
         run: |
           set -euo pipefail
@@ -701,9 +714,16 @@ jobs:
               # NON e' nella resource su questo client — ma OTEL_RESOURCE_ATTRIBUTES
               # e' un punto d'iniezione documentato, e il set del client non e' un
               # contratto: la barriera vale sul futuro, non sulla misura di ieri.
+              # TRE contesti, non due. Il piano ne prevedeva due; con quelli, gli
+              # attributi di SCOPE attraversavano il Collector intatti e a fermarli
+              # restava la sola allow-list di Loki. Misurato il 2026-08-20 con
+              # scripts/prova-privacy-log.sh: togliendo la barriera di Loki,
+              # `scope.secret` arrivava interrogabile. Due barriere che condividono
+              # un punto cieco sono una barriera, ed e' un errore gia' corretto una
+              # volta in spec (#119).
               contesti = {st.get("context") for st in (proc[allow[0]].get("log_statements") or [])}
-              if contesti != {"resource", "log"}:
-                  fallimenti.append(f"transform/log-allowlist copre {sorted(contesti)}: servono resource E log")
+              if contesti != {"resource", "scope", "log"}:
+                  fallimenti.append(f"transform/log-allowlist copre {sorted(contesti)}: servono resource, scope E log — cio' che manca passa la barriera #1 intatto")
 
               # L'identita' che il fornitore dichiara "always included" non deve MAI
               # comparire dentro un keep_keys: sarebbe un allow-list che permette
