@@ -168,6 +168,46 @@ and the datasource arrive by provisioning, nothing to import.
   that run alone would have silently dropped the very thing this phase exists to answer.
   Two parallel sessions produced two distinct `session.id` values, as on the metrics side.
 
+## 4-bis. The logs half: run the proof, don't read the config
+
+`scripts/prova-privacy-log.sh` is the only check in this repository that verifies a
+*privacy property* rather than a shape. It stands up MinIO, Loki and the Collector on
+one Docker network, pushes an OTLP payload carrying identity, session content and a
+key no client has ever sent, and then queries Loki the way a person would.
+
+```bash
+bash scripts/prova-privacy-log.sh   # ~90s, needs only Docker
+```
+
+It asserts three things, and the third is not decorative:
+
+- **(a)** the index holds `service_name` and nothing else;
+- **(b)** nothing forbidden is queryable **in any form** — not as a label, not as
+  structured metadata, not in the body;
+- **(c)** `session.id`, `tool_name` and `error_type` *are* there. An allow-list broken
+  the other way — one that drops everything — would sail through (a) and (b) and look
+  like a success.
+
+**It found a real defect the first time it ran.** The Collector's
+`transform/log-allowlist` had two statements, `resource` and `log`, and no `scope`.
+Removing Loki's allow-list alone left `scope.secret` queryable, while identity and
+record content stayed out. The two barriers were declared independent and, on that
+third set of attributes, were not — the same shape of error already corrected once in
+the spec (#119). With the third statement in place, each barrier now holds on its own:
+break either one and the proof still passes; break both and it goes red naming the
+leaked keys. **Re-run that pair of experiments whenever one of the two changes** —
+"independent" is a measurement, not a design intention.
+
+Two limits, and they are the reason this does not replace §4:
+
+- The payload is **synthetic**. It proves the allow-lists discard what is put in front
+  of them, not that the client only sends that. On this repository a synthetic payload
+  has already confirmed a query and lied.
+- The storage is **MinIO, not R2**. Exactly one key of `docker/loki.yaml` differs
+  (`insecure`, because MinIO here speaks HTTP), and the script asserts that
+  `limits_config` — the block under test — is identical to the shipped file, so nobody
+  can quietly "fix" the config to make the proof pass.
+
 ## 5. Write down that you ran it
 
 The label half of this dry run is the only check that exists against a *new* Claude
