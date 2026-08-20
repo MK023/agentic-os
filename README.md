@@ -75,6 +75,7 @@ pip-audit -r services/public-status-api/requirements.txt
 zizmor --min-severity=high .github/workflows/
 checkov --config-file .checkov.yml -d .
 bash scripts/check-image-users.sh
+bash scripts/prova-contratto-metriche.sh                       # ~40s, Docker only
 ```
 
 ## Security
@@ -198,9 +199,19 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
 
 ## Test contract
 
-1. **Shape**: static analysis as the ground floor for infra (compose config, an
-   image build of every service, Checkov); a small unit-heavy pyramid for the two
-   application components (status API here, widget in the site repo).
+1. **Shape**: **honeycomb, not pyramid** — corrected 2026-08-20 after counting what
+   was actually here. Five services: the complexity of this system lives *between*
+   them, not inside them, so the centre of gravity belongs on service-boundary and
+   contract tests. Static analysis stays the ground floor (compose config, an image
+   build of every service, Checkov, hadolint), and the one component with real domain
+   logic — the status API — keeps a unit-heavy suite at 100%. What was missing was the
+   middle: **thirteen CI steps parsed text and not one exercised a boundary.** The
+   known couplings — metric names in three places, the `25h` window in two, the
+   internal hostnames — were guarded by comparing strings, which cannot catch the case
+   where every file agrees and all of them are wrong together.
+   `scripts/prova-contratto-metriche.sh` is the first executed proof of that middle:
+   it asks the Collector what it *actually* exposes and compares that against what the
+   status API and the dashboard ask for.
 
 2. **Coverage on new code**: 100% on the status API, **enforced** by
    `--cov-fail-under=100` in CI (met: 55 tests, 100% on `main.py` and
