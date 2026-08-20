@@ -148,7 +148,14 @@ processors:
           # Gli ATTRIBUTI di scope li chiude la riga sopra; `name` e `version`
           # sono campi a parte, e Loki li mette in structured metadata per
           # costruzione — `otlp_config` non ha nessuna chiave per governarli.
-          # Misurato: sono l'unica classe su cui NON esistono due barriere, una
+          # Misurato: sono una classe su cui NON esistono due barriere, una
+          # sola e' possibile — e qui c'era scritto "l'unica", che era una parola
+          # piu' forte della misura. Anche `observed_timestamp` (campo OTLP di
+          # primo livello) e `detected_level` (che Loki aggiunge da se', a valle
+          # di ENTRAMBE le allow-list) sfuggono alle mappe di attributi. Nessuno
+          # dei due porta identita' — il secondo lo deriva da `severity_text`,
+          # che gli statement sul contesto `log` azzerano — ma un'enumerazione
+          # dichiarata completa e' cio' che rende invisibile la voce successiva.
           # sola e' possibile, ed e' questa. Il client manda
           # `com.anthropic.claude_code.events` / la propria versione: la seconda
           # e' gia' in `service.version`, che non teniamo, e la prima non dice

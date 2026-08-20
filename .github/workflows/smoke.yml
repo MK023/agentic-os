@@ -95,6 +95,18 @@ jobs:
             # scambio fra i due e' sempre la superficie che si e' spostata. Solo un
             # 2xx significa che non ha risposto nessuno dei due controlli.
             case "$codice" in
+              5*|000)
+                # Il codice non-conforme PIU' PROBABILE su una sonda che gira 144
+                # volte al giorno, e per due versioni finiva nel ramo del bordo:
+                # chi legge andava ad aprire la dashboard Cloudflare per un guasto
+                # che sta su Railway. Due rami non bastavano.
+                echo "Ne' il bordo ne' il Collector hanno risposto: e' il Tunnel o" >&2
+                echo "l'origine. Guarda i deploy Railway e lo stato di cloudflared," >&2
+                echo "NON la regola WAF — quella e' il caso 401/403 qui sotto." >&2
+                echo "Da fuori il sistema e' irraggiungibile mentre dentro puo'" >&2
+                echo "continuare a funzionare benissimo: le tre cifre pubbliche si" >&2
+                echo "congelano senza che niente all'interno se ne accorga." >&2
+                ;;
               2*)
                 echo "L'ingest e' l'unica superficie pubblica che accetta scritture:" >&2
                 echo "un 200 qui significa che chiunque puo' scrivere nel TSDB, e i tre" >&2

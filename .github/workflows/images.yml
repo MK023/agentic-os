@@ -652,13 +652,31 @@ jobs:
           build = "\n".join(righe)
           # I tag citati da qualunque step a valle: `image-ref:` di trivy-action, o
           # una riga `run:` che nomini il tag.
+          # Il lato `citati` aveva lo STESSO buco del lato build, e non l'avevo
+          # visto perche' l'avevo appena corretto sull'altra meta': leggeva tutto
+          # il `run:` commenti inclusi, quindi un `# TODO: agentic-loki:ci lo
+          # scansioneremo` soddisfaceva il gate. E il messaggio promette una
+          # scansione, non una sottostringa: quindi si pretende che il tag compaia
+          # in un `image-ref:` di uno step trivy-action, cioe' il mestiere che il
+          # messaggio nomina.
           citati = set()
           for s in steps:
-              citati |= set(re.findall(r"agentic-([a-z0-9-]+):ci", str(s.get("with", {}))))
+              if "aquasecurity/trivy-action" in str(s.get("uses", "")):
+                  citati |= set(re.findall(r"agentic-([a-z0-9-]+):ci", str(s.get("with", {}))))
               if "run" in s and "costruisci" not in s["run"]:
-                  citati |= set(re.findall(r"agentic-([a-z0-9-]+):ci", s["run"]))
+                  for l in s["run"].split("\n"):
+                      if not l.strip().startswith("#"):
+                          citati |= set(re.findall(r"agentic-([a-z0-9-]+):ci", l))
           servizi = sorted(d.name for d in pathlib.Path("railway").iterdir()
                            if d.is_dir() and (d / "Dockerfile").exists())
+          # Un pavimento. Se una riorganizzazione — un rename di `Dockerfile`, una
+          # directory spostata — svuota l'insieme, questo gate direbbe "tutti
+          # costruiti" piu' forte di prima. Una prova che riporta "tutto a posto"
+          # quando non c'era niente da guardare e' la stessa bugia di un allarme
+          # che non puo' scattare.
+          if len(servizi) < 5:
+              print(f"::error::trovati solo {len(servizi)} servizi sotto railway/ ({servizi}): l'insieme si e' svuotato e questo gate non sta guardando niente")
+              sys.exit(1)
           fallimenti = []
           for s in servizi:
               if not re.search(rf"\b{re.escape(s)}\b", build):
@@ -856,14 +874,15 @@ jobs:
           # I quattro statement che chiudono cio' che `keep_keys` non tocca. Trovati
           # da un audit il 2026-08-20, ciascuno provato portante togliendolo: il body
           # attraversava entrambe le allow-list, nome e versione dello scope sono
-          # l'unica classe a barriera singola, e il VALORE di service.name e' l'unica
+          # una classe a barriera singola (non l'unica: vedi il commento nel file di
+          # config), e il VALORE di service.name e' l'unica
           # label di indice e lo sceglieva il mittente.
           tutti = " ".join(x for st in (proc.get(allow[0], {}).get("log_statements") or [])
                            for x in (st.get("statements") or []))
           for frammento, perche in [
               ("set(log.body", "il body del log record non e' governato da nessuna delle due allow-list: senza questo statement la riga arriva verbatim, indicizzata e conservata"),
-              ("set(scope.name", "nome e versione dello scope finiscono in structured metadata per costruzione, e otlp_config non ha nessuna chiave per governarli: e' l'unica classe a barriera singola"),
-              ("set(scope.version", "nome e versione dello scope finiscono in structured metadata per costruzione, e otlp_config non ha nessuna chiave per governarli: e' l'unica classe a barriera singola"),
+              ("set(scope.name", "nome e versione dello scope finiscono in structured metadata per costruzione, e otlp_config non ha nessuna chiave per governarli: e' una classe a barriera singola"),
+              ("set(scope.version", "nome e versione dello scope finiscono in structured metadata per costruzione, e otlp_config non ha nessuna chiave per governarli: e' una classe a barriera singola"),
               ('set(resource.attributes["service.name"]', "keep_keys filtra le CHIAVI, non i valori: senza questo statement il mittente sceglie il valore dell'unica label di indice, e ogni valore nuovo e' uno stream nuovo"),
           ]:
               if frammento not in tutti:

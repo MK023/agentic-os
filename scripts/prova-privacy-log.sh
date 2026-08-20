@@ -100,6 +100,11 @@ for img in "$IMG_MINIO" "$IMG_LOKI" "$IMG_COLL"; do
   scaricata=""
   for tentativo in 1 2 3; do
     if docker pull -q "$img" >/dev/null 2>&1; then scaricata=si; break; fi
+    # L'errore del pull VA MOSTRATO all'ultimo tentativo: rate limit di Docker Hub,
+    # digest che non corrisponde piu', DNS sono tre cause con tre rimedi diversi, e
+    # senza stderr avevano lo stesso testo. Questo meccanismo e' nato da un
+    # `TLS handshake timeout` verso auth.docker.io: l'errore E' l'informazione.
+    if [ "$tentativo" = "3" ]; then docker pull "$img" || true; fi
     echo "pull di ${img%%@*} fallito (tentativo ${tentativo}), riprovo fra $((tentativo * 10))s" >&2
     sleep $((tentativo * 10))
   done
@@ -145,10 +150,20 @@ docker run -d --rm --name privacy-coll --network "$RETE" -p 4398:4318 \
   -v "$PWD/docker/otel-collector-config.yaml:/c.yaml:ro" \
   -e OTLP_INGEST_TOKEN="$TOKEN" "$IMG_COLL" --config=file:/c.yaml >/dev/null
 echo -n "attendo il Collector: "
+coll_pronto=""
 for _ in $(seq 1 30); do
-  docker logs privacy-coll 2>&1 | grep -q "Everything is ready" && { echo "pronto"; break; }
+  docker logs privacy-coll 2>&1 | grep -q "Everything is ready" && { coll_pronto=si; echo "pronto"; break; }
   sleep 1
 done
+# Senza questa asserzione lo script proseguiva e moriva sul `curl` successivo con
+# `curl: (7)`, mentre il trap aveva gia' rimosso il container: rosso giusto, diagnosi
+# perduta. Ed e' il caso che questo script esiste per catturare — il Collector che
+# muore all'avvio su un nome deprecato, cioe' proprio cio' che `validate` non vede.
+[ -n "$coll_pronto" ] || {
+  echo "FALLITO: il Collector non e' mai arrivato a servire. I suoi ultimi log:"
+  docker logs privacy-coll 2>&1 | tail -20
+  exit 1
+}
 
 # Un payload che contiene TUTTO cio' che non deve arrivare, in OGNI posto in cui puo'
 # stare — e l'elenco dei posti e' cresciuto il 2026-08-20, quando un audit ha notato
@@ -187,7 +202,22 @@ CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:
 echo "push OTLP verso il Collector: HTTP $CODICE"
 [ "$CODICE" = "200" ] || { echo "FALLITO: il Collector ha rifiutato il payload"; cat "$TMP/push.txt"; exit 1; }
 
-sleep 12
+# Polling invece di un'attesa fissa. Con `sleep 12` su un runner carico l'asserzione
+# (c) falliva dicendo "l'allow-list scarta anche cio' che serve" — cioe' accusava la
+# config di un problema di tempistica. E questo e' un gate bloccante il cui preambolo
+# dice che un gate instabile smette di essere un segnale: il ragionamento era gia'
+# applicato ai `docker pull` e non all'ingestione.
+echo -n "attendo che il record sia interrogabile: "
+trovato=""
+for tentativo in $(seq 1 20); do
+  n=$(curl -sG "http://localhost:3198/loki/api/v1/query_range" \
+        --data-urlencode 'query={service_name="claude-code"}' \
+        --data-urlencode "start=$((ORA - 300000000000))" --data-urlencode "end=$((ORA + 300000000000))" \
+      | python3 -c "import json,sys; print(sum(len(s['values']) for s in json.load(sys.stdin).get('data',{}).get('result',[])))" 2>/dev/null || echo 0)
+  [ "${n:-0}" -gt 0 ] && { trovato=si; echo "dopo ${tentativo}s"; break; }
+  sleep 1
+done
+[ -n "$trovato" ] || echo "MAI COMPARSO dopo 20s — cio' che segue distingue 'scartato' da 'in ritardo'"
 
 echo "--- (a) le label di indice, e i loro VALORI"
 curl -s "http://localhost:3198/loki/api/v1/labels" | tee "$TMP/labels.json"; echo
