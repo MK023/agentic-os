@@ -18,9 +18,16 @@ client = TestClient(app)
 # `increase()` over those is structurally zero and a plain sum loses the ones the
 # Collector has stopped exporting. See the comment in main.py; both halves were
 # measured, not reasoned about.
-SESSIONS_Q = "sum(max_over_time(claude_code_session_count[25h]))"
-TOKENS_Q = "sum(max_over_time(claude_code_token_usage[25h]))"
-COST_Q = "sum by (model, type) (max_over_time(claude_code_token_usage[25h]))"
+# `{job="otel-collector"}` e' una parte del contratto, non decorazione: senza il
+# filtro di provenienza qualunque target scrapato che serva una metrica CHIAMATA
+# `claude_code_token_usage` finisce nella somma pubblica. Aggiunto il 2026-08-20,
+# dopo che un'iniezione da un target diverso ha messo 1e12 token nella cifra
+# pubblica di uno stack di prova. Queste costanti sono duplicate apposta rispetto a
+# `QUERIES`: se qualcuno cambia la query in main.py e non qui, questi test vanno
+# rossi — e' il loro mestiere, ed e' successo davvero il giorno del cambio.
+SESSIONS_Q = 'sum(max_over_time(claude_code_session_count{job="otel-collector"}[25h]))'
+TOKENS_Q = 'sum(max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
+COST_Q = 'sum by (model, type) (max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
 
 
 def _serie(model: str, tipo: str, value) -> dict:
