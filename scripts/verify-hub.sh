@@ -15,7 +15,16 @@ set -uo pipefail
 
 GRAFANA_URL="${1:?Uso: verify-hub.sh <grafana-url> <status-url> <status-token>}"
 STATUS_URL="${2:?}"
-STATUS_TOKEN="${3:?}"
+# Il token si puo' passare come terzo argomento (uso a mano) oppure in
+# STATUS_API_TOKEN (uso in CI). In CI la seconda forma e' quella giusta: un
+# segreto in argv finisce nella riga di comando del processo, ed e' visibile a
+# chiunque legga `ps` sullo stesso host.
+STATUS_TOKEN="${3:-${STATUS_API_TOKEN:-}}"
+if [ -z "$STATUS_TOKEN" ]; then
+  echo "Uso: verify-hub.sh <grafana-url> <status-url> <status-token>" >&2
+  echo "     oppure STATUS_API_TOKEN nell'ambiente, che e' la forma per la CI." >&2
+  exit 2
+fi
 
 fallimenti=0
 
