@@ -1,10 +1,12 @@
 # What is not done yet
 
-Current as of 2026-08-13, **tagged v1.0.0**: the five services run, the Tunnel
-serves its three hostnames, the public endpoint answers with real numbers, and
-`smoke.yml` watches it from outside. Everything settled lives in `DECISIONS.md`;
-everything verified lives in the commit that verified it. This file is only what
-is still open.
+Current as of 2026-08-20. The last tag is **v1.1.0** (2026-08-16) and `main` is
+ahead of it: the five services run, the Tunnel serves its three hostnames, the
+public endpoint answers with real numbers, and `smoke.yml` watches it from
+outside — since 2026-08-20 on the ingest's own authentication and on the WAF rule
+in front of it, not only on the public endpoint. Everything settled lives in
+`DECISIONS.md`; everything verified lives in the commit that verified it. This
+file is only what is still open.
 
 **No engineering task blocks anything.** What follows is one thing to watch, one
 thing nobody downstream can fix, and a handful of judgement calls.
@@ -34,11 +36,11 @@ names. The dry run is for the label set, not the metric names.
 
 ## 2. Grafana's fixable CVEs, which are not fixable here
 
-`grafana/grafana:13.1.3` carries 15 HIGH vulnerabilities that *do* have fixes —
-in the upstream Go modules it vendors (`tempo`, Go stdlib, `x/net`, `x/text`),
-not in any Grafana release that can be installed. The `images` job prints them
-without failing, deliberately: a gate that cannot go green becomes a
-`continue-on-error` within a month.
+`grafana/grafana` carries HIGH vulnerabilities that *do* have fixes — in the
+upstream Go modules it vendors (`tempo`, Go stdlib, `x/net`, `x/text`), not in any
+Grafana release that can be installed. The `images` job prints them without
+failing, deliberately: a gate that cannot go green becomes a `continue-on-error`
+within a month.
 
 Exposure is low — Grafana has no platform domain and sits behind Cloudflare
 Access with a single-email policy. **The action is to watch, not to work**: when
@@ -47,7 +49,9 @@ the job log. If it is still stuck in a few weeks, an upstream issue is worth
 opening.
 
 **Triaged 2026-08-14 by the criteria the model actually asks for — exploitability,
-not existence.** "15 HIGH" is a count, and a count is not a risk assessment:
+not existence.** "15 HIGH" is a count, and a count is not a risk assessment. Read
+what follows as a statement about **`13.1.3`'s CVE set**, which is not the set the
+image carries today — see "what changed since" at the end of this section:
 
 - **CISA KEV: none of the eleven.** Catalogue of 1665 entries, released
   2026-08-11. Nothing here is being exploited in the wild.
@@ -59,9 +63,10 @@ not existence.** "15 HIGH" is a count, and a count is not a risk assessment:
   datasources/prometheus.yml`); there is no Tempo datasource and no S3 anywhere in
   `docker/grafana/`. They ship inside the binary as vendored modules and nothing
   calls them.
-- **`13.1.3` is the newest release** (checked against the upstream release list on
-  2026-08-14; it shipped 2026-08-07). So "wait for Dependabot" is currently waiting
-  for something that does not exist yet — the absence of a bump is not neglect.
+- **`13.1.3` was the newest release** (checked against the upstream release list on
+  2026-08-14; it shipped 2026-08-07). So "wait for Dependabot" was, at the time,
+  waiting for something that did not exist yet — the absence of a bump was not
+  neglect. That has since stopped being true; see below.
 
 So the watch is not just cheap, it is **correct by the same criteria that would
 have made it blocking**. What would change the posture is a **KEV entry**, not a
@@ -70,6 +75,26 @@ be no release to upgrade to. It would be to narrow or switch off the exposure:
 Grafana is a convenience here, and the three public numbers do not pass through
 it. That is worth knowing *before* the day it matters, because a decision that has
 already been made is much cheaper at 3am.
+
+**What changed since, and why the triage above no longer describes the image.**
+Dependabot bumped `grafana/grafana` to **13.1.4** on 2026-08-19 (PR #80), pinned by
+digest in `docker/docker-compose.yml` and `railway/grafana/Dockerfile`. The `images`
+job on `7d92dcd` (2026-08-20) reports **13 distinct HIGH CVEs** across the image's
+three scanned Go binaries — 2 in `github.com/grafana/tempo`, 11 against `stdlib
+v1.26.3` and 9 against `stdlib v1.26.4`, the last two overlapping. **`CVE-2026-33814`,
+the CVE the 14/08 triage named as its worst by EPSS, is not among them.**
+
+So the count moved and so did the set: the KEV and EPSS lines above were measured
+against `13.1.3` and have **not** been re-measured. They are kept because the
+*method* is the point — exploitability, not existence — but their numbers are not a
+current statement about production. The two `tempo` findings are the one part that
+carries over unchanged, and for the same reason: still no Tempo datasource, still no
+S3, still nothing that calls them.
+
+**Re-running the triage on `13.1.4`'s set is the open item here**, and it is still a
+watch rather than a task: the fixes remain upstream-only, exposure is unchanged
+(Access, single-email policy, no platform domain, no public numbers passing through
+Grafana), and what would change the posture is still a KEV entry, not a higher count.
 
 ## 3. The smoke probe cannot see a short outage — closed from the other repo
 
@@ -107,19 +132,24 @@ had already been decided and shipped.
   `STATUS_API_TOKEN` as GitHub secrets, which is what `verify-hub.sh` needs to run
   in CI instead of by hand. It would extend the automatic check past the public
   endpoint to Grafana behind Access and the status API's own bearer.
-- ~~Whether the hub stays past the first month.~~ **Decided 2026-08-16: it stays**, and
-  the Railway plan changes on **2026-09-01**. Measured cost, which is the number that made
-  the decision easy: **€2.05 over 12 days**, so about €0.17/day or **~€5/month** for five
-  services. That is roughly half the $10-13/month this project had estimated, and the
-  estimate is what was written down before anyone had a bill to read.
+- ~~Whether the hub stays past the first month.~~ **Decided 2026-08-16: it stays.**
+  ~~The Railway plan changes on 2026-09-01.~~ **It changed on 2026-08-19** — twelve days
+  early, and not by the calendar: the free plan had no volume left to give and the
+  resize from 500 MB to 5 GB needed Hobby. Billing is now **on usage**, which is why
+  several lines elsewhere in this repo stopped being about CPU and started being about
+  money. Measured cost before the change, which is the number that made the decision
+  easy: **€2.05 over 12 days**, so about €0.17/day or **~€5/month** for five services —
+  roughly half the $10-13/month this project had estimated before anyone had a bill to
+  read.
 
-  The arithmetic to 2026-09-01 is about €2.70 more at that rate, which is close enough to
-  the remaining one-off Trial credit that it could run out first. **Marco's answer,
-  2026-08-16: he activates the plan early if it does.** Worth having asked, because this
-  is the silent kind of ending — a hub that stops for an empty balance produces no error,
-  no red deploy and no failed check, only numbers that stop moving. The balance lives in
-  the Railway dashboard; the API this project can reach does not expose it, so no gate
-  here can watch it.
+  What the early change removed: the arithmetic about the remaining Trial credit
+  running out first, and the question of activating the plan early. What it did **not**
+  remove is the silent-ending shape that made the question worth asking — a hub that
+  stops for an empty balance produces no error, no red deploy and no failed check, only
+  numbers that stop moving. Since 2026-08-20 there is a workspace usage limit ($15 soft
+  / $30 hard) standing in front of that, set by hand in the dashboard: **no API this
+  project can reach reads it back**, so it is a backstop nobody here can verify, and no
+  gate can watch the balance.
 - Grafana Loki as a Phase 1.5 — **not now, and no longer waiting on a date.** The
   criterion was applied on 2026-08-14 after sixteen days of real use: the questions Phase
   1 actually left unanswered were about the hub's own containers, and a targeted metric
@@ -130,15 +160,58 @@ had already been decided and shipped.
   plan, not to Loki. Full reasoning, including why "richer data on the public site" is a
   design question rather than a free upgrade, in `DECISIONS.md`.
 
-  **The second trigger now has a date: the plan changes on 2026-09-01** (decided
-  2026-08-16). That is the trigger firing, not a date-based deferral coming back in
-  through the window — the condition is still "a paid plan", it simply has a calendar
-  now. So Loki moves from "not now" to "due for its design pass", and that pass starts
-  from the caveat already written down: the public surface stays three aggregate numbers,
-  so the question to answer first is *which log-derived aggregate can be public without
-  becoming content*.
+  ~~The second trigger now has a date: the plan changes on 2026-09-01.~~ **The second
+  trigger has fired: the plan changed on 2026-08-19**, twelve days before the date this
+  paragraph was carrying. The condition was always "a paid plan", never a calendar — the
+  calendar was only how it was expected to arrive. So Loki has been "due for its design
+  pass" since 2026-08-19, not since some future date, and this file said otherwise for a
+  day. The pass starts from the caveat already written down: the public surface stays
+  three aggregate numbers, so the question to answer first is *which log-derived
+  aggregate can be public without becoming content*. Usage billing also changes the sum
+  it has to justify — a sixth service is now a line on a bill, not a slice of a fixed
+  free budget.
 
 ## Closed since the last revision of this file
+
+- **The healthcheck that told the truth about nothing** — Railway ignores the
+  Dockerfile `HEALTHCHECK` and probes its own `healthcheckPath`, and neither existed.
+  Declaring it on 2026-08-20 (PR #96) made **every deploy fail**, because Railway
+  probes the port named by the `PORT` service variable and that variable was not set:
+  production stayed six days behind with every gate green. `PORT` was set first (8000
+  on status-api, 2000 on cloudflared) and `healthcheckPath` came back after it
+  (PR #98). The order is the lesson, and it is now written in `DECISIONS.md` and in
+  `CLAUDE.md`. **Three services still have no path**, deliberately — see the note at
+  the end of this section.
+
+- **The OTLP ingest was reachable for anything, not just for ingest** — since
+  2026-08-20 a Cloudflare WAF custom rule on `otel.marcobellingeri.dev` blocks
+  everything except `POST /v1/metrics` carrying an `Authorization` header, presence
+  only, never the value. It is **defence in depth and not the authentication**: that
+  stays `bearertokenauth` inside the Collector, and `smoke.yml` proves it with a
+  *wrong* token, the only shape the edge still lets through (PRs #99, #100, #101). The
+  rule lives in the Cloudflare dashboard, outside git — the five assertions in
+  `smoke.yml` are the only thing that notices if it is switched off.
+
+- **The spend backstop was declared unverified** — a workspace usage limit of $15 soft
+  / $30 hard has existed since 2026-08-20 (PR #99). It is confirmed by the operator and
+  **not readable from here**: Railway's MCP surface does not expose billing, so no tool
+  in this repository can re-read it and no gate notices if it disappears. Same class as
+  `PORT`. This is not a rate limiter, and the public endpoint is still unthrottled.
+
+- **The Sentry rule that notified once in six days** — the alert fired on the first
+  event of a process and then went quiet, which is how a Prometheus compaction failure
+  ran once a minute from 2026-08-13 to 2026-08-19 unseen (PR #86). The hourly throttle
+  in the code was never the problem: the rule triggered on *priority transitions*, so
+  four events produced one notification. Corrected 2026-08-20 with an `Every event`
+  trigger beside it.
+
+- **Two HIGH CVEs in the status-api base image that neither lever of the gate could
+  reach** — `msgpack` and `pkg_resources`/setuptools live inside `pip/_vendor/`, so
+  recompiling the lockfile did not move them and neither did bumping the Debian tag.
+  pip is not needed at runtime (the image runs uvicorn), so it is uninstalled in the
+  same `RUN` as the install — including the second copy under `ensurepip`, which Trivy
+  reads and the first attempt left behind (PR #97). Measured: blocking library scan
+  from 2 HIGH to zero.
 
 - **Whether `docker/otel-collector-config.yaml` stays in the otel-collector's
   `watchPatterns`** — it stays, and the question dissolved rather than being decided
@@ -163,3 +236,18 @@ had already been decided and shipped.
   first because the alert fired once per process. Closed on 2026-08-19 by the plan
   change (volume 500 MB → 5 GB) and re-tuned to `30d` / `3GB`. The arithmetic, and
   what measuring corrected about it, is in `DECISIONS.md`.
+
+## Deliberately still open, and why
+
+- **Three of five services have no `healthcheckPath`.** Railway wants a literal 200
+  with no credentials. Prometheus (`/-/healthy`) and Grafana (`/api/health`) would
+  answer, but each would expose an unauthenticated route — and Grafana's hostname is
+  public, behind Access. The Collector's only route is the ingest, which authenticates
+  and answers `401`; giving it one means the `health_check` extension and a new port.
+  All three are already watched by a Prometheus `up` scrape **while they run**, which
+  is more than a healthcheck does — Railway stops probing once a deploy is promoted. If
+  any of them ever gets a path, `PORT` goes first.
+
+- **The dry run in `LOCAL_DRY_RUN.md` has no trigger.** Section 1 explains what it
+  covers; what it lacks is anything that makes it happen. It runs when somebody
+  remembers, and this repository has already written down that a comment is not a gate.
