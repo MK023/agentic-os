@@ -8,8 +8,6 @@
   },
   "deploy": {
     "restartPolicyType": "ON_FAILURE",
-    "healthcheckPath": "/healthz",
-    "healthcheckTimeout": 30,
     "numReplicas": 1
   }
 }
