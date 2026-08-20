@@ -27,8 +27,10 @@ three aggregate numbers are public, everything else stays inside the project.
   status alone. Railway ignores the Dockerfile `HEALTHCHECK`; it uses its own
   `healthcheckPath`, declared since 2026-08-20 on status-api (`/healthz`) and
   cloudflared (`/ready`) and **requiring a `PORT` service variable to work at all**.
-  On the other three, `SUCCESS` still only means "the container started" — and even
-  where the path exists Railway stops probing once the deploy is live.
+  On the other three `SUCCESS` still only means "the container started", **and that is
+  a closed decision, not a gap**: their health routes would be unauthenticated, and a
+  Prometheus `up` scrape already watches them every 15s for as long as they live, which
+  is more than a healthcheck does — Railway stops probing once the deploy is live.
 
 ## Commands
 
