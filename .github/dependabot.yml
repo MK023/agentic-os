@@ -33,6 +33,25 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(deps)"
+    # MISURATO IL 20-08-2026, non supposto: `grafana/grafana:13.2.0` risolve ZERO
+    # delle 13 CVE HIGH di 13.1.4 e ne aggiunge 15, per un totale di 28. Vendora
+    # un binario con `stdlib v1.25.7` — piu' VECCHIO dell'1.26.3/1.26.4 di 13.1.4 —
+    # piu' x/net v0.51.0, x/text, otel e grpc arretrati, e si riporta dentro
+    # CVE-2026-33814, che la triage del 14/08 nominava come la peggiore per EPSS.
+    # Stessa trivy 0.70.0 e stessi flag della CI (`--severity HIGH,CRITICAL
+    # --ignore-unfixed`), sulle due immagini di Docker Hub.
+    #
+    # Il job `images` stampa le CVE delle immagini di terzi SENZA fallire (e' voluto:
+    # un gate che non puo' diventare verde muore come `continue-on-error`). Quindi
+    # questo bump sarebbe arrivato verde, e il conteggio sarebbe passato da 13 a 28
+    # senza che niente lo dicesse. Un commento non e' un gate: questa riga lo e'.
+    #
+    # IGNORATA LA SOLA 13.2.0, non tutta la 13.2.x: se esce una 13.2.1 ricompilata
+    # con un Go recente va rimisurata e presa. 13.1.x e' ancora mantenuta (13.1.4 e
+    # 13.2.0 sono uscite lo stesso giorno), quindi restare qui non e' restare indietro.
+    ignore:
+      - dependency-name: "grafana/grafana"
+        versions: ["13.2.0"]
   - package-ecosystem: "docker"
     directory: "/railway/cloudflared"
     schedule:
@@ -56,6 +75,12 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(deps)"
+    # Stessa immagine, stesso motivo: senza l'ignore anche qui il bump entrerebbe
+    # da meta' — il Dockerfile Railway fermo e il compose avanti, cioe' il drift
+    # che questa voce esiste per impedire, al contrario.
+    ignore:
+      - dependency-name: "grafana/grafana"
+        versions: ["13.2.0"]
 
   # Le action sono pinnate a SHA: senza questa voce resterebbero ferme per sempre,
   # ed è il modo in cui un pin passa da protezione a debito.
