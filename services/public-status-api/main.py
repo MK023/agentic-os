@@ -13,7 +13,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
-from sentry import capture_exception
+from sentry import capture_exception, verifica_dsn
 
 # Nessuna rotta oltre a /status. FastAPI monta /docs, /redoc e /openapi.json da
 # solo, e `require_valid_token` è una dipendenza per-rotta: quelle tre
@@ -46,6 +46,10 @@ def _token_configurato(valore: str) -> str:
 
 
 STATUS_API_TOKEN = _token_configurato(os.environ["STATUS_API_TOKEN"])
+
+# All'import, non alla prima cattura: un reporter mal configurato deve impedire il
+# deploy, non scoprirsi il giorno in cui serviva.
+verifica_dsn(os.environ.get("SENTRY_DSN"))
 REQUEST_TIMEOUT = httpx.Timeout(10.0)
 
 # Plain sums, not `increase()` over a range — and that is not a shortcut, it is what
@@ -209,8 +213,17 @@ async def _rate_usd_per_mtok(model: str | None, tipo: str | None) -> float:
     return rate
 
 
+# La chiave del dedup e' un VALORE che arriva da fuori (`model`, letto dalla serie
+# Prometheus), quindi il set e' un insieme che un produttore puo' far crescere. Chi
+# tiene il token di ingest comprerebbe un evento Sentry per ogni modello inventato:
+# la stessa esaurizione di quota che il limitatore sul 502 e' servito a impedire.
+# Cinquanta e' molto oltre i modelli che esistono, e finito il tetto si tace: il
+# primo evento e' quello che serve, il cinquantunesimo no.
+MAX_PRICING_GAPS = 50
+
+
 async def _report_pricing_gap(what: str) -> None:
-    if what in _PRICING_GAPS_REPORTED:
+    if what in _PRICING_GAPS_REPORTED or len(_PRICING_GAPS_REPORTED) >= MAX_PRICING_GAPS:
         return
     _PRICING_GAPS_REPORTED.add(what)
     await capture_exception(
@@ -394,6 +407,23 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
             "it still answers queries, but it is not writing blocks; check the volume"
         ),
     )
+
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    """Sonda per la piattaforma: senza token, senza chiamate a monte, costante.
+
+    Railway promuove un deploy quando il PROCESSO parte, non quando serve — con un
+    `PROMETHEUS_URL` sbagliato ma risolvibile l'import riesce, uvicorn ascolta, ogni
+    /status e' un 502, il deploy risulta SUCCESS e il container buono viene spento.
+    `healthcheckPath` e' il meccanismo della piattaforma che lo impedisce, e vuole un
+    200 letterale senza credenziali: /status, che risponde 401, non puo' esserlo.
+
+    Deliberatamente NON interroga Prometheus. Una sonda che dipende da monte
+    dichiara "malato" il servizio proprio quando e' monte a esserlo, spegnendo
+    l'ultima cosa che ancora funziona — e i tre numeri hanno gia' il loro 502.
+    """
+    return {"status": "ok"}
 
 
 @app.get(

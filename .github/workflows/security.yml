@@ -141,7 +141,16 @@ jobs:
       # incidenti PyPI. Erano gli strumenti che verificano tutto il resto a essere
       # l'unico anello non bloccato. Modificare requirements-dev.in, mai il .txt.
       - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt"
-      - run: pip-audit -r services/public-status-api/requirements.txt --progress-spinner off
+      # Entrambi i lockfile. Bloccare i byte con gli hash non dice che quei byte non
+      # abbiano una CVE nota, e requirements-dev.txt e' installato nel job che nello
+      # step successivo riceve SONAR_TOKEN. dependency-review vede solo cio' che una
+      # PR cambia, quindi un pacchetto pinnato oggi e vulnerabile fra un mese non
+      # sarebbe guardato da niente.
+      - run: >-
+          pip-audit
+          -r services/public-status-api/requirements.txt
+          -r services/public-status-api/requirements-dev.txt
+          --progress-spinner off
 
   # Blocks on new HIGH-severity CVEs introduced by this PR's dependency diff — it
   # does not see what is already on main (that is pip-audit's job above, plus

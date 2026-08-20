@@ -4,6 +4,12 @@
 # sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
 FROM python:3.14.0-slim@sha256:0aecac02dc3d4c5dbb024b753af084cafe41f5416e02193f1ce345d671ec966e
 
+# stdout non bufferizzato: sotto Railway e' una pipe, non un TTY, quindi CPython lo
+# bufferizza a blocchi da 8 KB e su SIGKILL o OOM la coda dei log sparisce. Su un
+# servizio il cui unico guasto di produzione e' stato trovato leggendo i log a mano,
+# perdere proprio le ultime righe e' la direzione sbagliata.
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 COPY requirements.txt .
 # --require-hashes: every resolved version is locked to a hash (requirements.txt is
