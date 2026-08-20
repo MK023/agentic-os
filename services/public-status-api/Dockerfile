@@ -2,7 +2,7 @@
 # compose file's image pins.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
-FROM python:3.14.0-slim@sha256:0aecac02dc3d4c5dbb024b753af084cafe41f5416e02193f1ce345d671ec966e
+FROM python:3.14.7-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4
 
 # stdout non bufferizzato: sotto Railway e' una pipe, non un TTY, quindi CPython lo
 # bufferizza a blocchi da 8 KB e su SIGKILL o OOM la coda dei log sparisce. Su un
