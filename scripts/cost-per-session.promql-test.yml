@@ -3,10 +3,12 @@
 #
 #   promtool test rules scripts/cost-per-session.promql-test.yml
 #
-# promtool sta dentro il tarball di Prometheus (stessa versione pinnata in
-# railway/prometheus/Dockerfile) e non serve ne' un server ne' un daemon Docker.
-# Non gira in CI: e' un check da rieseguire quando cambia il prezzario o entra un
-# modello nuovo, cioe' le due occasioni in cui questa query viene riscritta.
+# DAL 20-08-2026 GIRA IN CI, col binario della nostra immagine. Fino a quel giorno
+# la riga qui sopra era un'istruzione che nessuno eseguiva: il job `compose`
+# confrontava le TARIFFE dentro questo file senza mai lanciarlo, quindi una query
+# rotta qui sarebbe rimasta rotta in silenzio. Un test che spiega come eseguirsi e
+# non viene eseguito e' documentazione — la stessa forma di "un commento non e' un
+# gate", applicata a un file che sembrava gia' un controllo.
 #
 # Quella riga qui sopra e' rimasta un'istruzione non seguita: la #66 ha alzato
 # cacheCreation da 1.25x a 2x dell'input in main.py e nella dashboard, e qui le
@@ -64,3 +66,54 @@ tests:
            + sum by (session_id) (claude_code_token_usage{model="claude-haiku-4-5-20251001",type="cacheRead"}) * 0.1) / 1e6
         eval_time: 5m
         exp_samples: []
+
+  # Le altre due cifre pubbliche. Aggiunte il 20-08-2026, quando questo file ha
+  # smesso di essere documentazione: prima non aveva senso scrivere casi che nessuno
+  # avrebbe eseguito.
+  #
+  # Cio' che si pinna qui e' la scelta di `max_over_time` al posto di `increase`, che
+  # e' l'errore strutturale gia' commesso e corretto una volta. Claude Code emette UNA
+  # SERIE PER SESSIONE, ciascuna un contatore cumulativo del solo processo: nasce,
+  # cresce mentre la sessione gira, e resta piatta per sempre dopo. `increase` misura
+  # la crescita DENTRO la finestra, quindi su una serie ferma vale zero — e su
+  # claude_code_session_count, incrementato esattamente una volta all'avvio, e'
+  # zero sempre. Un test sintetico che ri-manda lo stesso session_id con valori
+  # crescenti nasconde perfettamente il difetto: e' esattamente cio' che fece il
+  # primo test locale.
+  - interval: 1m
+    input_series:
+      # Due sessioni che finiscono in momenti diversi: A si ferma presto e resta
+      # piatta, B continua. E' il caso normale, ed e' quello che `increase` sbaglia.
+      - series: 'claude_code_session_count{session_id="A"}'
+        values: '1 1 1 1 1 1'
+      - series: 'claude_code_session_count{session_id="B"}'
+        values: '_ _ 1 1 1 1'
+      - series: 'claude_code_token_usage{session_id="A",model="claude-opus-5",type="input"}'
+        values: '1000 2000 3000 3000 3000 3000'
+      - series: 'claude_code_token_usage{session_id="B",model="claude-opus-5",type="input"}'
+        values: '_ _ 500 900 1200 1200'
+
+    promql_expr_test:
+      # Due sessioni, entrambe contate, anche quella ormai ferma.
+      - expr: 'sum(max_over_time(claude_code_session_count[25h]))'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 2
+
+      # I token sono la somma dei massimi per sessione: 3000 + 1200. Contare
+      # l'ultimo valore invece del massimo darebbe lo stesso numero qui, ma non
+      # dopo un riavvio del Collector — il massimo e' cio' che sopravvive.
+      - expr: 'sum(max_over_time(claude_code_token_usage[25h]))'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 4200
+
+      # La controprova, e la ragione per cui la query e' scritta cosi': con
+      # `increase` le sessioni ferme spariscono e il numero pubblico crolla.
+      - expr: 'sum(increase(claude_code_session_count[25h]))'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 0

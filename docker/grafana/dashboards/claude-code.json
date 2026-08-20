@@ -175,6 +175,52 @@
       }
     },
     {
+      "id": 10,
+      "title": "Storia piu' vecchia trattenuta (giorni)",
+      "type": "stat",
+      "description": "Da quanti giorni indietro arriva il campione piu' vecchio ancora nel TSDB. Esiste perche' il troncamento e' l'unico guasto di questa componente che non fa rumore: quando la retention per DIMENSIONE scatta prima di quella per tempo, Prometheus cancella i blocchi piu' vecchi e continua a rispondere correttamente a tutto — la finestra si accorcia e nessun pannello lo dice. Con 30d/3GB e la crescita misurata (~50 MB/giorno) deve vincere il TEMPO, quindi questo numero dovrebbe restare intorno a 30. NESSUNA soglia rossa di proposito: dopo un azzeramento del volume questo valore e' legittimamente piccolo per settimane, e un pannello rosso per settimane su un hub sano e' il modo piu' efficace di insegnare a ignorarlo.",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "(time() - prometheus_tsdb_lowest_timestamp_seconds) / 86400",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "decimals": 1,
+          "noValue": "nessun dato",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 1,
       "title": "Sessions (ultime ~25h)",
       "type": "stat",
