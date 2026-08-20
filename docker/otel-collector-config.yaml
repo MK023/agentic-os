@@ -97,6 +97,51 @@ processors:
       metric:
         - 'name != "claude_code.session.count" and name != "claude_code.token.usage" and name != "claude_code.cost.usage"'
 
+  # ALLOW-LIST #1, sui LOG record. Stessa forma e stessa ragione di quella sulle
+  # metriche: si tiene cio' che e' noto-sicuro e si scarta il resto, cosi' un
+  # attributo che una versione futura inventa e' una chiave mancante e non una
+  # fuga. Una delete-list qui fallirebbe aperta su ogni novita'.
+  #
+  # Le chiavi sono l'ESITO DELLA MISURA del 2026-08-20 (client 2.1.235), non una
+  # supposizione — vedi docs/telemetry-baseline.json e docs/LOCAL_DRY_RUN.md §4.
+  #
+  # DUE statement, e il primo non e' ridondanza: `keep_keys(log.attributes, ...)`
+  # tocca solo gli attributi del RECORD, mentre l'exporter OTLP spedisce la
+  # resource per definizione e Loki la memorizza. Sulle metriche quel lato lo
+  # chiude `resource_to_telemetry_conversion: false`; sui log quell'interruttore
+  # non esiste.
+  #
+  # `log.attributes` e non `attributes` nudo: il Collector riscrive la forma nuda
+  # e logga "please rewrite them accordingly". `validate` NON lo intercetta —
+  # esce solo all'avvio.
+  transform/log-allowlist:
+    log_statements:
+      - context: resource
+        statements:
+          # Misurate: host.arch, os.type, os.version, service.name,
+          # service.version. Nessuna identita' — ma OTEL_RESOURCE_ATTRIBUTES e'
+          # un punto d'iniezione documentato e il set del client non e' un
+          # contratto, quindi si tiene solo cio' che serve a Loki come label.
+          - keep_keys(resource.attributes, ["service.name"])
+      - context: log
+        statements:
+          # `prompt_length` e `response_length` SONO in lista, e sono l'unica
+          # inclusione che vale la pena difendere: sono numeri, non testo, ma
+          # restano un canale laterale debole sul contenuto — la lunghezza di un
+          # prompt non dice cosa c'e' scritto. Ci stanno perche' distinguono una
+          # risposta troncata da una vuota, che e' meta' della domanda "cosa e'
+          # andato storto in quella sessione", e perche' il confine che questo
+          # progetto difende e' cio' che esce in pubblico: qui non esce niente,
+          # Loki non ha rotte.
+          #
+          # NON sono in lista, deliberatamente: user.email, user.id,
+          # user.account_id, user.account_uuid, organization.id (identita', che
+          # il fornitore manda SEMPRE e nessuna variabile spegne) e prompt,
+          # response, error, tool_parameters, tool_input, body, command_name,
+          # server_name (contenuto: redatto per default, riacceso da una
+          # variabile d'ambiente).
+          - keep_keys(log.attributes, ["event.name", "event.sequence", "session.id", "prompt.id", "tool_name", "tool_use_id", "success", "error_type", "duration_ms", "decision", "source", "model", "query_source", "status", "status_code", "attempt", "error_code", "error_name", "transport_type", "server_scope", "prompt_length", "response_length"])
+
   batch: {}
 
 exporters:
@@ -134,6 +179,19 @@ exporters:
     # attributes never become labels either. Per-datapoint attributes on the list
     # (`type`, `model`) are still labels — those are what the dashboard groups by.
 
+  # OTLP nativo verso Loki: `POST /otlp/v1/logs` e' l'endpoint documentato dal
+  # fornitore. NON si usa il lokiexporter, deprecato a monte.
+  #
+  # `otlp_http`, NON `otlphttp`: dalla 0.158.0 il vecchio nome e' un alias
+  # deprecato ("alias is deprecated; use \"otlp_http\" instead" all'avvio) e
+  # `validate` non lo dice.
+  #
+  # `logs_endpoint` con il percorso completo, non `endpoint` con la base:
+  # misurato, `endpoint: http://x:3100` fa chiamare `POST /v1/logs`, che su Loki
+  # e' un 404 secco; `logs_endpoint` viene usato verbatim.
+  otlp_http/loki:
+    logs_endpoint: http://loki.railway.internal:3100/otlp/v1/logs
+
 service:
   # Telemetria interna del Collector. Conta i PAYLOAD IN ARRIVO, non il loro
   # contenuto — ed è l'unica cosa che distingue "un client ha smesso di parlare"
@@ -165,11 +223,18 @@ service:
                 port: 8888
   extensions: [bearertokenauth]
   pipelines:
-    # Metrics only. The `prometheus` exporter supports the metrics signal only
-    # (upstream README: "metrics [beta]"), so a `logs` pipeline pointing at it
-    # fails Collector startup. Claude Code's log/event stream has no consumer in
-    # Phase 1 — see docs/CLAUDE_CODE_TELEMETRY.md, which leaves OTEL_LOGS_EXPORTER
-    # unset for exactly this reason.
+    # Due pipeline, separate. Il vincolo che le separa non e' cambiato: l'exporter
+    # `prometheus` supporta il solo segnale metriche (README a monte: "metrics
+    # [beta]"), quindi una pipeline `logs` che punta a lui fa fallire l'avvio del
+    # Collector.
+    #
+    # Cio' che e' cambiato e' il consumatore. Fino al 2026-08-19 qui c'era scritto
+    # che il flusso di log/evento di Claude Code "has no consumer in Phase 1", e
+    # per quella ragione docs/CLAUDE_CODE_TELEMETRY.md lasciava OTEL_LOGS_EXPORTER
+    # unset. Dal 2026-08-20 (Fase 1.5) il consumatore esiste: Loki, raggiunto via
+    # OTLP nativo dalla pipeline `logs` qui sotto. Perche' quei log partano davvero
+    # serve `OTEL_LOGS_EXPORTER=otlp` sul client — senza, questa pipeline e'
+    # cablata correttamente e non riceve niente, che e' il guasto silenzioso solito.
     metrics:
       receivers: [otlp]
       # Order matters: strip before batching, so nothing identifying is ever held
@@ -180,3 +245,18 @@ service:
       # di trasformarlo e prima di accodarlo, come per il freno.
       processors: [memory_limiter, filter/metric-allowlist, transform/label-allowlist, batch]
       exporters: [prometheus]
+
+    # NUOVA E SEPARATA, non un ramo di `metrics`. L'exporter `prometheus`
+    # supporta il solo segnale metriche, quindi metterlo qui fa RIFIUTARE
+    # L'AVVIO al Collector — e' fra le cose da non fare mai in CLAUDE.md, e da
+    # oggi c'e' anche un gate invece del solo commento.
+    logs:
+      receivers: [otlp]
+      # Stesso ordine della pipeline metriche, per le stesse ragioni: il freno
+      # per primo, l'allow-list prima del batch cosi' niente di identificante
+      # viene mai tenuto in un buffer o passato a un exporter.
+      # `memory_limiter` e' UNA istanza condivisa con la pipeline metriche: i
+      # 256 MiB restano un budget unico, non uno per pipeline. `batch` invece e'
+      # per-pipeline, che e' cio' che si vuole.
+      processors: [memory_limiter, transform/log-allowlist, batch]
+      exporters: [otlp_http/loki]
