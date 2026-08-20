@@ -286,7 +286,7 @@
       },
       "targets": [
         {
-          "expr": "sum(max_over_time(claude_code_session_count[25h]))",
+          "expr": "sum(max_over_time(claude_code_session_count{job=\"otel-collector\"}[25h]))",
           "refId": "A",
           "instant": true
         }
@@ -323,7 +323,7 @@
       },
       "targets": [
         {
-          "expr": "sum(max_over_time(claude_code_token_usage{type=\"cacheRead\"}[25h])) / sum(max_over_time(claude_code_token_usage[25h]))",
+          "expr": "sum(max_over_time(claude_code_token_usage{type=\"cacheRead\"}[25h])) / sum(max_over_time(claude_code_token_usage{job=\"otel-collector\"}[25h]))",
           "refId": "A",
           "instant": true
         }
@@ -341,7 +341,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(claude_code_token_usage[5m])) by (type)",
+          "expr": "sum(rate(claude_code_token_usage{job=\"otel-collector\"}[5m])) by (type)",
           "refId": "A"
         }
       ]
@@ -365,7 +365,7 @@
           "format": "table"
         },
         {
-          "expr": "topk(10, sum by (session_id) (max_over_time(claude_code_token_usage[25h])))",
+          "expr": "topk(10, sum by (session_id) (max_over_time(claude_code_token_usage{job=\"otel-collector\"}[25h])))",
           "refId": "B",
           "format": "table",
           "instant": true
