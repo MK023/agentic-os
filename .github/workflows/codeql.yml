@@ -1,0 +1,98 @@
+name: codeql
+
+# CodeQL girava come **default setup**: configurato nelle impostazioni del
+# repository, non in git. Nessuna riga da rivedere in PR, nessuna traccia in
+# storia di chi ha cambiato cosa, e la lista dei linguaggi analizzati verificabile
+# solo da chi ha accesso alle Settings. Da qui vive come workflow committato.
+#
+# **I due setup non coesistono, e il modo in cui non coesistono e' silenzioso.**
+# Documentazione GitHub, alla lettera: "Default setup overrides existing CodeQL
+# setups by disabling any existing CodeQL workflows, and blocking any CodeQL
+# analysis API uploads". Finche' il default setup resta acceso questo file parte
+# lo stesso e il caricamento dei risultati viene rifiutato: il workflow risulta
+# verde, gli alert nuovi non arrivano mai, e nessun gate se ne accorge. Il default
+# setup va spento PRIMA (Settings -> Code security -> CodeQL analysis ->
+# "Switch to advanced" -> "Disable CodeQL"), non dopo.
+#
+# Parita' con cio' che il default setup faceva, letta dall'API il 20-08-2026
+# (`gh api repos/MK023/agentic-os/code-scanning/default-setup`): languages
+# `actions` + `python`, query_suite `default`, schedule `weekly`, threat_model
+# `remote`. Le ultime due sono gia' i default dell'action e ripeterle qui
+# creerebbe un secondo posto da tenere allineato; le prime due sono esplicite.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Settimanale, come il default setup. Non e' un lusso: le query di CodeQL si
+    # aggiornano, il codice fermo no. Senza run periodico una regola nuova non
+    # verrebbe mai eseguita sul codice gia' in main, e perdere questo trigger
+    # durante la migrazione sarebbe una regressione che nessun check mostra.
+    - cron: "0 4 * * 1"
+  workflow_dispatch: {}
+
+# Deny by default, concesso job per job — come gli altri workflow di questo repo.
+# Un `permissions` a livello di workflow lo regala anche a ogni job futuro senza
+# che nessuno se ne accorga; con la mappa vuota ogni permesso qui sotto e' una
+# riga che qualcuno ha dovuto scrivere apposta.
+permissions: {}
+
+concurrency:
+  # Un gruppo PER FILE. Con un gruppo condiviso, un push cancellerebbe i run degli
+  # altri workflow, e un check cancellato non e' ne' rosso ne' verde: resta appeso.
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nessuno step `run:` interpola espressioni ${{ }} — anzi, qui non c'e' nessuno
+# step `run:`: niente superficie di template injection. Lo impone zizmor, nel job
+# workflow-lint (lint.yml).
+jobs:
+  analyze:
+    # Il nome del job E' il nome del check che appare nella PR. Il default setup
+    # produce oggi `Analyze (python)` e `Analyze (actions)`: questa riga li
+    # riproduce identici, cosi' la migrazione non fa sparire nomi di check da
+    # sotto i piedi a chi li stesse guardando o citando.
+    name: Analyze (${{ matrix.language }})
+    permissions:
+      # L'unico permesso davvero indispensabile: senza, il caricamento del SARIF
+      # viene rifiutato e l'analisi gira senza mai diventare un alert.
+      security-events: write # caricare il SARIF degli alert di questo repo
+      # Serve al checkout. Restano fuori di proposito `packages: read` (serve solo
+      # a scaricare pack CodeQL privati o interni, e qui la query suite e' quella
+      # pubblica di default) e `actions: read`, che la documentazione marca "only
+      # required for workflows in private repositories". Se questo repo diventasse
+      # privato, `actions: read` va aggiunto qui: senza, l'analisi del linguaggio
+      # `actions` non riesce a leggere i workflow e il job fallisce.
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      # Senza, il fallimento di un linguaggio cancella l'analisi dell'altro: il
+      # risultato mancante non e' un alert in meno, e' un'analisi che non e' mai
+      # stata fatta e che nessuno distingue da "pulito".
+      fail-fast: false
+      matrix:
+        # Identificatori CodeQL, non nomi di linguaggio. `actions` analizza i
+        # workflow di questo stesso repository — la pipeline e' superficie
+        # d'attacco quanto il codice — e `python` il codice di
+        # services/public-status-api. Sono esattamente i due che il default setup
+        # analizzava: aggiungerne o toglierne uno qui cambia cosa viene guardato.
+        language: [python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga solo il
+          # raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          # La `category` tiene separati i due risultati della matrice. Senza, la
+          # seconda analisi che arriva sovrascrive la prima sullo stesso commit e
+          # gli alert dell'altro linguaggio risultano chiusi senza che nessuno li
+          # abbia risolti — di nuovo un guasto che si presenta come verde.
+          category: "/language:${{ matrix.language }}"
