@@ -35,11 +35,15 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      # Split: requirements.txt is hash-locked, and pip applies hash-checking to the
-      # whole command as soon as one requirement carries hashes.
-      # Quoted: an unquoted ":all: " would make YAML read a mapping mid-command.
-      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt"
-      - run: pip install httpx2==2.10.0 respx==0.23.1 pytest==9.1.1 mutmut==3.6.0
+      # UN SOLO comando con entrambi i file, non due in fila. `-c requirements.txt`
+      # nel .in vincola la COMPILAZIONE, non l'installazione: con due install
+      # sequenziali, il giorno che Dependabot alza una dipendenza CONDIVISA nel lock
+      # di produzione senza che requirements-dev.txt venga ricompilato nello stesso
+      # PR, il secondo comando la riporterebbe indietro in silenzio e con exit 0 — i
+      # test girerebbero contro un albero che la produzione non ha, cioe' esattamente
+      # cio' che il vincolo doveva impedire. Con un comando solo e' pip a risolverli
+      # insieme e a fallire sul conflitto: il gate e' pip, non un commento.
+      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements.txt -r services/public-status-api/requirements-dev.txt"
       # Lo scope bloccante era `require_valid_token` e basta — spec §6.2. Coverage
       # dice che una riga è stata eseguita; solo questo dice che un'asserzione si
       # sarebbe accorta se cambiava.
@@ -66,7 +70,7 @@ jobs:
         env:
           FUNZIONI_BLOCCANTI: "require_valid_token _cost_usd _rate_usd_per_mtok _parse_series _report_pricing_gap _report_infra_throttled _check_persistence"
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # Se una funzione cambia nome il gate deve rompersi QUI. Senza questo
           # controllo il grep sui risultati non troverebbe più niente e passerebbe
           # verde per sempre: è il modo in cui un gate muore senza fare rumore.
@@ -82,8 +86,36 @@ jobs:
             fi
           done
 
+          # `|| true` resta necessario: mutmut esce non-zero QUANDO ci sono
+          # sopravvissuti, che e' il caso che vogliamo misurare, non subire.
           mutmut run || true
           mutmut results > mutation-results.txt
+
+          # Il pavimento. Senza, questo gate conta solo gli esiti CATTIVI e non
+          # asserisce mai quello buono: se mutmut non parte — cache sporca,
+          # dipendenze sfasate, un errore di import — il file dei risultati resta
+          # vuoto, ogni grep -c da' 0, e lo step esce verde avendo verificato
+          # NIENTE. "Nessun sopravvissuto" e "nessun mutante" erano lo stesso
+          # output, e il 19-08-2026 questo gate e' stato usato per dichiarare zero
+          # sopravvissuti: la dichiarazione valeva solo perche' un umano ha visto
+          # scorrere i mutanti.
+          #
+          # 100 e' un pavimento grossolano, non una soglia di qualita': al
+          # 19-08-2026 i mutanti generati sono 260.
+          #
+          # E prova che sono stati GENERATI, non che siano stati eseguiti: `mutmut
+          # results` rilegge lo stato da disco, e un mutante mai eseguito compare
+          # come "not checked", che questo conteggio include. L'esecuzione la
+          # asserisce il ciclo qui sotto, che tratta "not checked" come un problema
+          # al pari di "survived". Le due meta' insieme coprono sia il run morto sia
+          # quello a meta'; questo pavimento da solo copre la prima.
+          generati=$(mutmut results --all true | grep -cE ": (killed|survived|timeout|no tests|not checked|skipped|suspicious)" || true)
+          echo "mutanti generati: ${generati}"
+          if [ "${generati}" -lt 100 ]; then
+            echo "FAIL: mutmut ha classificato ${generati} mutanti (attesi >=100)." >&2
+            echo "Non e' un punteggio basso: e' un run che non ha girato." >&2
+            exit 1
+          fi
 
           # `mutmut results` elenca solo i mutanti NON uccisi (survived, timeout, e
           # "not checked" quando il run muore a metà — che il `|| true` sopra

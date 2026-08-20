@@ -1,0 +1,32 @@
+# Gli strumenti che verificano la pipeline: test, lint, sicurezza, mutation.
+#
+# Stessa regola delle dipendenze di produzione, e per una ragione precisa: fino al
+# 19/08/2026 questi si installavano con il solo pin di primo livello, senza hash e
+# senza --only-binary. La chiusura transitiva (pluggy, packaging, stevedore,
+# cachecontrol...) si risolveva a runtime, e una sdist esegue il proprio setup.py al
+# momento dell'installazione — cioe' codice arbitrario sul runner, che nel job sonar
+# ha SONAR_TOKEN nello step successivo. Le dipendenze di produzione erano bloccate,
+# il binario gitleaks verificato con SHA-256, le action pinnate a SHA: gli unici non
+# deterministici erano gli strumenti che controllano tutto il resto.
+#
+# Rigenerare con:
+#   pip-compile --generate-hashes --allow-unsafe --output-file requirements-dev.txt requirements-dev.in
+#
+# --allow-unsafe perche' pip-audit dipende da pip-api, che dipende da pip: senza,
+# pip-compile lascia `pip` non pinnato e l'install con --require-hashes lo rifiuta.
+# Mai modificare requirements-dev.txt a mano.
+# Vincolato al lockfile di produzione: senza, la risoluzione degli strumenti alza
+# una dipendenza CONDIVISA (misurato: idna 3.18 -> 3.19) e, installando questo file
+# dopo quello di produzione, i test girerebbero contro un albero diverso da quello
+# che gira in produzione. Il lock smetterebbe di descrivere cio' che si esegue.
+-c requirements.txt
+
+bandit==1.9.2
+httpx2==2.10.0
+mutmut==3.6.0
+pip-audit==2.10.1
+pytest==9.1.1
+pytest-cov==7.1.0
+respx==0.23.1
+ruff==0.15.4
+zizmor==1.28.0

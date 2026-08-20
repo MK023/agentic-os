@@ -93,10 +93,17 @@ The short version:
 - **Prometheus never gets a hostname**. Grafana and the status API sit behind
   Cloudflare Access (email policy / service token + own bearer, two layers).
 - **Every image runs non-root and pinned to a version**, with one documented
-  platform exception enforced by a CI guard (`scripts/check-image-users.sh`).
+  platform exception. Two different guards, because the sentence used to credit one
+  guard with both jobs: `scripts/check-image-users.sh` reads `USER` and nothing else,
+  Checkov's `CKV_DOCKER_7` covers pinning in the Dockerfiles, and a dedicated step in
+  `images.yml` covers `docker/docker-compose.yml` — which until 2026-08-19 was
+  scanned by nothing at all, so a `:latest` there would have passed every gate.
 - **Secrets**: Doppler is the source of truth, Railway variables are the runtime
   copy, `docker/.env` is fake and gitignored. Never in git; gitleaks runs over
-  full history plus a pre-commit hook.
+  full history in CI, plus an **opt-in** pre-commit hook — `.githooks/pre-commit`
+  does nothing until you run `git config core.hooksPath .githooks`, and without
+  gitleaks installed locally it falls back to a short regex that a base64 blob walks
+  straight past. The CI half is the one that always runs.
 
 ## Pipeline level: 1 (and why)
 
@@ -129,7 +136,14 @@ than refusing — a `200` that changes nothing is the same shape as the failures
 this project keeps removing.
 
 Every gate **blocks**. Nothing runs with `continue-on-error`, and a gate whose
-credential is missing stays red instead of skipping.
+credential is missing stays red instead of skipping — **with one measured
+exception**, found by an audit on 2026-08-19 rather than by a failure: `sonar` skips
+on pull requests that cannot receive secrets (forks, and Dependabot). A token-less
+Sonar scan cannot pass, and a permanently red required check would block every merge,
+so the skip is deliberate; but a skipped required check reads as green, which this
+repository has already measured once. What is lost on those PRs is Sonar's own rule
+set, not coverage — `tests` enforces `--cov-fail-under=100` unconditionally, and
+lint, bandit, checkov and gitleaks all still run.
 
 One check runs *after* the merge rather than before it: `smoke.yml` hits the
 public endpoint on a schedule and fails on three things — a status that is not

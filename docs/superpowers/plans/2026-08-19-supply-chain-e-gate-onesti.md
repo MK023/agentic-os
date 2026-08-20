@@ -10,6 +10,23 @@
 
 **Branch:** impilato su `fix/prometheus-5gb-e-watchdog-che-richiama` (PR #86), perché #86 ha già modificato `images.yml` e `mutation.yml`. La PR di questo piano ha `--base` su quel ramo, non su `main`.
 
+> **Esito, 19/08/2026 — PR #87.** Tutti i task eseguiti. Tre scostamenti dal piano,
+> registrati qui perché un piano che descrive un'esecuzione diversa è esattamente il
+> tipo di documento che questo repo ha passato la giornata a correggere:
+>
+> 1. **Task 4 era sbagliato nel rimedio.** `docker_compose` non è un framework di
+>    Checkov — non compare nell'elenco valido, verificato eseguendolo. Il rilievo
+>    (nessuno guarda il compose) resta vero; la correzione è un gate dedicato, non
+>    una riga di configurazione. `.checkov.yml` è stato toccato per un'altra ragione:
+>    `soft-fail-on` descriveva una politica mai esercitata ed è stata rimossa.
+> 2. **Il lockfile di sviluppo serviva un vincolo che il piano non prevedeva.** Senza
+>    `-c requirements.txt` la risoluzione alzava `idna` da 3.18 a 3.19 — una
+>    dipendenza *condivisa* con la produzione — e i test sarebbero girati contro un
+>    albero diverso da quello che gira. Misurato, non previsto.
+> 3. **La verifica locale non bastava.** `libcst 1.9.0` non ha wheel per macOS: il
+>    dry-run in locale falliva per una ragione che su Linux non esiste. Verificato
+>    dentro `python:3.14.0-slim`.
+
 **Fuori scope, e perché:** il digest pinning delle cinque immagini base e la rigenerazione del lockfile su Python 3.14 sono reali e confermati, ma **ridispiegano servizi in produzione** (tutti e cinque il primo, `status-api` il secondo) su una coda a crediti. Sono decisione di Marco e vanno in una PR separata, dopo la sua conferma.
 
 ---
@@ -24,7 +41,7 @@
 - Modify: `.github/workflows/tests.yml:73`, `.github/workflows/sonar.yml:83`, `.github/workflows/mutation.yml:42`, `.github/workflows/lint.yml:64`, `.github/workflows/lint.yml:87`, `.github/workflows/security.yml:135`
 - Modify: `.github/dependabot.yml` (verificare che la entry `pip` su quella directory copra il nuovo file; se sì, nessuna modifica)
 
-- [ ] **Step 1: scrivere `requirements-dev.in` con i pin già in uso**
+- [x] **Step 1: scrivere `requirements-dev.in` con i pin già in uso**
 
 ```
 # Gli strumenti che verificano la pipeline. Stessa regola delle dipendenze di
@@ -43,17 +60,17 @@ ruff==0.15.4
 zizmor==1.28.0
 ```
 
-- [ ] **Step 2: generare il lockfile**
+- [x] **Step 2: generare il lockfile**
 
 Run: `cd services/public-status-api && pip-compile --generate-hashes --output-file requirements-dev.txt requirements-dev.in`
 Expected: file generato, ogni riga con `--hash=sha256:...`
 
-- [ ] **Step 3: verificare che l'installazione con hash funzioni davvero**
+- [x] **Step 3: verificare che l'installazione con hash funzioni davvero**
 
 Run: `python3 -m pip install --dry-run --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt`
 Expected: nessun errore. Se un pacchetto non ha wheel per la piattaforma, il piano cambia: annotarlo qui e usare `--only-binary` mirato invece che `:all:`, spiegando quale pacchetto e perché.
 
-- [ ] **Step 4: sostituire le sei righe di install**
+- [x] **Step 4: sostituire le sei righe di install**
 
 Ogni riga diventa, con il path relativo corretto per il `working-directory` di quel job:
 
@@ -63,7 +80,7 @@ Ogni riga diventa, con il path relativo corretto per il `working-directory` di q
 
 In `lint.yml:87` l'install di `zizmor` è dentro uno script multi-riga: sostituire solo quel comando, lasciando il resto dello step.
 
-- [ ] **Step 5: correggere i commenti che affermavano il falso**
+- [x] **Step 5: correggere i commenti che affermavano il falso**
 
 In `sonar.yml` e `tests.yml`, la frase *"Pinnate come tutto il resto della pipeline: erano l'unico install non deterministico rimasto"* va sostituita con la verità e la sua storia:
 
@@ -75,17 +92,17 @@ In `sonar.yml` e `tests.yml`, la frase *"Pinnate come tutto il resto della pipel
       # sul runner — cioe' esattamente dove sono atterrati gli incidenti PyPI.
 ```
 
-- [ ] **Step 6: verificare che i workflow siano ancora YAML validi**
+- [x] **Step 6: verificare che i workflow siano ancora YAML validi**
 
 Run: `python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]; print('ok')"`
 Expected: `ok`
 
-- [ ] **Step 7: zizmor**
+- [x] **Step 7: zizmor**
 
 Run: `zizmor --min-severity=high .github/workflows/`
 Expected: `No findings to report.`
 
-- [ ] **Step 8: commit**
+- [x] **Step 8: commit**
 
 ```bash
 git add services/public-status-api/requirements-dev.in services/public-status-api/requirements-dev.txt .github/workflows/
@@ -101,7 +118,7 @@ git commit -m "fix(catena): gli strumenti che sorvegliano la supply chain erano 
 **Files:**
 - Modify: `.github/workflows/mutation.yml` (lo step `mutmut sulle funzioni bloccanti`)
 
-- [ ] **Step 1: aggiungere il pavimento, prima del ciclo sui sopravvissuti**
+- [x] **Step 1: aggiungere il pavimento, prima del ciclo sui sopravvissuti**
 
 ```bash
           # Un gate che conta solo i fallimenti non distingue "nessun sopravvissuto"
@@ -121,11 +138,11 @@ git commit -m "fix(catena): gli strumenti che sorvegliano la supply chain erano 
 
 Nota: il numero 100 è un pavimento grossolano, non una soglia di qualità — al 19/08 i mutanti sono 257. Serve a distinguere "ha girato" da "non ha girato", e va scritto così nel commento.
 
-- [ ] **Step 2: `set -euo pipefail`**
+- [x] **Step 2: `set -euo pipefail`**
 
 Sostituire `set -uo pipefail` con `set -euo pipefail`. Attenzione: `mutmut run || true` resta necessario (mutmut esce non-zero quando ci sono sopravvissuti, che è il caso normale che vogliamo *misurare*, non subire), e i `grep -c ... || true` restano perché `grep` esce 1 quando non trova nulla, che è l'esito **buono**.
 
-- [ ] **Step 3: verificare il verde in locale**
+- [x] **Step 3: verificare il verde in locale**
 
 Run:
 ```bash
@@ -133,12 +150,12 @@ cd services/public-status-api && rm -rf .mutmut-cache mutants && python3 -m mutm
 ```
 Expected: un numero >= 100 (al 19/08: 257).
 
-- [ ] **Step 4: verificare il rosso**
+- [x] **Step 4: verificare il rosso**
 
 Run: simulare un run morto — `printf '' > /tmp/vuoto.txt` e applicare la logica del pavimento a quel file.
 Expected: `FAIL: mutmut ha prodotto 0 mutanti`.
 
-- [ ] **Step 5: commit**
+- [x] **Step 5: commit**
 
 ```bash
 git add .github/workflows/mutation.yml
@@ -154,11 +171,11 @@ git commit -m "fix(gate): il gate di mutation non distingueva zero sopravvissuti
 **Files:**
 - Modify: `.github/workflows/images.yml:64`
 
-- [ ] **Step 1: `set -euo pipefail`**
+- [x] **Step 1: `set -euo pipefail`**
 
 La funzione di ritentata è `if docker build …; then`, che `-e` non altera: nessun altro comportamento cambia.
 
-- [ ] **Step 2: commit**
+- [x] **Step 2: commit**
 
 ```bash
 git add .github/workflows/images.yml
@@ -175,7 +192,7 @@ git commit -m "fix(gate): la build di quattro immagini su cinque poteva fallire 
 - Modify: `.checkov.yml`
 - Modify: `.github/workflows/images.yml` (job `compose`, nuovo step)
 
-- [ ] **Step 1: aggiungere il framework**
+- [x] **Step 1: aggiungere il framework**
 
 ```yaml
 framework:
@@ -184,12 +201,12 @@ framework:
   - docker_compose
 ```
 
-- [ ] **Step 2: eseguire Checkov e leggere cosa diventa rosso**
+- [x] **Step 2: eseguire Checkov e leggere cosa diventa rosso**
 
 Run: `checkov --config-file .checkov.yml -d .`
 Expected: da decidere sul risultato. Se compaiono check nuovi falliti, NON aggiungere `skip-check` globali: o si sistema il compose, o si mette lo skip inline con la ragione, come già fanno i Dockerfile. Annotare qui l'esito reale.
 
-- [ ] **Step 3: gate esplicito sui tag del compose**
+- [x] **Step 3: gate esplicito sui tag del compose**
 
 ```yaml
       - name: le immagini del compose sono pinnate e non divergono dalla produzione
@@ -211,12 +228,12 @@ Expected: da decidere sul risultato. Se compaiono check nuovi falliti, NON aggiu
 
 Il pavimento (`if not immagini`) c'è per la stessa ragione del Task 2: un gate che itera su una lista vuota passa sempre.
 
-- [ ] **Step 4: verificare rosso e verde**
+- [x] **Step 4: verificare rosso e verde**
 
 Verde: eseguire lo script estratto dal YAML sul repo così com'è.
 Rosso: cambiare temporaneamente una `image:` in `grafana/grafana:latest`, rieseguire, attendersi exit 1, ripristinare.
 
-- [ ] **Step 5: commit**
+- [x] **Step 5: commit**
 
 ```bash
 git add .checkov.yml .github/workflows/images.yml
@@ -232,7 +249,7 @@ git commit -m "fix(gate): il compose non era scansionato da niente, e un :latest
 **Files:**
 - Modify: `.github/workflows/images.yml` (job `compose`, nuovo step)
 
-- [ ] **Step 1: lo step**
+- [x] **Step 1: lo step**
 
 ```yaml
       - name: ogni COPY di un Dockerfile e' coperto dai watchPatterns del suo servizio
@@ -267,16 +284,16 @@ git commit -m "fix(gate): il compose non era scansionato da niente, e un :latest
           PY
 ```
 
-- [ ] **Step 2: verificare il verde sui quattro servizi attuali**
+- [x] **Step 2: verificare il verde sui quattro servizi attuali**
 
 Run: script estratto dal YAML.
 Expected: `watchPatterns coerenti con i COPY per 5 servizi` (o il numero reale). **Se esce rosso, non ammorbidire il gate**: significa che una divergenza esiste già, e va capita prima.
 
-- [ ] **Step 3: verificare il rosso**
+- [x] **Step 3: verificare il rosso**
 
 Aggiungere temporaneamente `COPY docker/inesistente.yaml /tmp/x` a `railway/prometheus/Dockerfile`, rieseguire, attendersi exit 1 con il nome del servizio, ripristinare.
 
-- [ ] **Step 4: commit**
+- [x] **Step 4: commit**
 
 ```bash
 git add .github/workflows/images.yml
@@ -293,7 +310,7 @@ git commit -m "feat(gate): i watchPatterns non erano legati ai COPY, ed e' il gu
 - Modify: `README.md:131-132` (il gate che salta), `README.md:95-96` (cosa verifica `check-image-users.sh`), `README.md:98-99` (l'hook gitleaks), `.github/workflows/security.yml:95-96` + `.checkov.yml:14-17` (la politica di soft-fail)
 - Modify: `docs/DECISIONS.md` (sezione CI, la stessa affermazione)
 
-- [ ] **Step 1: `README.md` — il gate che salta**
+- [x] **Step 1: `README.md` — il gate che salta**
 
 Sostituire *"a gate whose credential is missing stays red instead of skipping"* con:
 
@@ -308,21 +325,21 @@ set, not coverage — `tests` still enforces `--cov-fail-under=100` unconditiona
 and lint, bandit, checkov and gitleaks all still run.
 ```
 
-- [ ] **Step 2: `docs/DECISIONS.md`** — stessa correzione nella sezione CI, con la data e il fatto che è stata trovata da un audit, non da un guasto.
+- [x] **Step 2: `docs/DECISIONS.md`** — stessa correzione nella sezione CI, con la data e il fatto che è stata trovata da un audit, non da un guasto.
 
-- [ ] **Step 3: `README.md` — cosa verifica davvero `check-image-users.sh`**
+- [x] **Step 3: `README.md` — cosa verifica davvero `check-image-users.sh`**
 
 La frase attribuisce a una guardia un controllo che non fa (verifica `USER`, non `FROM`). Riscrivere separando i due fatti: il non-root è verificato dallo script, il pinning dalle regole Checkov sui Dockerfile e — dopo il Task 4 — da un gate sul compose.
 
-- [ ] **Step 4: `README.md` — l'hook gitleaks è opt-in**
+- [x] **Step 4: `README.md` — l'hook gitleaks è opt-in**
 
 `.githooks/pre-commit` non fa nulla finché non si esegue `git config core.hooksPath .githooks`. `CONTRIBUTING.md` lo dice correttamente; il README no. Aggiungere "opt-in" e il comando.
 
-- [ ] **Step 5: la politica di Checkov**
+- [x] **Step 5: la politica di Checkov**
 
 Run: `checkov --config-file .checkov.yml -d .` e leggere cosa blocca davvero. `soft-fail-on: [LOW, MEDIUM]` si appoggia a metadati di severità che Checkov open-source non ha senza chiave di piattaforma. Se la severità non c'è, il comportamento reale è "fallisce su qualunque check fallito": in quel caso sostituire `soft-fail-on` con ID di check espliciti **oppure** correggere il commento per dire cosa blocca davvero. Non lasciare una politica non verificabile.
 
-- [ ] **Step 6: commit**
+- [x] **Step 6: commit**
 
 ```bash
 git add README.md docs/DECISIONS.md .checkov.yml .github/workflows/security.yml
@@ -333,14 +350,14 @@ git commit -m "docs(onesta): quattro controlli affermati che la pipeline non ha"
 
 ### Task 7: Verifica finale e revisione
 
-- [ ] **Step 1:** `cd services/public-status-api && python3 -m pytest test_main.py -q --cov=. --cov-report=term` — 100%, tutti verdi.
-- [ ] **Step 2:** `ruff check . && ruff format --check .` — pulito.
-- [ ] **Step 3:** `zizmor --min-severity=high .github/workflows/` — nessun rilievo.
-- [ ] **Step 4:** `docker compose -f docker/docker-compose.yml config --quiet` — nessun errore.
-- [ ] **Step 5:** eseguire **ogni** gate nuovo estraendolo dal YAML, non leggendolo.
-- [ ] **Step 6:** REQUIRED SUB-SKILL `superpowers:requesting-code-review` sul diff completo, con contratto di output esplicito.
-- [ ] **Step 7:** REQUIRED SUB-SKILL `superpowers:verification-before-completion` prima di dichiarare finito.
-- [ ] **Step 8:** aprire la PR con `--base fix/prometheus-5gb-e-watchdog-che-richiama`.
+- [x] **Step 1:** `cd services/public-status-api && python3 -m pytest test_main.py -q --cov=. --cov-report=term` — 100%, tutti verdi.
+- [x] **Step 2:** `ruff check . && ruff format --check .` — pulito.
+- [x] **Step 3:** `zizmor --min-severity=high .github/workflows/` — nessun rilievo.
+- [x] **Step 4:** `docker compose -f docker/docker-compose.yml config --quiet` — nessun errore.
+- [x] **Step 5:** eseguire **ogni** gate nuovo estraendolo dal YAML, non leggendolo.
+- [x] **Step 6:** REQUIRED SUB-SKILL `superpowers:requesting-code-review` sul diff completo, con contratto di output esplicito.
+- [x] **Step 7:** REQUIRED SUB-SKILL `superpowers:verification-before-completion` prima di dichiarare finito.
+- [x] **Step 8:** aprire la PR con `--base fix/prometheus-5gb-e-watchdog-che-richiama`.
 
 ---
 

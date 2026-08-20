@@ -92,8 +92,10 @@ jobs:
 
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
   # the infrastructure this repo has now that deployment is Railway's config-as-code.
-  # Sonar covers the Python; policy lives in .checkov.yml (blocks on HIGH/CRITICAL,
-  # soft-fails LOW/MEDIUM).
+  # Sonar covers the Python; the policy lives in .checkov.yml, and since 2026-08-19
+  # it is simply "any failed check blocks". Il `soft-fail-on: [LOW, MEDIUM]` di prima
+  # descriveva una gradazione mai osservata — si appoggia a metadati di severita' che
+  # Checkov open-source non porta, e con 0 check falliti non e' mai stata esercitata.
   checkov:
     permissions:
       contents: read
@@ -132,7 +134,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - run: pip install pip-audit==2.10.1
+      # Hash-locked come le dipendenze di produzione. Prima erano pinnate al solo
+      # primo livello, e il commento qui affermava che bastasse: non bastava. Senza
+      # hash e senza --only-binary la chiusura transitiva si risolve a runtime e una
+      # sdist esegue il proprio setup.py sul runner — cioe' dove sono atterrati gli
+      # incidenti PyPI. Erano gli strumenti che verificano tutto il resto a essere
+      # l'unico anello non bloccato. Modificare requirements-dev.in, mai il .txt.
+      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt"
       - run: pip-audit -r services/public-status-api/requirements.txt --progress-spinner off
 
   # Blocks on new HIGH-severity CVEs introduced by this PR's dependency diff — it

@@ -61,7 +61,13 @@ jobs:
           python-version: "3.14"
       # Pinnati come ogni altra cosa qui: un linter che cambia versione da solo
       # trasforma un gate in un generatore casuale di build rosse.
-      - run: pip install ruff==0.15.4 bandit==1.9.2
+      # Hash-locked come le dipendenze di produzione. Prima erano pinnate al solo
+      # primo livello, e il commento qui affermava che bastasse: non bastava. Senza
+      # hash e senza --only-binary la chiusura transitiva si risolve a runtime e una
+      # sdist esegue il proprio setup.py sul runner — cioe' dove sono atterrati gli
+      # incidenti PyPI. Erano gli strumenti che verificano tutto il resto a essere
+      # l'unico anello non bloccato. Modificare requirements-dev.in, mai il .txt.
+      - run: "pip install --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt"
       - run: ruff check .
       - run: ruff format --check .
       # -x sui test: gli assert sono il modo in cui i test si scrivono. La cartella
@@ -82,7 +88,52 @@ jobs:
           # Nessun push dalla CI: lasciare il token in .git/config allarga
           # solo il raggio di un eventuale compromesso di uno step successivo.
           persist-credentials: false
+      # Stesso interprete del lock. requirements-dev.txt e' compilato per 3.14 e
+      # contiene estensioni compilate (setproctitle, libcst): finora questo job era
+      # l'unico a installarlo senza fissare la versione, quindi girava sul default
+      # del runner. Funzionava perche' --generate-hashes raccoglie gli hash di tutte
+      # le piattaforme, non perche' qualcosa lo verificasse.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - name: zizmor sui workflow (blocca su HIGH)
         run: |
-          pip install --quiet zizmor==1.28.0
+          pip install --quiet --require-hashes --only-binary=:all: -r services/public-status-api/requirements-dev.txt
           zizmor --min-severity=high .github/workflows/
+
+      # DOPO zizmor, non prima: questo controllo usa PyYAML, che arriva con
+      # requirements-dev.txt installato nello step qui sopra. Messo prima falliva con
+      # ModuleNotFoundError — un gate che non parte non e' un gate, ed e' la stessa
+      # famiglia del pavimento su mutmut.
+      #
+      # Uno step duplicato in un job e' invisibile a tutto il resto: il YAML e'
+      # valido, actionlint e zizmor non se ne occupano, ed entrambe le copie passano,
+      # quindi la CI resta verde. E' successo il 19-08-2026 riscrivendo due gate: le
+      # copie VECCHIE sono rimaste accanto alle nuove, una delle due non conosceva i
+      # riferimenti @sha256 e confrontava il nulla. Quattro audit indipendenti l'hanno
+      # vista; nessun gate. Ora c'e'.
+      - name: nessuno step duplicato dentro lo stesso job
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import collections, glob, sys, yaml
+
+          problemi = []
+          for percorso in sorted(glob.glob(".github/workflows/*.yml")):
+              workflow = yaml.safe_load(open(percorso))
+              for nome_job, job in (workflow.get("jobs") or {}).items():
+                  nomi = [s.get("name") for s in job.get("steps", []) if s.get("name")]
+                  for nome, quante in collections.Counter(nomi).items():
+                      if quante > 1:
+                          problemi.append(f"{percorso}: il job '{nome_job}' ha {quante} step chiamati {nome!r}")
+
+          if problemi:
+              print("::error::uno step duplicato passa due volte e resta verde: se una delle "
+                    "copie e' una versione vecchia, il job verifica due cose diverse e nessuno "
+                    "se ne accorge.")
+              for problema in problemi:
+                  print(f"::error::{problema}")
+              sys.exit(1)
+          print("nessuno step duplicato")
+          PY
+
