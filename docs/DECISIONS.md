@@ -483,7 +483,15 @@ not either. Both live inside `pip/_vendor/`, and pip is not used at runtime — 
 runs uvicorn and installs nothing. `pip uninstall -y pip` in the install layer measured
 0 HIGH on the blocking library scan and took the informative OS scan from 25 HIGH
 (3.14.0, 13/08) to 9 (3.14.7, 20/08). An ignore file would have produced the same green
-with the code still in the image; this removes the surface instead of the finding.
+with the code still in the image.
+
+**Uninstalling pip is not the same as removing it**, and the difference was found by
+looking at the image rather than at the gate. `ensurepip/_bundled/` keeps a second copy
+of pip as a wheel; Trivy does not read inside an archive, so the scan was already green
+while the vulnerable code was still shipped, one `python -m ensurepip` away from being
+installed again. The `rm -rf` of `ensurepip` is therefore part of the fix, not tidiness
+— and its path is asked of the interpreter, because hard-coding `python3.14` would make
+the removal disappear silently at the next minor bump with nothing turning red.
 
 ## Logs
 

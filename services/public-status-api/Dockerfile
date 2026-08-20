@@ -26,7 +26,17 @@ COPY requirements.txt .
 # di sistema, quindi il tag della base non le tocca. L'unica leva vera e'
 # togliere il pacchetto che le porta. Cancellare il codice batte silenziare il
 # gate: qui la superficie sparisce davvero, non viene solo ignorata.
+#
+# E per davvero vuol dire anche `ensurepip`, che tiene una COPIA di pip come
+# wheel: `ensurepip/_bundled/pip-26.2.1-py3-none-any.whl`. Trivy non guarda
+# dentro un archivio, quindi disinstallare pip e basta rende il gate verde
+# lasciando il codice vulnerabile nell'immagine, a un `python -m ensurepip` di
+# distanza dal tornare installato. Verde e rimosso non sono la stessa cosa, ed
+# e' esattamente la differenza che questo RUN dichiara di fare.
+# Il path si chiede all'interprete: hard-codarlo lo lega alla versione, e il
+# giorno del salto a 3.15 sparirebbe il `rm` senza che niente diventi rosso.
 RUN pip install --no-cache-dir --require-hashes --only-binary :all: -r requirements.txt \
+ && rm -rf "$(python -c 'import ensurepip, pathlib; print(pathlib.Path(ensurepip.__file__).parent)')" \
  && pip uninstall -y pip
 COPY main.py sentry.py ./
 
