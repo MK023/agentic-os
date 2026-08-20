@@ -130,9 +130,10 @@ those files are correct in both places. Never fork a config to "fix it for local
   **Since 2026-08-20 there are two backstops, and neither is a rate limiter**: the
   workspace usage limit ($15 soft / $30 hard, set by the operator — no tool here can
   read it back) and a WAF custom rule on `otel.` that blocks everything except
-  `POST /v1/metrics` at the edge (measured: 401 on the two legitimate cases, 403 on
-  five others). The rule is defence in depth, never the auth — that stays
-  `bearertokenauth` inside the Collector. The Worker's rate limiter is still missing.
+  `POST /v1/metrics` carrying an `Authorization` header (presence only, never the
+  value). The rule is defence in depth, never the auth — that stays `bearertokenauth`
+  inside the Collector, and `smoke.yml` proves it with a *wrong* token, the only shape
+  the edge still lets through. The Worker's rate limiter is still missing.
   An asserted control that does not exist is worse than a declared absence.
 
 ## References (read on demand)

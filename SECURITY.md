@@ -37,9 +37,11 @@ domain.** The only ingress is a Cloudflare Tunnel with three hostnames:
 - `otel.`: no Access application, because Claude Code cannot send Access headers.
   Authentication is handled by the `bearertokenauth` extension **inside the OTel
   Collector**. Since 2026-08-20 a WAF custom rule also blocks everything except
-  `POST /v1/metrics` before it reaches the tunnel — measured 403 on five shapes,
-  401 on the two the Collector is meant to refuse itself. It narrows what can be
-  *attempted*; it authenticates nothing, and it is not what keeps the ingest closed.
+  `POST /v1/metrics` **carrying an `Authorization` header** before it reaches the
+  tunnel — the header's presence only, never its value. Measured: a wrong or empty
+  bearer still reaches the Collector and still gets `401`; no header at all now gets
+  `403` from the edge. It narrows what can be *attempted*; it authenticates nothing,
+  and it is not what keeps the ingest closed.
 
 A public hostname is not an access control. This follows the CVE-2026-28798
 pattern and is the reason this project's design starts from authentication at

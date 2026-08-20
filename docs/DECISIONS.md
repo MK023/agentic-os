@@ -713,29 +713,58 @@ control and a rule that can be edited in a dashboard is not a credential check. 
 the rule buys is that scanners, wrong methods and non-existent paths stop before they
 cross the tunnel, which since 2026-08-19 is measured in money rather than CPU.
 
-Measured immediately after deploying, against production:
+**The rule also requires the `Authorization` header to be present**, added later the
+same day. That could not be done first: `smoke.yml` proved the ingest authenticates by
+sending a request *without* the header and requiring `401`, and blocking that at the
+edge would have turned the proof into a `403` that stays green even if the Collector's
+`auth:` block were deleted. So the order was: teach the smoke test to prove the
+Collector with a **wrong** token (credentials present, still refused — the only shape
+that survives both rule versions), then extend the rule, then tighten the no-header
+check to `403` exactly, where it became the assertion that the rule exists.
 
-| request | result | who answered |
-|---|---|---|
-| `POST /v1/metrics`, no `Authorization` | `401` | the Collector |
-| `POST /v1/metrics`, empty bearer | `401` | the Collector |
-| `GET /`, `GET /v1/metrics` | `403` | the edge |
-| `POST /v1/traces`, `POST /v1/logs` | `403` | the edge |
-| `POST /v1/metrics/` (trailing slash) | `403` | the edge |
+Measured against production after each of the two deploys:
 
-Real ingest kept landing across the change (86.6M → 90.5M tokens counted).
+| request | before the header condition | after | who answered |
+|---|---|---|---|
+| `POST /v1/metrics`, wrong bearer | `401` | `401` | the Collector |
+| `POST /v1/metrics`, empty bearer | `401` | `401` | the Collector |
+| `POST /v1/metrics`, header uppercased | — | `401` | the Collector |
+| `POST /v1/metrics`, **no** `Authorization` | `401` | **`403`** | the edge |
+| `GET /`, `GET /v1/metrics` | `403` | `403` | the edge |
+| `POST /v1/traces`, `POST /v1/logs` | `403` | `403` | the edge |
+| `POST /v1/metrics/` (trailing slash) | `403` | `403` | the edge |
 
-Two things the rule deliberately does **not** do. It does not test the `Authorization`
-header, because `smoke.yml` proves the ingest authenticates by sending a request
-*without* one and requiring `401` — blocking that at the edge would turn the proof
-into a `403` that stays green even if the Collector's `auth:` block were deleted. And
-it never matches the header's **value**: a WAF rule is readable from the dashboard and
-the API, so a token in there is a secret outside the secret store. The trailing-slash
-case is blocked on purpose and is safe today because the OTLP HTTP exporter sends the
-path exactly; if that ever changes, the symptom is a silent stop in ingest.
+Real ingest kept landing across both changes (86.6M → 90.5M → 92.3M tokens counted).
+
+**Header names are matched case-insensitively** — `AUTHORIZATION` passes. The vendor's
+field reference does not say so for `http.request.headers.names`, and it was written
+here only after measuring it, not because the lowercase literal in the expression
+looked like it must work.
+
+The rule never matches the header's **value**: a WAF rule is readable from the
+dashboard and the API, so a token in there is a secret outside the secret store. The
+trailing-slash case is blocked on purpose and is safe today because the OTLP HTTP
+exporter sends the path exactly; if that ever changes, the symptom is a silent stop in
+ingest.
 
 Free plan, so five custom rules total and no `Log` action — verified in the vendor's
 availability table, not assumed. This uses one.
+
+**Fixing the repeat in the application was half the job: the Sentry rule notified
+once too.** #86 turned the watchdog's dedup from once-per-process into an hourly
+throttle, so a condition that lasts keeps saying so. It did not help. The delivering
+rule fired on `2026-08-13T07:42` — the issue's *first* event — and never again through
+three more occurrences and six days, because both its triggers were priority
+**transitions**: once an issue is high priority it stays high, so nothing changes and
+nothing fires. Two identical rules were enabled on the project; the older one had never
+fired at all.
+
+Corrected 2026-08-20: the duplicate deleted, an `Every event` trigger added beside the
+two transitions, and the action throttle moved from *every trigger* to **60 minutes**,
+which is the same window the application throttles on — two clocks for one cadence is
+how they drift. Verified by reading the rule back: one rule, `frequencyMinutes: 60`,
+three conditions. Like the WAF rule and the spending limit, this lives outside git and
+no gate here can notice it changing.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.

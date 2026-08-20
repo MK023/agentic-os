@@ -87,7 +87,12 @@ jobs:
             # La conseguenza dipende da CHI doveva rispondere: un messaggio solo,
             # buono per entrambi i casi, e' un messaggio sbagliato per uno dei due.
             # Questa e' la frase che qualcuno legge alle 3 di notte.
-            if [ "$percorso" = "/v1/metrics" ]; then
+            #
+            # Si sceglie sul CODICE ATTESO, non sul percorso: 401 lo dice solo il
+            # Collector, 403 solo il bordo. Instradare sul percorso era sbagliato
+            # dal 20/08 sera, quando la richiesta senza header su /v1/metrics ha
+            # smesso di arrivare al Collector pur restando sullo stesso percorso.
+            if [ "$attesi" = "401" ]; then
               echo "L'ingest e' l'unica superficie pubblica che accetta scritture:" >&2
               echo "un 200 qui significa che chiunque puo' scrivere nel TSDB, e i tre" >&2
               echo "numeri pubblici diventano quelli che decide lui." >&2
@@ -113,28 +118,27 @@ jobs:
           # (lo dice solo a livello info) e continua a rispondere 401 anche a un
           # bearer vuoto. Non fa fail-open — e questa riga e' cio' che lo tiene vero.
           controlla 401 "un bearer vuoto" /v1/metrics "${post[@]}" -H 'Authorization: Bearer '
-          # Un token SBAGLIATO, non assente: e' l'unico caso che porta credenziali
-          # e viene comunque rifiutato, quindi e' quello che continuera' a provare
-          # il Collector quando il bordo comincera' a fermare chi non ne ha.
+          # Un token SBAGLIATO, non assente: dal 20/08/2026 il bordo ferma chi non
+          # porta l'header, quindi questa e' diventata l'UNICA riga che arriva al
+          # Collector con credenziali e lo vede rifiutarle. Se sparisse, resterebbe
+          # provata solo la regola WAF e non l'autenticazione che sta sotto.
           controlla 401 "un bearer non valido" /v1/metrics "${post[@]}" \
             -H 'Authorization: Bearer questo-token-non-esiste'
-
-          # 401 (Collector) OPPURE 403 (bordo). Oggi e' 401: la regola WAF guarda
-          # solo metodo e percorso, quindi una POST senza header la attraversa. Se
-          # e quando la regola verra' estesa all'header, questa diventera' 403 —
-          # e va STRETTA a 403 esatto in quel momento, perche' a quel punto e'
-          # l'asserzione che la regola esiste. Accettare due codici per sempre
-          # sarebbe un controllo che non puo' fallire: e' proprio la forma che
-          # questo repository ha gia' corretto altrove.
-          controlla "401 403" "una richiesta senza header Authorization" /v1/metrics "${post[@]}"
 
           # --- Cio' che prova la regola WAF --------------------------------
           # La regola vive nella dashboard Cloudflare, fuori da git: nessun gate di
           # questo repository puo' accorgersi se qualcuno la disattiva, e una
           # superficie che torna aperta in silenzio e' esattamente il guasto che
-          # questo workflow esiste per intercettare. Queste due righe sono l'unico
+          # questo workflow esiste per intercettare. Queste tre righe sono l'unico
           # posto in cui quella regola viene riverificata.
-          # Misurate contro produzione il 20/08/2026, subito dopo il deploy.
+          # Misurate contro produzione il 20/08/2026, subito dopo ogni modifica.
+          #
+          # 403 ESATTO, non "401 o 403". Fra il 20/08 mattina e il 20/08 sera questa
+          # riga ha accettato entrambi, perche' la regola non guardava ancora
+          # l'header e la richiesta arrivava al Collector: era una tolleranza per la
+          # transizione, non una tolleranza. Un controllo che accetta due codici per
+          # sempre e' un controllo che non puo' fallire.
+          controlla 403 "una richiesta senza header Authorization" /v1/metrics "${post[@]}"
           controlla 403 "un GET sulla radice" /
           controlla 403 "una POST su /v1/traces" /v1/traces "${post[@]}"
 
