@@ -28,7 +28,12 @@ domain.** The only ingress is a Cloudflare Tunnel with three hostnames:
 
 - `grafana.`: Cloudflare Access with a single-email policy.
 - `status.`: Cloudflare Access with Service Auth, plus the application's own
-  bearer token. Two independent layers.
+  bearer token. Two independent layers — **and the Worker on marcobellingeri.dev
+  holds both credentials**, which is the part that matters: on the path that is
+  actually reachable from the internet, every request arrives pre-authenticated.
+  The two layers stop a direct caller at `status.` and stop nothing on the public
+  route. Stating the layers without stating who holds the keys is how a trust
+  boundary gets described as stronger than it is.
 - `otel.`: no Access application, because Claude Code cannot send Access headers.
   Authentication is handled by the `bearertokenauth` extension **inside the OTel
   Collector**.
@@ -42,6 +47,15 @@ Prometheus never gets a hostname of its own. Its HTTP API has no authentication.
 The public surface of the whole system is three aggregate numbers (sessions,
 tokens, cost). No session content, no free-form PromQL, and no path from the
 public widget to anything else.
+
+**Aggregated over metrics *and* over time.** The three numbers alone were only half
+the statement: sampled without limit they are also a presence feed — the second at
+which a session starts, how intense it is, which model is running (the cost/token
+ratio moves with the model mix). Since 2026-08-19 `/status` serves from a 60-second
+cache, so the origin computes one pass per minute whatever the incoming rate, and
+the resolution of that side channel is capped at the same minute. The endpoint is
+still unthrottled (see `CLAUDE.md`); the cache bounds what unlimited sampling buys,
+it does not throttle the caller.
 
 ## Data handling
 

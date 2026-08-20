@@ -123,9 +123,9 @@
     },
     {
       "id": 9,
-      "title": "Blocchi TSDB su disco (cap 300MB)",
+      "title": "Blocchi TSDB su disco (cap 3GB)",
       "type": "stat",
-      "description": "Soglie ancorate a --storage.tsdb.retention.size=300MB: giallo a 240MB (80%), rosso a 285MB (95%). Non misura il volume, misura i blocchi: il WAL vive sullo stesso disco e NON è contato dentro retention.size, quindi l'occupazione vera è sempre più alta di questo numero. Serve a vedere la salita prima che diventi il guasto, non a certificare lo spazio.",
+      "description": "Soglie ancorate a --storage.tsdb.retention.size=3GB: giallo a 2.4GiB (80%), rosso a 2.85GiB (95%). `3GB` in Prometheus e' powers-of-2, quindi 3 GiB. Non misura il volume e nemmeno cio' che la retention conta: questa metrica sono i SOLI blocchi, mentre retention.size conta anche WAL e m-mapped chunks (\"WAL and m-mapped chunks are counted in the total size\"). Quindi questo numero e' piu' BASSO di quello su cui scatta la retention, e il cap vero arriva prima di quanto il pannello lasci credere. Serve a vedere la salita prima che diventi il guasto, non a certificare lo spazio.",
       "gridPos": {
         "h": 4,
         "w": 8,
@@ -162,11 +162,11 @@
               },
               {
                 "color": "yellow",
-                "value": 251658240
+                "value": 2576980378
               },
               {
                 "color": "red",
-                "value": 298844160
+                "value": 3060164198
               }
             ]
           }
