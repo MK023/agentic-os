@@ -3,11 +3,13 @@
   "build": {
     "builder": "DOCKERFILE",
     "watchPatterns": [
-      "services/public-status-api/**"
+      "services/public-status-api/**",
+      "railway/status-api/**"
     ]
   },
   "deploy": {
     "restartPolicyType": "ON_FAILURE",
-    "numReplicas": 1
+    "numReplicas": 1,
+    "healthcheckPath": "/healthz"
   }
 }

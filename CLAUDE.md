@@ -24,8 +24,11 @@ three aggregate numbers are public, everything else stays inside the project.
   Access + the status API's bearer). Manual: its credentials are not GitHub
   secrets. `.github/workflows/smoke.yml` is the automatic half — public endpoint
   only, no secrets, and it fails on `null` *and* on `stale`, never on the HTTP
-  status alone. Railway ignores the Dockerfile `HEALTHCHECK`, so `SUCCESS` only
-  ever means "the container started".
+  status alone. Railway ignores the Dockerfile `HEALTHCHECK`; it uses its own
+  `healthcheckPath`, declared since 2026-08-20 on status-api (`/healthz`) and
+  cloudflared (`/ready`) and **requiring a `PORT` service variable to work at all**.
+  On the other three, `SUCCESS` still only means "the container started" — and even
+  where the path exists Railway stops probing once the deploy is live.
 
 ## Commands
 

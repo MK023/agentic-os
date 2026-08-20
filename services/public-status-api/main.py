@@ -422,13 +422,17 @@ async def healthz() -> dict:
     ATTENZIONE, misurato il 20-08-2026: dichiarare `healthcheckPath` senza la
     variabile `PORT` sul servizio FA FALLIRE IL DEPLOY. Railway manda la sonda alla
     porta indicata da `PORT` ("not listening on the PORT variable ... can result in
-    your health check returning a service unavailable error"), qui non e' impostata,
-    e uvicorn ascolta su 8000: la sonda non raggiunge nessuno, il deploy risulta
+    your health check returning a service unavailable error"): senza quella variabile
+    la sonda non raggiunge nessuno mentre uvicorn ascolta su 8000, il deploy risulta
     FAILED e la piattaforma tiene su il container precedente. Il guasto e' peggiore
     di quello che il controllo previene, ed e' successo davvero — il commit che ha
     introdotto questa rotta e' rimasto NON dispiegato mentre tutto sembrava a posto.
-    La rotta resta perche' e' giusta e non costa niente; `healthcheckPath` torna in
-    railway.json solo DOPO che `PORT=8000` esiste sul servizio, in quest'ordine.
+
+    `PORT=8000` e' stata impostata sul servizio il 20-08-2026 e `healthcheckPath`
+    e' tornato in railway.json DOPO, in quest'ordine. Se un giorno qualcuno la
+    togliesse, questa rotta continuerebbe a rispondere 200 e i deploy comincerebbero
+    a fallire: il valore vive su Railway, fuori da git, quindi nessun gate qui puo'
+    sorvegliarlo. `PORT` deve restare 8000 finche' il CMD dice `--port 8000`.
 
     Deliberatamente NON interroga Prometheus. Una sonda che dipende da monte
     dichiara "malato" il servizio proprio quando e' monte a esserlo, spegnendo

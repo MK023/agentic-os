@@ -148,11 +148,19 @@ discovering them from an empty dashboard.
    check for a `startCommand` left over in the dashboard — config-as-code does not
    clear dashboard values it does not mention.
 3. **Railway ignores the Dockerfile `HEALTHCHECK`.** It has its own
-   `healthcheckPath`, which is deliberately unset here: the status API's only
-   endpoint requires a token and would answer 401 to an unauthenticated probe. The
-   consequence is that a deploy counts as successful when the container starts, not
-   when it serves. `scripts/verify-hub.sh` is what actually confirms the hub works,
-   and it stays a manual step after deploying.
+   `healthcheckPath`, declared since 2026-08-20 on the two services that can serve
+   one: `/healthz` on status-api and `/ready` on cloudflared. Both need a `PORT`
+   service variable — Railway probes the port that variable names, not the port the
+   process listens on, and declaring the path without it fails every deploy while the
+   old container keeps serving. `PORT=8000` and `PORT=2000` respectively; those two
+   numbers live on Railway, outside git, and must match the `CMD` in each Dockerfile.
+   Set `PORT` **first**, then the path — never the other way round.
+   The remaining three services declare no path: grafana and prometheus would need an
+   unauthenticated 200, and the Collector's only route is the authenticated ingest.
+   For them a deploy still counts as successful when the container starts, not when it
+   serves. And Railway "does not monitor the healthcheck endpoint after the deployment
+   has gone live" — it is a deploy gate, never monitoring. `scripts/verify-hub.sh` is
+   what actually confirms the hub works, and it stays a manual step after deploying.
 
 ## Symptom to cause
 

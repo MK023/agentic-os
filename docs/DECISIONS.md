@@ -14,6 +14,34 @@ in the repo was already platform-neutral, and knowing that beforehand is what ma
 the decision cheap rather than agonising. The VPS path is gone from the repo on
 purpose: two deployment paths mean one of them is always subtly wrong.
 
+**`healthcheckPath` needs a `PORT` service variable, and the order is not optional.**
+Railway sends the probe to the port named by `PORT`, not the port the process is
+listening on — *"Not listening on the `PORT` variable or omitting it when using target
+ports can result in your health check returning a `service unavailable` error"*.
+Declared without it on 2026-08-13, `/healthz` failed every status-api deploy while the
+previous container kept serving, and the four following commits were correctly
+`SKIPPED` for watch paths, so production ran pre-#90 code with every gate green and no
+signal at all. `PORT` was set on 2026-08-20 (`8000` on status-api, `2000` on
+cloudflared) and the paths declared **after**: `/healthz` and `/ready`. Those two
+numbers live on Railway, outside git, and must match each Dockerfile's `CMD` — nothing
+in this repository can gate that. The default timeout, 300s, is left alone; cloudflared
+opens its edge connection well inside it.
+
+**A healthcheck here gates the deploy and then stops.** *"Railway does not monitor the
+healthcheck endpoint after the deployment has gone live."* So `SUCCESS` on those two
+services now means "it served a 200 once", not "it is serving" — a real improvement
+over "the container started", and still not monitoring. The scrape of cloudflared's
+metrics port and `smoke.yml` are what watch a running system; this is a gate on the
+promotion, and reading it as more than that is how a green dashboard hides a dead
+service.
+
+**status-api's `watchPatterns` did not include its own `railway.json`**, alone among
+the five services — it listed `services/public-status-api/**` and nothing else, while
+every other service lists `railway/<service>/**`. A commit touching only its Railway
+config would therefore be `SKIPPED` and the config change would never apply: the
+2026-08-13 failure mode again, one directory over. Fixed on 2026-08-20 by adding
+`railway/status-api/**`.
+
 **No Kubernetes, no K3s, no Docker Swarm.** Five small services, one user. Docker's
 own documentation: *"If you're not planning on deploying with Swarm, use Docker
 Compose instead"* — everything Swarm adds (multi-host networking, cross-node service
@@ -75,8 +103,10 @@ exist, and that was wrong.** It was written on 2026-08-19 from two absences — 
 exposes no CPU/memory flag, and the scaling page says only that a service scales *"up
 to the specified vCPU and Memory limits of your plan"*. Railway's published JSON
 schema carries `deploy.limitOverride.containers.{cpu, memoryBytes, diskBytes}`, along
-with `healthcheckPath`, `healthcheckTimeout` and `numReplicas`, none of which this
-repository declares. **A CLI that does not surface a field is not a platform that
+with `healthcheckPath`, `healthcheckTimeout` and `numReplicas`. Of those, only
+`limitOverride` and `healthcheckTimeout` are still undeclared here: `numReplicas` was
+already set on status-api when this paragraph was written — the sentence was wrong the
+day it was typed — and `healthcheckPath` landed on 2026-08-20. **A CLI that does not surface a field is not a platform that
 lacks it** — precisely the mistake this file already records about
 `RAILWAY_GIT_COMMIT_SHA`, where three tools read configuration and the conclusion was
 drawn about the runtime.

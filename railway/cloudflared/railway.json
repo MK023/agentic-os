@@ -8,6 +8,7 @@
     ]
   },
   "deploy": {
-    "restartPolicyType": "ON_FAILURE"
+    "restartPolicyType": "ON_FAILURE",
+    "healthcheckPath": "/ready"
   }
 }
