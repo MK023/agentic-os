@@ -41,7 +41,7 @@ repository root.
 | Service | Root Directory | Config file path | Volume |
 |---|---|---|---|
 | `otel-collector` | *(empty — repo root)* | `/railway/otel-collector/railway.json` | none |
-| `prometheus` | *(empty)* | `/railway/prometheus/railway.json` | 1 GB at `/prometheus` |
+| `prometheus` | *(empty)* | `/railway/prometheus/railway.json` | **5 GB** at `/prometheus` |
 | `grafana` | *(empty)* | `/railway/grafana/railway.json` | none |
 | `cloudflared` | *(empty)* | `/railway/cloudflared/railway.json` | none |
 | `status-api` | `services/public-status-api` | `/railway/status-api/railway.json` | none |
@@ -51,9 +51,18 @@ their Dockerfiles copy configuration out of `docker/`, so they need the whole re
 The status API is the exception — its Dockerfile uses paths relative to its own
 directory.
 
-Volume size depends on the plan: **Trial caps volumes at 0.5 GB**, Hobby at 5 GB.
-Either is generous for a hub storing a handful of series at a 15s scrape — start at
-the trial cap and raise it later if a Phase 2 producer arrives.
+Volume size depends on the plan: **Free and Trial cap volumes at 0.5 GB**, Hobby at
+5 GB, and resizing is a paid-plan operation. **Do not "start small and raise it
+later"** — that advice used to be here and it is the recipe for the incident this
+project has now had twice. `--storage.tsdb.retention.size` is the only back-pressure
+Prometheus has from the disk, and a cap **above** the volume can never fire: the disk
+fills, compaction fails once a minute, and ingestion keeps working out of the head in
+RAM, so nothing looks wrong from outside while persistence is already dead. The cap
+is `3GB` (3 GiB) and therefore requires a volume of at least 5 GB. If the volume ever
+changes, the cap in `railway/prometheus/Dockerfile` and `docker/docker-compose.yml`
+changes in the same commit — the CI gate compares those two files and the Grafana
+panel to each other, but nothing can compare them to a volume size that lives only in
+the Railway UI.
 
 ### Restart policy
 
@@ -123,10 +132,12 @@ discovering them from an empty dashboard.
 
    So the `prometheus` service — and only that one — carries `RAILWAY_RUN_UID=0` and
    runs as root. The cost is stated plainly: it is the single service in this project
-   without the non-root property, in a container that (unlike the local compose run)
-   has no `cap_drop`. What limits the exposure is that Prometheus has no public
-   domain, no authentication surface of its own, and is reachable only from inside
-   the project's private network.
+   without the non-root property. The `cap_drop` clause used to read as though this
+   service were the exception; it is not. **No Railway service has `cap_drop` or
+   `no-new-privileges`** — the platform exposes no equivalent, so those two lines in
+   `docker/docker-compose.yml` are local fidelity, not a production control, for all
+   five services. What limits the exposure here is that Prometheus has no public
+   domain and is reachable only from inside the project's private network.
 
    The variable, not `USER 0` in the Dockerfile, on purpose: the weakening then
    applies only where it is needed. Locally, Docker gives a named volume the image

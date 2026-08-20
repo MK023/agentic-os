@@ -70,13 +70,31 @@ reads them from `railway/prometheus/Dockerfile`, local from
 nothing to stay true — the same shape as the stale pricing test that survived two
 days in #75. A comment is not a gate.
 
-**Per-service resource caps do not exist on Railway, so the usage limit is the only
-one.** The CLI exposes replicas and regions, nothing for CPU or memory, and the
-scaling documentation says a service scales *"up to the specified vCPU and Memory
-limits of your plan"* — meaning any one of the five services can reach 8 GB / 8 vCPU on a single
-replica, and six times that if anyone ever raises the replica count. This changes what a spending limit is for: not one layer among several, but
-the single backstop. It also changes the severity of the endpoint being unthrottled,
-which until now was an availability question and is now a billing one.
+**Per-service resource caps: the first version of this paragraph said they do not
+exist, and that was wrong.** It was written on 2026-08-19 from two absences — the CLI
+exposes no CPU/memory flag, and the scaling page says only that a service scales *"up
+to the specified vCPU and Memory limits of your plan"*. Railway's published JSON
+schema carries `deploy.limitOverride.containers.{cpu, memoryBytes, diskBytes}`, along
+with `healthcheckPath`, `healthcheckTimeout` and `numReplicas`, none of which this
+repository declares. **A CLI that does not surface a field is not a platform that
+lacks it** — precisely the mistake this file already records about
+`RAILWAY_GIT_COMMIT_SHA`, where three tools read configuration and the conclusion was
+drawn about the runtime.
+
+What is *actually* known, and the distinction matters because overcorrecting would
+repeat the error in the other direction: the field is **in the schema**, it is **not
+in the config-as-code documentation** (checked), and **nobody has measured whether
+the Hobby plan enforces it**. So the honest statement is that the workspace usage
+limit is the only backstop anyone has *verified*, not the only one that exists.
+Declaring `limitOverride` on `status-api` — the one service reachable from the
+internet — is a cheap experiment, and it must be measured before this paragraph is
+rewritten again.
+
+**The status-api → Prometheus hop is plain HTTP**, and this file had an entry for
+every other transport decision except that one. It crosses only Railway's private
+network, carries no credential (the queries are constant strings, Prometheus wants no
+token), and both ends are ours. Correct for a single-tenant project; recorded because
+an absent entry reads as an oversight rather than as a decision.
 
 **Base images are pinned by digest as well as tag, since 2026-08-19.** The argument
 was already written down in this file for the gitleaks binary — *"alone, a version
@@ -146,7 +164,7 @@ The exception is **Prometheus on Railway**, which carries `RAILWAY_RUN_UID=0`. I
 attached volume is presented owned by root, so as `nobody` it cannot even create
 `/prometheus/queries.active` and exits at startup — measured, not anticipated.
 Railway documents running as root as the supported answer. The exposure is bounded
-by the fact that Prometheus has no public domain and no authentication surface of
+by the fact that Prometheus has no public domain and no configured authentication of
 its own; the weakening is applied as a Railway variable rather than a `USER 0` line
 so that the local run keeps the stronger posture. If this ever needs revisiting, the
 alternative is an entrypoint that chowns the mount and drops privileges — more moving

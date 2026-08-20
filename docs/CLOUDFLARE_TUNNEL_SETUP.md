@@ -32,7 +32,8 @@ service, reaching the others over the project's private network):
 None of these services takes a public Railway domain: the tunnel is the only way in,
 so there is no platform hostname sitting unprotected beside it.
 
-Prometheus deliberately gets **no** hostname: its HTTP API has no authentication
+Prometheus deliberately gets **no** hostname: its HTTP API is not configured with
+authentication (it supports it — see `SECURITY.md` — it is simply not turned on)
 of its own, so its only safe exposure is the project's private network.
 
 ## 3. Two Access applications

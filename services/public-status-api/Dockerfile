@@ -14,8 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --require-hashes --only-binary :all: -r requirements.txt
 COPY main.py sentry.py ./
 
-# Runs unprivileged: nothing here needs root, and the compose stack already drops
-# all capabilities and sets no-new-privileges.
+# Runs unprivileged: nothing here needs root. Il `cap_drop`/`no-new-privileges` del
+# compose vale SOLO in locale — Railway non espone quelle impostazioni — quindi in
+# produzione questo `USER` e' l'intera postura del container, non un secondo strato.
 USER 65534:65534
 
 # Compose has no Kubernetes liveness probe to lean on, so this is the only
