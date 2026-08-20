@@ -56,7 +56,8 @@ def main(percorso_risposta: str) -> int:
 
     azioni = [a.get("type") for f in (w.get("actionFilters") or []) for a in f.get("actions", [])]
     if not azioni:
-        problemi.append("nessuna AZIONE configurata: la regola valuta le condizioni e non consegna niente a nessuno.")
+        problemi.append("nessuna AZIONE configurata: la regola valuta le condizioni "
+                        "e non consegna niente a nessuno.")
 
     if problemi:
         for p in problemi:

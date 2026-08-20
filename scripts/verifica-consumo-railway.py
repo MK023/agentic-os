@@ -32,7 +32,8 @@ def main(percorso_risposta: str) -> int:
     letti = {r["measurement"]: r["estimatedValue"]
              for r in (risposta.get("data") or {}).get("estimatedUsage") or []}
     if not letti:
-        print("::error::estimatedUsage ha risposto 200 con una lista VUOTA: nessuna misura, quindi nessuna verifica.")
+        print("::error::estimatedUsage ha risposto 200 con una lista VUOTA: "
+              "nessuna misura, quindi nessuna verifica.")
         return 1
 
     sforati = []
@@ -41,7 +42,9 @@ def main(percorso_risposta: str) -> int:
         if valore is None:
             sforati.append(f"{misura} non e' stata restituita: il suo tetto non e' stato verificato.")
             continue
-        print(f"{misura}: {valore:.1f}  (tetto {tetto} — osservato il {base['misurato_il']}: {base['osservato'].get(misura)})")
+        osservato = base["osservato"].get(misura)
+        print(f"{misura}: {valore:.1f}  (tetto {tetto} — "
+              f"osservato il {base['misurato_il']}: {osservato})")
         if valore > tetto:
             sforati.append(f"{misura} = {valore:.1f}, sopra il tetto di {tetto}.")
 
