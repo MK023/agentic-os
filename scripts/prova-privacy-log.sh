@@ -46,16 +46,49 @@ TMP=$(mktemp -d)
 # --- la config sotto esame, con UNA sola chiave diversa e la prova che sia una sola
 python3 - "$TMP/loki.yaml" <<'PY'
 import sys, yaml
-spedita = yaml.safe_load(open("docker/loki.yaml"))
 prova = yaml.safe_load(open("docker/loki.yaml"))
 prova["storage_config"]["object_store"]["s3"]["insecure"] = True
-# `limits_config` e' il blocco sotto esame: deve restare identico, altrimenti la
-# prova sta esaminando una config che nessuno spedisce.
-assert prova["limits_config"] == spedita["limits_config"], "limits_config divergente"
-diverse = [k for k in spedita if prova[k] != spedita[k]]
-assert diverse == ["storage_config"], diverse
+
+# L'ORACOLO STA QUI DENTRO, non nel file sotto esame. La prima versione faceva
+#     spedita = yaml.safe_load(open("docker/loki.yaml"))
+#     prova   = yaml.safe_load(open("docker/loki.yaml"))
+#     assert prova["limits_config"] == spedita["limits_config"]
+# cioe' confrontava due parse dello STESSO file, con in mezzo una modifica che non
+# tocca `limits_config`: un oggetto contro se' stesso. Passava sempre, anche dopo
+# aver aggiunto `user.email` all'allow-list — misurato. E tre documenti dichiaravano
+# che quella riga impediva di "aggiustare la config per far passare la prova".
+# Un oracolo che vive nel file sotto esame non e' un oracolo.
+#
+# Adesso l'atteso e' scritto qui e va cambiato a mano, deliberatamente, da chi tocca
+# l'allow-list — che e' il gesto che si vuole rendere visibile.
+CHIAVI_ATTESE = {
+    "event.name", "event.sequence", "session.id", "prompt.id", "tool_name",
+    "tool_use_id", "success", "error_type", "duration_ms", "decision", "source",
+    "model", "query_source", "status", "status_code", "attempt", "error_code",
+    "error_name", "transport_type", "server_scope", "prompt_length", "response_length",
+}
+otlp = prova["limits_config"]["otlp_config"]
+tenute = set()
+for voce in otlp["log_attributes"]:
+    if voce.get("action") == "structured_metadata":
+        tenute |= set(voce.get("attributes") or [])
+if tenute != CHIAVI_ATTESE:
+    print(f"FALLITO: l'allow-list di loki.yaml e' cambiata. In piu': {sorted(tenute - CHIAVI_ATTESE)}. "
+          f"In meno: {sorted(CHIAVI_ATTESE - tenute)}. Se il cambio e' voluto, aggiorna CHIAVI_ATTESE "
+          f"in questo script nello stesso commit.", file=sys.stderr)
+    sys.exit(1)
+for nome, voci in (("resource_attributes", otlp["resource_attributes"]["attributes_config"]),
+                   ("scope_attributes", otlp["scope_attributes"]),
+                   ("log_attributes", otlp["log_attributes"])):
+    if voci[-1] != {"action": "drop", "regex": ".*"}:
+        print(f"FALLITO: {nome} non finisce con il drop catch-all", file=sys.stderr)
+        sys.exit(1)
+if prova["limits_config"].get("allow_structured_metadata") is not True:
+    print("FALLITO: allow_structured_metadata non e' true", file=sys.stderr); sys.exit(1)
+
 yaml.safe_dump(prova, open(sys.argv[1], "w"))
-print("config di prova: identica a quella spedita tranne storage_config.object_store.s3.insecure")
+print(f"config di prova: {len(tenute)} chiavi in allow-list come atteso, tre sezioni chiuse, "
+      "e la sola differenza dalla config spedita e' storage_config.object_store.s3.insecure")
 PY
 
 # Le tre immagini si scaricano PRIMA, con la ritentata. Questo script e' un gate

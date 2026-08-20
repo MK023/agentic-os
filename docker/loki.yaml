@@ -84,9 +84,26 @@ limits_config:
   ingestion_rate_mb: 1
   ingestion_burst_size_mb: 2
   # `service.name` e' l'unica label di indice E il Collector ne fissa il valore, quindi
-  # gli stream leciti sono uno. Dieci e' margine, non stima. Il default e' 5000: non
-  # illimitato, ma 5000 stream spazzatura nell'indice e altrettanti flush verso R2.
-  max_global_streams_per_user: 10
+  # gli stream leciti sono uno. Il default e' 5000: non illimitato, ma 5000 stream
+  # spazzatura nell'indice e altrettanti flush verso R2.
+  #
+  # Era 10, per poche ore il 2026-08-20, e 10 era SBAGLIATO nella direzione peggiore.
+  # Misurato: nove push con label diverse esauriscono il budget, e da quel momento la
+  # risposta e' "maximum active stream limit exceeded WHEN TRYING TO CREATE STREAM".
+  # Lo stream gia' aperto continua a ricevere, quindi non si nota — ma al primo
+  # riavvio di Loki, o dopo `chunk_idle_period`, il Collector non puo' piu' ricreare
+  # il suo, e la telemetria smette di entrare con Loki `up=1`, container healthy e
+  # tutti i gate verdi. E' la forma esatta del guasto silenzioso che questo progetto
+  # esiste per non avere. Un tetto che il produttore legittimo puo' sbattere e' una
+  # negazione di servizio con il nostro nome sopra.
+  #
+  # 200: due ordini di grandezza sotto il default, ancora un tetto vero contro la
+  # cardinalita' (l'unico modo di creare stream e' l'API di push nativa, vedi
+  # SECURITY.md), e fuori portata per il produttore vero, che ne usa uno.
+  # Il segnale che dice se ci si sta avvicinando esiste ed e' gia' raccolto:
+  # `loki_ingester_memory_streams` e `loki_discarded_samples_total{reason=~".*stream.*"}`
+  # arrivano in Prometheus dal job `loki`.
+  max_global_streams_per_user: 200
 
   # Senza questa riga Loki RIFIUTA il payload: la structured metadata e' il
   # meccanismo su cui poggia tutto il blocco qui sotto.

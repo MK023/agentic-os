@@ -154,6 +154,12 @@ jobs:
           # transizione, non una tolleranza. Un controllo che accetta due codici per
           # sempre e' un controllo che non puo' fallire.
           controlla 403 "una richiesta senza header Authorization" /v1/metrics "${post[@]}"
+          # La stessa asserzione sul percorso NUOVO. SECURITY.md dichiara la misura
+          # "su entrambi i percorsi" e finora era provata su uno: se la regola WAF
+          # diventasse permissiva su /v1/logs senza header, l'autenticazione
+          # reggerebbe (il Collector risponde 401) ma la superficie raggiungibile si
+          # allargherebbe e nessuna delle sei asserzioni se ne accorgeva.
+          controlla 403 "una richiesta senza header Authorization su /v1/logs" /v1/logs "${post[@]}"
           controlla 403 "un GET sulla radice" /
           controlla 403 "una POST su /v1/traces" /v1/traces "${post[@]}"
 

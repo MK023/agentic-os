@@ -104,10 +104,18 @@ REQUEST_TIMEOUT = httpx.Timeout(10.0)
 # × list price. Grouping `by (model, type)` is what makes that possible — price
 # depends on both — and it is also why this query needs a different parser from the
 # other two.
+# `{job="otel-collector"}` is a SECURITY filter, not tidiness, and it was missing
+# until 2026-08-20. Prometheus scrapes six targets; without a provenance selector,
+# ANY of them serving a metric merely *named* `claude_code_token_usage` lands in this
+# sum. `honor_labels` is off, so a target cannot forge its own `job` — it does not
+# need to: the sum has no `job` dimension to defend. Measured the day the Loki and
+# Grafana scrape jobs were added: an injected data point put 1e12 tokens into this
+# number, and `max_over_time(...[25h])` keeps it there for a day. Only the Collector
+# passes `filter/metric-allowlist`; the other five targets pass nothing.
 QUERIES = {
-    "sessions_today": "sum(max_over_time(claude_code_session_count[25h]))",
-    "tokens_today": "sum(max_over_time(claude_code_token_usage[25h]))",
-    "cost_usd_today": "sum by (model, type) (max_over_time(claude_code_token_usage[25h]))",
+    "sessions_today": 'sum(max_over_time(claude_code_session_count{job="otel-collector"}[25h]))',
+    "tokens_today": 'sum(max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))',
+    "cost_usd_today": 'sum by (model, type) (max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))',
 }
 
 # Anthropic list prices, USD per million tokens, as published on 2026-07-30. These

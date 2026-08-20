@@ -76,6 +76,16 @@ scrape_configs:
   # `loki_ingester_*` e `loki_distributor_*` sono le famiglie che dicono se sta
   # ingerendo; `up` copre il caso in cui non risponda affatto.
   - job_name: loki
+    # Il tetto stava solo su otel-collector, e la ragione scritta li' era "e' qui che
+    # si paga". Era vera con tre job. Misurato il 2026-08-20 subito dopo aver aggiunto
+    # questi due: 3064 campioni per scrape da loki, contro i ~305 del Collector —
+    # cioe' l'87% dell'ingestione entrava dalle due porte senza serratura. Un loki
+    # compromesso poteva servire un /metrics da centomila serie e Prometheus le
+    # prendeva tutte. Superata la soglia fallisce l'INTERO scrape, ed e' la scelta
+    # rumorosa voluta: meglio un target rosso che un TSDB gonfio in silenzio.
+    sample_limit: 6000
+    label_limit: 30
+    label_value_length_limit: 128
     static_configs:
       - targets: ["loki.railway.internal:3100"]
 
@@ -88,5 +98,15 @@ scrape_configs:
   # `/metrics` di Grafana non e' autenticato ma sta sulla rete privata, e non e'
   # dietro il Tunnel: nessuna rotta nuova verso l'esterno.
   - job_name: grafana
+    # Il tetto stava solo su otel-collector, e la ragione scritta li' era "e' qui che
+    # si paga". Era vera con tre job. Misurato il 2026-08-20 subito dopo aver aggiunto
+    # questi due: 3186 campioni per scrape da grafana, contro i ~305 del Collector —
+    # cioe' l'87% dell'ingestione entrava dalle due porte senza serratura. Un grafana
+    # compromesso poteva servire un /metrics da centomila serie e Prometheus le
+    # prendeva tutte. Superata la soglia fallisce l'INTERO scrape, ed e' la scelta
+    # rumorosa voluta: meglio un target rosso che un TSDB gonfio in silenzio.
+    sample_limit: 6000
+    label_limit: 30
+    label_value_length_limit: 128
     static_configs:
       - targets: ["grafana.railway.internal:3000"]

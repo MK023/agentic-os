@@ -184,7 +184,29 @@ processors:
           # body a un valore che l'allow-list approva gia', cosi' il giorno in
           # cui il fornitore ci mettesse il messaggio (la doc NON documenta il
           # contenuto del body: non e' un contratto) il default e' chiuso.
+          # DUE statement, e il primo non e' ridondanza: OTTL documenta che `set`
+          # NON FA NIENTE se il valore si risolve a nil ("If value resolves to
+          # nil ... there will be no action"). Con il solo statement qui sotto, un
+          # record SENZA `event.name` conservava il proprio body verbatim —
+          # misurato il 2026-08-20 contro il Collector vero: un body con dentro
+          # un prompt e un indirizzo e' arrivato intatto in Loki. La difesa era un
+          # no-op esattamente nel caso in cui serviva, e nessuna delle due prove
+          # la vedeva: il client manda sempre `event.name`, e il payload sintetico
+          # deve contenerlo per far passare l'asserzione (c).
+          - set(log.body, "evento-senza-nome") where log.attributes["event.name"] == nil
           - set(log.body, log.attributes["event.name"])
+          # I CAMPI DEL RECORD, che non stanno in nessuna mappa di attributi e
+          # quindi non li tocca ne' `keep_keys` (governa attributi) ne'
+          # `otlp_config` di Loki (ha tre sezioni, tutte e tre di attributi).
+          # Erano a barriera ZERO: misurato, `severity_text` arriva in structured
+          # metadata e per giunta due volte, perche' Loki ne ricava anche
+          # `detected_level`. Il client oggi non li manda — sono un default
+          # aperto, non una fuga in corso, ed e' la forma che qui si rifiuta.
+          - set(log.severity_text, "")
+          - set(log.severity_number, 0)
+          - set(log.trace_id.string, "")
+          - set(log.span_id.string, "")
+          - set(log.flags, 0)
           - keep_keys(log.attributes, ["event.name", "event.sequence", "session.id", "prompt.id", "tool_name", "tool_use_id", "success", "error_type", "duration_ms", "decision", "source", "model", "query_source", "status", "status_code", "attempt", "error_code", "error_name", "transport_type", "server_scope", "prompt_length", "response_length"])
 
   batch: {}

@@ -247,9 +247,20 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
 
 ## Test contract
 
-1. **Shape**: static analysis as the ground floor for infra (compose config, an
-   image build of every service, Checkov); a small unit-heavy pyramid for the two
-   application components (status API here, widget in the site repo).
+1. **Shape**: **honeycomb, not pyramid** — corrected 2026-08-20 after counting what
+   was actually here. Six services: the complexity of this system lives *between*
+   them, not inside them, so the centre of gravity belongs on service-boundary and
+   contract tests. Static analysis is still the ground floor (compose config, an image
+   build of every service, Checkov, hadolint), and the one component with real domain
+   logic — the status API — keeps a unit-heavy suite at 100%. What was missing was the
+   middle: **13 CI steps parsed text and only one exercised a boundary.** The known
+   couplings — metric names in three places, 22 log keys in two files, the `25h` window
+   in two, the internal hostnames — were all guarded by comparing strings, which cannot
+   catch the case where every file agrees and all of them are wrong together.
+   Two executed proofs now hold that middle, both in CI and both runnable locally:
+   `scripts/prova-contratto-metriche.sh` (Collector ↔ status API ↔ dashboard: it asks
+   the Collector what it *actually* exposes) and `scripts/prova-privacy-log.sh`
+   (Collector ↔ Loki: it pushes identity and content and queries them back).
 
 2. **Coverage on new code**: 100% on the status API, **enforced** by
    `--cov-fail-under=100` in CI (met: 25 tests, 100% on `main.py` and

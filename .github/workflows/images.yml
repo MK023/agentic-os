@@ -624,6 +624,14 @@ jobs:
       - name: identita' e contenuto non arrivano nel log store (prova eseguita)
         run: bash scripts/prova-privacy-log.sh
 
+      # Il gate "la finestra sta nelle query" e quello sulle tariffe confrontano TESTO
+      # fra i file accoppiati. Il testo puo' essere identico in tutti e tre e sbagliato
+      # in tutti e tre insieme, perche' il nome vero delle metriche lo decide
+      # `translation_strategy` e nessuno dei tre file la esegue. Questo chiede al
+      # Collector cosa espone davvero.
+      - name: il contratto delle metriche regge fra Collector, status API e pannello
+        run: bash scripts/prova-contratto-metriche.sh
+
       - name: ogni servizio railway e' costruito e scansionato
         run: |
           set -euo pipefail
