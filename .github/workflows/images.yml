@@ -123,10 +123,12 @@ jobs:
           exit-code: "1"
           format: table
 
-      # I pacchetti di sistema di `python:3.14.0-slim` ricadono nella stessa
+      # I pacchetti di sistema di `python:3.14.7-slim` ricadono nella stessa
       # categoria delle immagini di terzi qui sotto: non li installiamo noi e
-      # l'unica leva e' cambiare il tag della base. Al 13/08 sono 25 HIGH con fix
-      # in Debian ma non ancora in un tag pubblicato. Visibili, non bloccanti.
+      # l'unica leva e' cambiare il tag della base. Erano 25 HIGH al 13/08 su
+      # 3.14.0; misurati 9 il 20/08 dopo il salto a 3.14.7 — la leva funziona,
+      # ma arriva quando il tag esce, non quando esce il fix Debian. Visibili,
+      # non bloccanti.
       - name: CVE del sistema operativo di status-api (informativo)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
