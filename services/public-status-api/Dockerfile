@@ -2,7 +2,7 @@
 # compose file's image pins.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
-FROM python:3.14.0-slim@sha256:0aecac02dc3d4c5dbb024b753af084cafe41f5416e02193f1ce345d671ec966e
+FROM python:3.14.7-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4
 
 # stdout non bufferizzato: sotto Railway e' una pipe, non un TTY, quindi CPython lo
 # bufferizza a blocchi da 8 KB e su SIGKILL o OOM la coda dei log sparisce. Su un
@@ -17,7 +17,27 @@ COPY requirements.txt .
 # as SHA-pinning GitHub Actions, and what Sonar's docker:S8544 asks for.
 # --only-binary :all:: wheels only, never a source distribution whose setup.py would
 # execute at install time (docker:S8541).
-RUN pip install --no-cache-dir --require-hashes --only-binary :all: -r requirements.txt
+#
+# `pip uninstall -y pip` nello STESSO RUN: pip non serve a runtime — l'immagine
+# esegue uvicorn, non installa niente — ed e' l'unica cosa che porta dentro
+# `msgpack` e `pkg_resources`/setuptools, che vive nel suo `_vendor/`. Sono le
+# due HIGH che hanno tenuto ferma la #79: non stanno in requirements.in, quindi
+# non si chiudono ricompilando il lockfile, e non stanno nemmeno nei pacchetti
+# di sistema, quindi il tag della base non le tocca. L'unica leva vera e'
+# togliere il pacchetto che le porta. Cancellare il codice batte silenziare il
+# gate: qui la superficie sparisce davvero, non viene solo ignorata.
+#
+# E per davvero vuol dire anche `ensurepip`, che tiene una COPIA di pip come
+# wheel: `ensurepip/_bundled/pip-26.2.1-py3-none-any.whl`. Trivy non guarda
+# dentro un archivio, quindi disinstallare pip e basta rende il gate verde
+# lasciando il codice vulnerabile nell'immagine, a un `python -m ensurepip` di
+# distanza dal tornare installato. Verde e rimosso non sono la stessa cosa, ed
+# e' esattamente la differenza che questo RUN dichiara di fare.
+# Il path si chiede all'interprete: hard-codarlo lo lega alla versione, e il
+# giorno del salto a 3.15 sparirebbe il `rm` senza che niente diventi rosso.
+RUN pip install --no-cache-dir --require-hashes --only-binary :all: -r requirements.txt \
+ && rm -rf "$(python -c 'import ensurepip, pathlib; print(pathlib.Path(ensurepip.__file__).parent)')" \
+ && pip uninstall -y pip
 COPY main.py sentry.py ./
 
 # Runs unprivileged: nothing here needs root. Il `cap_drop`/`no-new-privileges` del
