@@ -50,8 +50,23 @@ COPY docker/prometheus.yml /etc/prometheus/prometheus.yml
 # consumato ($0.15/GB/mese): ~1.5 GB sono ~$0.23 al mese. Era una decisione di
 # costo, non tecnica, e il costo è cambiato. Se il volume viene ridimensionato di
 # nuovo, entrambi i numeri vanno rivisti a mano.
+# --web.cors.origin: il DEFAULT e' `.*`, e non e' una svista del fornitore — e'
+# pensato per chi mette Prometheus dietro un proxy che decide lui le origini.
+# Qui non c'e' nessun proxy davanti: misurato il 2026-08-20, `Origin:
+# https://evil.example` si riprende indietro `Access-Control-Allow-Origin:
+# https://evil.example`, quindi qualunque pagina aperta nel browser di chi puo'
+# raggiungere questa porta legge l'INTERO TSDB in JavaScript — trenta giorni di
+# profilo di lavoro, che SECURITY.md identifica come il contenuto sensibile del
+# volume. Sulla rete privata di Railway il raggio e' piccolo; in locale, dove il
+# dato vero passa, la porta e' sull'host.
+# `^$` non matcha nessuna origine: le API restano interrogabili da server a
+# server (Grafana e la status API non mandano `Origin`), e smettono di esserlo
+# da un browser di terzi. Le altre tre superfici di scrittura erano gia' chiuse
+# e sono state riverificate lo stesso giorno: admin-api, lifecycle e
+# remote-write-receiver tutte `false`.
 CMD [ \
   "--config.file=/etc/prometheus/prometheus.yml", \
+  "--web.cors.origin=^$", \
   "--storage.tsdb.path=/prometheus", \
   "--storage.tsdb.retention.time=30d", \
   "--storage.tsdb.retention.size=3GB" \
