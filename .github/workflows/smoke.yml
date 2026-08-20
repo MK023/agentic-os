@@ -48,6 +48,47 @@ concurrency:
 jobs:
   # Nessun checkout: lo script sta tutto qui e il job non legge il repository.
   # Con `permissions: {}` il GITHUB_TOKEN di questo job non puo' fare niente.
+  # L'unica cosa esposta su internet che ACCETTA scritture, e il suo controllo
+  # d'accesso non era mai stato riverificato dopo il primo giorno: la prova 401/401/200
+  # esiste in docs/LOCAL_DRY_RUN.md (contro un container locale) e in una misura una
+  # tantum registrata in DECISIONS.md. Togliere OTLP_INGEST_TOKEN dal servizio, o
+  # perdere il blocco `auth:` in una modifica che passa comunque `validate`, aprirebbe
+  # l'ingest a chiunque con tutti e dodici i gate verdi.
+  #
+  # Sta QUI e non in verify-hub.sh perche' non serve nessun segreto: la prova e' che
+  # una richiesta SENZA credenziali venga rifiutata. Un test che non ha bisogno di un
+  # segreto per esistere non deve dipendere da un segreto per girare — e' la ragione
+  # per cui verify-hub.sh e' ancora manuale.
+  ingest-chiede-il-token:
+    runs-on: ubuntu-latest
+    steps:
+      - name: l'ingest OTLP rifiuta chi non ha il token
+        env:
+          URL: https://otel.marcobellingeri.dev/v1/metrics
+        run: |
+          set -euo pipefail
+
+          controlla() {
+            descrizione="$1"; shift
+            codice=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              --retry 3 --retry-delay 5 --retry-all-errors --max-time 20 \
+              -H 'Content-Type: application/json' -d '{}' "$@" "$URL")
+            if [ "$codice" != "401" ]; then
+              echo "FAIL: ${descrizione} ha ricevuto ${codice}, non 401." >&2
+              echo "L'ingest e' l'unica superficie pubblica che accetta scritture:" >&2
+              echo "un 200 qui significa che chiunque puo' scrivere nel TSDB, e i tre" >&2
+              echo "numeri pubblici diventano quelli che decide lui." >&2
+              exit 1
+            fi
+            echo "ok: ${descrizione} -> 401"
+          }
+
+          controlla "una richiesta senza header Authorization"
+          # Misurato il 19/08/2026: con OTLP_INGEST_TOKEN vuoto il Collector PARTE
+          # (lo dice solo a livello info) e continua a rispondere 401 anche a un
+          # bearer vuoto. Non fa fail-open — e questa riga e' cio' che lo tiene vero.
+          controlla "un bearer vuoto" -H 'Authorization: Bearer '
+
   endpoint-pubblico:
     runs-on: ubuntu-latest
     steps:
