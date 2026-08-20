@@ -67,9 +67,15 @@ the statement: sampled without limit they are also a presence feed — the secon
 which a session starts, how intense it is, which model is running (the cost/token
 ratio moves with the model mix). Since 2026-08-19 `/status` serves from a 60-second
 cache, so the origin computes one pass per minute whatever the incoming rate, and
-the resolution of that side channel is capped at the same minute. The endpoint is
-still unthrottled (see `CLAUDE.md`); the cache bounds what unlimited sampling buys,
-it does not throttle the caller.
+the resolution of that side channel is capped at the same minute. The caller is throttled too, and this
+paragraph said otherwise until 2026-08-20: the site's Worker has applied a per-IP rate
+limiting binding to `/api/agentic-status` since 2026-08-16 — 60 requests / 60s, with
+`Retry-After: 60` on the `429`. The two do different jobs: the cache bounds what
+unlimited sampling *buys*, the limiter bounds how much sampling one address gets. And
+the limiter is a ceiling rather than a guillotine — measured against production on
+2026-08-20, 75 requests in ~11s drew no `429` at all while 200 in ~26s drew 13, the
+first at request 167, because the binding counts per datacentre and is eventually
+consistent by design.
 
 **What the Prometheus volume holds, stated plainly.** After the Collector's
 allow-list the labels are `model`, `type`, `query_source`, `start_type`,

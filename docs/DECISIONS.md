@@ -660,12 +660,12 @@ without repetition, no such rule can fire, which is the other half of why nothin
 called. Neither half works alone.
 
 The watchdog also stopped running on every request. It shares the read path of the
-one public endpoint, and that endpoint is unthrottled: before 2026-08-19 the cost of
-that was CPU on free credits, after it is money. Four Prometheus queries per public request instead of
-three is 33% of the load bought by an unauthenticated caller — and removing it is a
-25% cut, not the closing of the vector: the other three queries still run once per
-request, unthrottled, which is what the Worker's limiter is for. It now runs at most
-once per minute — still far denser than a condition measured in days.
+one public endpoint, and at the time that endpoint was unthrottled: before 2026-08-19
+the cost of that was CPU on free credits, after it is money. Four Prometheus queries
+per public request instead of three is 33% of the load bought by an unauthenticated
+caller — and removing it is a 25% cut, not the closing of the vector: the other three
+queries still run once per request, which is what the Worker's limiter is for. It now
+runs at most once per minute — still far denser than a condition measured in days.
 
 **Denial-of-wallet: measured, small, and capped anyway.** Moving to usage-based
 billing turned "someone floods the public endpoint" from an availability question
@@ -684,6 +684,25 @@ the widget polling every 20s that is ~4,300 events/day with no attacker at all �
 the free quota gone in a day, exactly when it is needed. Fixed by routing the 502
 capture through the same throttle, keyed on the exception type so a new fault still
 speaks immediately.
+
+**The Worker's limiter exists, and this file kept calling it future work.** It
+shipped on 2026-08-16 in `marcobellingeri.dev` PR #216: a per-IP rate limiting
+binding on `/api/agentic-status`, 60 requests / 60s, answering `429` with
+`Retry-After: 60`, `Cache-Control: no-store` and `{"error":"rate"}`. It sits on the
+HTTP boundary rather than inside the handler, deliberately — the Cron probe calls the
+same handler as a function, with no IP, and inside the handler it would land in the
+`sconosciuto` bucket with every other IP-less caller: a flood would bounce the probe
+with a `429`, the probe would read a response that is not the three numbers, and it
+would report a dead hub to Sentry that is perfectly healthy. A false alarm
+manufactured by our own defence.
+
+**Measured against production on 2026-08-20, because the shape matters more than the
+number.** 75 requests in ~11 seconds: **zero** `429`. 200 requests in ~26 seconds:
+**13** `429`, the first at request 167. The binding counts per datacentre and is
+eventually consistent by design, so it is a ceiling against a sustained flood and not
+a guillotine at the 61st request. Anyone measuring it with a short burst will conclude
+it is broken; that is why the burst is written down next to the result. The
+`/api/contact` and `/api/ask` limiters are the same mechanism at 5 and 10 per minute.
 
 **`/status` caches for 60 seconds, and that one change closes more than the flood.**
 The origin now runs three Prometheus queries per minute whatever the incoming rate;

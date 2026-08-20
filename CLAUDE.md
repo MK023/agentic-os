@@ -121,20 +121,29 @@ those files are correct in both places. Never fork a config to "fix it for local
 - No app-level rate limiter in the status API — that part stands. **What this line used
   to claim, "Cloudflare does it at the edge", was false**: measured 2026-08-16, 60
   requests in ~20s returned zero `429`, and the zone has no rate limiting rule at all.
-  Nothing was throttling the public endpoint. Being added in the site's Worker, where the
-  route is served; until it ships the honest statement is that the endpoint is unthrottled.
+  **And the correction outlived the gap**: the limiter shipped in the site's Worker on
+  2026-08-16 (`marcobellingeri.dev` PR #216) — a per-IP rate limiting *binding*, 60
+  requests / 60s, `Retry-After: 60` — and this file went on declaring the endpoint
+  unthrottled for four days. A declared absence that has been filled is the same defect
+  as an asserted control that does not exist; it just wastes worry instead of trust.
+  Measured against production 2026-08-20: 75 requests in ~11s produced **zero** `429`,
+  200 in ~26s produced **13**, first at request 167. The binding is per-datacentre and
+  eventually consistent, so it is **a ceiling against a sustained flood, not a
+  guillotine at the 61st request** — and knowing that before reading a graph is the
+  difference between "it works" and "it is broken".
   **Since 2026-08-19 that gap costs money, not just CPU**: the project is on Railway's
   Hobby plan, billed on usage. **Railway's schema DOES expose a per-service cap**
   (`deploy.limitOverride`), contrary to what this line said on 2026-08-19 — it is
   undocumented in config-as-code, unmeasured on Hobby, and undeclared here.
-  **Since 2026-08-20 there are two backstops, and neither is a rate limiter**: the
-  workspace usage limit ($15 soft / $30 hard, set by the operator — no tool here can
+  **Since 2026-08-20 there are two further backstops, and neither is a rate limiter**:
+  the workspace usage limit ($15 soft / $30 hard, set by the operator — no tool here can
   read it back) and a WAF custom rule on `otel.` that blocks everything except
   `POST /v1/metrics` carrying an `Authorization` header (presence only, never the
   value). The rule is defence in depth, never the auth — that stays `bearertokenauth`
   inside the Collector, and `smoke.yml` proves it with a *wrong* token, the only shape
-  the edge still lets through. The Worker's rate limiter is still missing.
-  An asserted control that does not exist is worse than a declared absence.
+  the edge still lets through. An asserted control that does not exist is worse than a
+  declared absence — **and an absence still declared after it was filled is the same
+  mistake wearing the opposite face**, which is what this bullet did for four days.
 
 ## References (read on demand)
 
