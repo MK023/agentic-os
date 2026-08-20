@@ -12,6 +12,7 @@ Quello che intercetta e' la FUGA: un processo che consuma e non dovrebbe. Il lim
 di spesa del workspace lo fermerebbe solo DOPO, e nessun tool di questo repository
 puo' rileggerlo.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -29,11 +30,15 @@ def main(percorso_risposta: str) -> int:
         print("::error::Questo job NON ha misurato niente. Un token scaduto o revocato ha questo sintomo.")
         return 1
 
-    letti = {r["measurement"]: r["estimatedValue"]
-             for r in (risposta.get("data") or {}).get("estimatedUsage") or []}
+    letti = {
+        r["measurement"]: r["estimatedValue"]
+        for r in (risposta.get("data") or {}).get("estimatedUsage") or []
+    }
     if not letti:
-        print("::error::estimatedUsage ha risposto 200 con una lista VUOTA: "
-              "nessuna misura, quindi nessuna verifica.")
+        print(
+            "::error::estimatedUsage ha risposto 200 con una lista VUOTA: "
+            "nessuna misura, quindi nessuna verifica."
+        )
         return 1
 
     sforati = []
@@ -43,18 +48,21 @@ def main(percorso_risposta: str) -> int:
             sforati.append(f"{misura} non e' stata restituita: il suo tetto non e' stato verificato.")
             continue
         osservato = base["osservato"].get(misura)
-        print(f"{misura}: {valore:.1f}  (tetto {tetto} — "
-              f"osservato il {base['misurato_il']}: {osservato})")
+        print(f"{misura}: {valore:.1f}  (tetto {tetto} — osservato il {base['misurato_il']}: {osservato})")
         if valore > tetto:
             sforati.append(f"{misura} = {valore:.1f}, sopra il tetto di {tetto}.")
 
     if sforati:
         for s in sforati:
             print(f"::error::{s}")
-        print("::error::Sono unita' di risorsa, non una fattura: molto sopra il tetto significa che "
-              "qualcosa consuma e non dovrebbe.")
-        print("::error::Se invece e' crescita legittima, si aggiorna docs/sorveglianza-baseline.json "
-              "DOPO aver guardato QUALE servizio e' cresciuto — non per far tornare verde il job.")
+        print(
+            "::error::Sono unita' di risorsa, non una fattura: molto sopra il tetto significa che "
+            "qualcosa consuma e non dovrebbe."
+        )
+        print(
+            "::error::Se invece e' crescita legittima, si aggiorna docs/sorveglianza-baseline.json "
+            "DOPO aver guardato QUALE servizio e' cresciuto — non per far tornare verde il job."
+        )
         return 1
 
     print("ok: consumo sotto i tetti dichiarati")

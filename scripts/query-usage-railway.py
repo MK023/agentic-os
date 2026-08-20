@@ -5,6 +5,7 @@ Esiste come file e non come heredoc dentro il workflow per una ragione pratica:
 un heredoc annidato dentro un blocco `run: |` rompe il parsing YAML, e la logica
 in un file si prova in locale senza doverla estrarre dal workflow.
 """
+
 import json
 import sys
 

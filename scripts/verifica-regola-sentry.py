@@ -9,6 +9,7 @@ solo sulle transizioni di priorita': quattro eventi, una notifica. La correzione
 20/08 e' `every_event` accanto alle altre due condizioni, piu' il throttle a 60
 minuti, la stessa finestra su cui throttla l'applicazione.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -25,9 +26,11 @@ def main(percorso_risposta: str) -> int:
     if w is None:
         visti = [str(x.get("id")) for x in workflows]
         print(f"::error::nessun workflow Sentry con id {wid}.")
-        print(f"::error::Trovati invece: {visti}. Se la regola e' stata ricreata ha un id nuovo: "
-              "aggiornare docs/sorveglianza-baseline.json DOPO aver verificato che sia ancora giusta, "
-              "non per far tornare verde questo job.")
+        print(
+            f"::error::Trovati invece: {visti}. Se la regola e' stata ricreata ha un id nuovo: "
+            "aggiornare docs/sorveglianza-baseline.json DOPO aver verificato che sia ancora giusta, "
+            "non per far tornare verde questo job."
+        )
         return 1
 
     problemi = []
@@ -56,8 +59,9 @@ def main(percorso_risposta: str) -> int:
 
     azioni = [a.get("type") for f in (w.get("actionFilters") or []) for a in f.get("actions", [])]
     if not azioni:
-        problemi.append("nessuna AZIONE configurata: la regola valuta le condizioni "
-                        "e non consegna niente a nessuno.")
+        problemi.append(
+            "nessuna AZIONE configurata: la regola valuta le condizioni e non consegna niente a nessuno."
+        )
 
     if problemi:
         for p in problemi:
