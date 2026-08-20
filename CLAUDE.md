@@ -134,7 +134,10 @@ those files are correct in both places. Never fork a config to "fix it for local
   **Since 2026-08-19 that gap costs money, not just CPU**: the project is on Railway's
   Hobby plan, billed on usage. **Railway's schema DOES expose a per-service cap**
   (`deploy.limitOverride`), contrary to what this line said on 2026-08-19 — it is
-  undocumented in config-as-code, unmeasured on Hobby, and undeclared here.
+  undocumented in config-as-code and undeclared here, and since 2026-08-20 it is also
+  **known not to be a cost lever**: `status-api` peaks at 0.0094 vCPU and 87 MB, and
+  Railway bills consumption rather than provisioned capacity, so a cap above real usage
+  changes the bill by nothing. It is a runaway guard. Details in `docs/DECISIONS.md`.
   **Since 2026-08-20 there are two further backstops, and neither is a rate limiter**:
   the workspace usage limit ($15 soft / $30 hard, set by the operator — no tool here can
   read it back) and a WAF custom rule on `otel.` that blocks everything except
