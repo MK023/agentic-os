@@ -1,0 +1,107 @@
+name: telemetry-baseline
+
+# L'unico controllo di questo repository che non aveva un innesco.
+#
+# La telemetria di Claude Code e' beta e versionata, e l'allow-list delle label
+# protegge per default: una label nuova viene scartata, non esportata. Il guasto
+# che nessun gate vede e' l'opposto — una label RINOMINATA. Se `session.id`
+# cambiasse nome, le sessioni concorrenti collasserebbero in una serie sola e i
+# tre numeri pubblici leggerebbero semplicemente PIU' BASSI, senza nessun errore
+# da nessuna parte. E' il guasto silenzioso che questo progetto continua a
+# togliere di mezzo.
+#
+# Il dry run che lo intercetta esiste, e' scritto, funziona e costa cinque minuti
+# (docs/LOCAL_DRY_RUN.md). Fino a oggi si rieseguiva se qualcuno se lo ricordava.
+# Le opzioni scritte in docs/BLOCKERS.md erano tre; questa non era fra loro ed e'
+# la piu' economica delle quattro: non tocca la telemetria, non aggiunge nessuna
+# label (che sarebbe una decisione, non un'aggiunta) e non ha bisogno di nessun
+# segreto. Chiede al registry npm che versione ha il client e la confronta con
+# quella su cui il dry run e' stato eseguito l'ultima volta.
+#
+# MINOR, non patch, e non e' pigrizia: il dry run del 16/08 girava su v2.1.227,
+# sette patch dopo la v2.1.220 su cui le label erano state misurate la prima
+# volta, e non si era mosso niente. Diventare rossi a ogni patch e' il modo piu'
+# rapido di insegnare a ignorare questo workflow.
+on:
+  schedule:
+    # Settimanale. La cadenza chiesta non e' quella garantita (GitHub strozza i
+    # cron sui repo pubblici, misurato su smoke.yml), ma qui non importa: la
+    # domanda e' "e' uscita una minor nuova?", che non scade in un'ora.
+    - cron: "17 6 * * 1"
+  # Sul PR che tocca il verbale o questo workflow, cosi' un file rotto si vede
+  # subito e non il lunedi' dopo.
+  pull_request:
+    paths:
+      - docs/telemetry-baseline.json
+      - .github/workflows/telemetry-baseline.yml
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: telemetry-baseline
+  cancel-in-progress: false
+
+jobs:
+  minor-del-client:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Nessun push dalla CI: lasciare il token in .git/config allarga solo
+          # il raggio di un eventuale compromesso di uno step successivo.
+          persist-credentials: false
+
+      - name: la minor di Claude Code e' ancora quella dell'ultimo dry run
+        run: |
+          set -euo pipefail
+
+          # --retry copre il blip di rete. Se dopo i tentativi il registry non
+          # risponde, questo job diventa ROSSO e dice perche': un controllo che
+          # non ha potuto controllare non deve essere verde. E' la stessa regola
+          # per cui in questo repository un gate senza credenziale resta rosso
+          # invece di saltare.
+          if ! curl -sS --fail --retry 3 --retry-delay 5 --retry-all-errors \
+               --max-time 30 -o "$RUNNER_TEMP/latest.json" \
+               "https://registry.npmjs.org/${PACCHETTO}/latest"; then
+            echo "::error::registry npm irraggiungibile dopo tre tentativi: questo run NON ha verificato niente. Non e' un cambio di versione, e non va letto come tale."
+            exit 1
+          fi
+        env:
+          PACCHETTO: "@anthropic-ai/claude-code"
+
+      - name: confronta con il verbale del dry run
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+
+          verbale = json.loads(pathlib.Path("docs/telemetry-baseline.json").read_text())
+          # Un verbale malformato deve fallire QUI, non trasformarsi in un
+          # confronto che passa per caso.
+          for chiave in ("pacchetto", "versione", "dry_run"):
+              if not isinstance(verbale.get(chiave), str) or not verbale[chiave]:
+                  print(f"::error::docs/telemetry-baseline.json non dichiara {chiave!r}: senza il verbale non c'e' niente da confrontare.")
+                  sys.exit(1)
+
+          corrente = json.loads(pathlib.Path(os.environ["RUNNER_TEMP"], "latest.json").read_text())["version"]
+          misurata = verbale["versione"]
+
+          def minor(v):
+              pezzi = v.split(".")
+              if len(pezzi) < 2 or not all(p.isdigit() for p in pezzi[:2]):
+                  print(f"::error::versione non semver: {v!r}")
+                  sys.exit(1)
+              return (int(pezzi[0]), int(pezzi[1]))
+
+          if minor(corrente) == minor(misurata):
+              print(f"ok: il client e' {corrente}, il dry run girava su {misurata} ({verbale['dry_run']}). Stessa minor, nessuna azione.")
+              sys.exit(0)
+
+          print(f"::error::Claude Code e' passato a {corrente}; l'ultimo dry run sulle label e' del {verbale['dry_run']} su {misurata}.")
+          print("::error::Rieseguire docs/LOCAL_DRY_RUN.md (cinque minuti). La prova che conta e' DUE sessioni headless con due session_id DISTINTI: una label rinominata non produce nessun errore, fa solo leggere piu' bassi i tre numeri pubblici.")
+          print("::error::Poi aggiornare docs/telemetry-baseline.json con la versione appena misurata e la data. Il file e' il verbale della misura: si aggiorna DOPO averla fatta, mai per far tornare verde questo job.")
+          sys.exit(1)
+          PY

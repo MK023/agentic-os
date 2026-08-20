@@ -15,9 +15,12 @@ thing nobody downstream can fix, and a handful of judgement calls.
 
 The names are measured, not assumed — but this telemetry is beta and versioned. If a
 panel goes empty after a Claude Code upgrade, that is the first thing to check, and
-`LOCAL_DRY_RUN.md` is how to check it in five minutes. The same dry run is also the
-only check the label allow-list gets against a *new* client version: no CI gate sees
-what a future release starts sending.
+`LOCAL_DRY_RUN.md` is how to check it in five minutes. The same dry run is still the
+only check the label allow-list gets against a *new* client version — **no CI gate
+sees what a future release starts sending**, and since 2026-08-20 one gate
+(`telemetry-baseline.yml`) does see *that* a new minor was released, which is a
+reminder rather than a measurement. The difference matters: it can tell you to look,
+it cannot look for you.
 
 **Re-run 2026-08-16 against v2.1.227**, seven patch releases after the v2.1.220 the
 names and labels were first measured on. Nothing moved: same four metric names, the
@@ -253,6 +256,14 @@ had already been decided and shipped.
   is more than a healthcheck does — Railway stops probing once a deploy is promoted. If
   any of them ever gets a path, `PORT` goes first.
 
-- **The dry run in `LOCAL_DRY_RUN.md` has no trigger.** Section 1 explains what it
-  covers; what it lacks is anything that makes it happen. It runs when somebody
-  remembers, and this repository has already written down that a comment is not a gate.
+- ~~The dry run in `LOCAL_DRY_RUN.md` has no trigger.~~ **It has one since
+  2026-08-20**: `telemetry-baseline.yml` asks the npm registry weekly what version
+  `@anthropic-ai/claude-code` is on and compares its **minor** against
+  `docs/telemetry-baseline.json`, the record of the run that last measured the labels.
+  A new minor turns the run red with instructions; patches do not, because seven of
+  them moved nothing between v2.1.220 and v2.1.227. **Read what this gate is
+  carefully**: it does not see what a new release sends — no CI gate here can, that
+  still takes the five-minute dry run on a laptop with the real client. It sees only
+  that a release happened, which is the part that used to depend on somebody
+  remembering. The baseline file is the record of a measurement: it gets updated after
+  the dry run, never to turn the job green.
