@@ -547,3 +547,256 @@ jobs:
 
           print(f"retention allineata nei tre posti: {prod}")
           PY
+
+      # Stessa famiglia del gate qui sopra, ma le meta' sono TRE, e questo gate e'
+      # nato sbagliando proprio quello: scritto per confrontare Dockerfile e compose,
+      # ignorava il pannello Grafana — che nello stesso commit era rimasto a 300MB ed
+      # e' l'unica cosa che GUARDA questo guasto. Un cap di retention vive in
+      # railway/prometheus/Dockerfile (produzione), docker/docker-compose.yml (locale)
+      # e nelle soglie del pannello "Blocchi TSDB su disco". Il compose prometteva a
+      # parole di essere allineato alla produzione: vero quando scritto, e non
+      # dipendeva da niente per restare vero. Un commento non e' un gate.
+      #
+      # Il pannello sarebbe andato in rosso PERMANENTE dal sesto giorno su un hub
+      # sano — cioe' il modo piu' efficace di insegnare a ignorarlo.
+      # Un COPY che non compare nei watchPatterns del suo railway.json significa che
+      # Railway NON ricostruisce quel servizio quando quel file cambia: la modifica
+      # entra in main verde e la produzione resta indietro, in silenzio.
+      #
+      # NON e' il guasto del 13-08-2026, e vale la pena non spacciarlo per tale: li'
+      # la causa fu una build cancellata da un push successivo il cui commit mancava
+      # i watchPatterns di quel servizio — accoppiamento fra scope del COMMIT e
+      # watchPatterns, non fra COPY e watchPatterns. E' un buco vicino, e vero, ma un
+      # altro. Questo gate chiude questo.
+      - name: ogni COPY e' coperto dai watchPatterns del suo servizio
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, re, sys
+
+          # Railway documenta i watch paths come "gitignore-style patterns". fnmatch
+          # NON lo e', e sbaglia tre volte tutte in direzione "approva": il suo `*`
+          # attraversa `/`, ignora la negazione `!`, e non riconosce la forma
+          # radicata `/src/**` che la doc del vendor usa negli esempi (la darebbe per
+          # non corrispondente, rendendo ROSSO un config corretto). Qui si traduce a
+          # mano, e cio' che non si sa tradurre si RIFIUTA invece di indovinarlo.
+          def regex(pattern: str) -> re.Pattern:
+              if pattern.startswith("!"):
+                  sys.exit(f"::error::watchPattern {pattern!r}: la negazione non e' modellata "
+                           "da questo gate, che leggerebbe la copertura al contrario. "
+                           "Il gate si ferma invece di approvare.")
+              corpo = pattern.lstrip("/")
+              if corpo.endswith("/"):
+                  corpo += "**"
+              pezzi, i = [], 0
+              while i < len(corpo):
+                  if corpo.startswith("**/", i):
+                      pezzi.append("(?:.*/)?"); i += 3
+                  elif corpo.startswith("**", i):
+                      pezzi.append(".*"); i += 2
+                  elif corpo[i] == "*":
+                      pezzi.append("[^/]*"); i += 1
+                  elif corpo[i] == "?":
+                      pezzi.append("[^/]"); i += 1
+                  else:
+                      pezzi.append(re.escape(corpo[i])); i += 1
+              # Una regola che corrisponde a una directory copre il suo contenuto.
+              return re.compile("^" + "".join(pezzi) + "(?:/.*)?$")
+
+          def coperto(percorso, patterns):
+              return any(regex(p).match(percorso) for p in patterns)
+
+          def sorgenti_copy(testo: str) -> list[str]:
+              # I flag vanno tolti PRIMA, non esclusi con un lookahead: `\s+` non
+              # torna indietro, quindi `COPY --chown=... src dst` non corrispondeva
+              # affatto e il file spariva dal gate. Stessa cosa per --link, --parents,
+              # --exclude. E le sorgenti sono tutte tranne l'ultima: `COPY a.py b.py
+              # ./` ne controllava solo una.
+              trovate = []
+              for riga in testo.splitlines():
+                  m = re.match(r"^\s*(COPY|ADD)\s+(.*)$", riga, re.IGNORECASE)
+                  if not m:
+                      continue
+                  resto = m.group(2)
+                  flag = re.findall(r"(--\S+)", resto)
+                  if any(f.startswith("--from=") for f in flag):
+                      continue  # sorgente in un'altra stage, non un file del repo
+                  resto = re.sub(r"--\S+\s*", "", resto).strip()
+                  pezzi = resto.split()
+                  if len(pezzi) >= 2:
+                      trovate.extend(pezzi[:-1])
+              return trovate
+
+          servizi = sorted(pathlib.Path("railway").glob("*/railway.json"))
+          if not servizi:
+              sys.exit("::error::nessun railway.json trovato: gate che passerebbe sempre")
+
+          problemi = []
+          for config in servizi:
+              dati = json.loads(config.read_text()).get("build", {})
+              patterns = dati.get("watchPatterns", [])
+              if not patterns:
+                  problemi.append(f"{config.parent.name}: nessun watchPattern")
+                  continue
+
+              # Validati TUTTI e subito, non durante il confronto: `any()` va in corto
+              # circuito sul primo pattern che corrisponde, quindi un `!docker/**`
+              # messo dopo un `**` non veniva mai nemmeno compilato e il rifiuto non
+              # scattava. Il gate approvava esattamente il caso che dice di rifiutare.
+              for pattern in patterns:
+                  regex(pattern)
+
+              percorso_dockerfile = dati.get("dockerfilePath")
+              if percorso_dockerfile:
+                  dockerfile, contesto = pathlib.Path(percorso_dockerfile), pathlib.Path(".")
+              else:
+                  radice = patterns[0].split("*")[0].rstrip("/")
+                  dockerfile, contesto = pathlib.Path(radice) / "Dockerfile", pathlib.Path(radice)
+
+              if not dockerfile.exists():
+                  problemi.append(f"{config.parent.name}: {dockerfile} non esiste")
+                  continue
+
+              for sorgente in sorgenti_copy(dockerfile.read_text()):
+                  percorso = sorgente if str(contesto) == "." else str(contesto / sorgente)
+                  # Se la sorgente e' una directory, cio' che cambia sono i file
+                  # DENTRO: si prova un discendente, non la directory stessa.
+                  da_provare = percorso + "/__sonda__" if pathlib.Path(percorso).is_dir() else percorso
+                  if not coperto(da_provare, patterns):
+                      problemi.append(f"{config.parent.name}: COPY {sorgente} -> {da_provare} "
+                                      f"non coperto da {patterns}")
+              if not coperto(str(dockerfile), patterns):
+                  problemi.append(f"{config.parent.name}: {dockerfile} non e' coperto da {patterns}")
+
+          if problemi:
+              print("::error::un COPY non sorvegliato significa che Railway NON ricostruisce "
+                    "il servizio quando quel file cambia: la modifica entra in main verde e la "
+                    "produzione resta indietro.")
+              for problema in problemi:
+                  print(f"::error::{problema}")
+              sys.exit(1)
+          print(f"watchPatterns coerenti con i COPY per {len(servizi)} servizi")
+          PY
+
+      # Checkov copre i Dockerfile (CKV_DOCKER_7 sul pinning) e i workflow, ma NON
+      # docker/docker-compose.yml: `docker_compose` non e' un framework che Checkov
+      # abbia — l'elenco valido va da `ansible` a `terraform` e non lo contiene — e
+      # scripts/check-image-users.sh legge solo `USER`, mai `FROM`. La regola "ogni
+      # immagine pinnata, mai :latest" era quindi applicata ai Dockerfile e a NIENTE
+      # per il compose.
+      - name: le immagini del compose sono pinnate e non divergono dai Dockerfile
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          def riferimento(grezzo: str) -> tuple[str, str]:
+              """(nome, tag) da un riferimento immagine. Solleva se non e' pinnato.
+
+              Le virgolette si tolgono: `image: 'prom/prometheus:latest'` e' YAML
+              legale — ed e' cio' che un autoformattatore produce — e la versione
+              precedente di questo gate leggeva il tag come `latest'`, che non e'
+              uguale a `latest`, quindi lo APPROVAVA. Il tag si separa dall'ultimo
+              segmento del path e non dal primo `:` incontrato, altrimenti la porta
+              di un registry (`registry.local:5000/prom/prometheus`) veniva scambiata
+              per un tag e un'immagine senza versione passava per pinnata.
+              """
+              pulito = grezzo.strip().strip("\"'")
+              if "@" in pulito:  # digest: pinnato per definizione, e piu' forte di un tag
+                  return pulito.split("@", 1)[0], pulito.split("@", 1)[1]
+              testa, _, coda = pulito.rpartition("/")
+              nome_corto, sep, tag = coda.partition(":")
+              if not sep or not tag:
+                  raise ValueError(f"{pulito} non e' pinnata a una versione")
+              if tag == "latest":
+                  raise ValueError(f"{pulito} usa il tag mobile :latest")
+              return (f"{testa}/{nome_corto}" if testa else nome_corto), tag
+
+          compose = pathlib.Path("docker/docker-compose.yml").read_text()
+          grezze = re.findall(r"^\s*image:\s*(\S+)", compose, re.MULTILINE)
+          if not grezze:
+              sys.exit("::error::nessuna `image:` nel compose: gate che passerebbe sempre")
+
+          da_compose = {}
+          for grezzo in grezze:
+              try:
+                  nome, tag = riferimento(grezzo)
+              except ValueError as errore:
+                  sys.exit(f"::error::{errore}")
+              da_compose[nome] = tag
+
+          dockerfiles = sorted(pathlib.Path("railway").glob("*/Dockerfile"))
+          if not dockerfiles:
+              sys.exit("::error::nessun Dockerfile sotto railway/: gate che passerebbe sempre")
+
+          non_confrontati = []
+          for dockerfile in dockerfiles:
+              basi = re.findall(r"^FROM\s+(?:--\S+\s+)*(\S+)", dockerfile.read_text(), re.MULTILINE)
+              if not basi:
+                  sys.exit(f"::error::{dockerfile} non ha un FROM leggibile")
+              # L'ULTIMO FROM e' l'immagine finale: su un multi-stage il primo e' il
+              # builder, e confrontare quello direbbe la cosa sbagliata.
+              try:
+                  nome, tag = riferimento(basi[-1])
+              except ValueError as errore:
+                  sys.exit(f"::error::{dockerfile}: {errore}")
+              if nome not in da_compose:
+                  non_confrontati.append(f"{dockerfile} usa {nome}, che il compose non nomina")
+              elif da_compose[nome] != tag:
+                  sys.exit(f"::error::{nome}: il compose dice {da_compose[nome]}, {dockerfile} "
+                           f"dice {tag}. Locale e produzione divergono.")
+
+          # Senza questo, rinominare o togliere un'immagine dal compose rendeva il
+          # confronto un no-op silenzioso: il gate passava senza aver confrontato
+          # niente. Vale la stessa regola del pavimento sul gate di mutation.
+          if non_confrontati:
+              print("::error::un'immagine di produzione non confrontata con il compose significa "
+                    "che locale e produzione possono divergere senza che nulla lo veda.")
+              for problema in non_confrontati:
+                  print(f"::error::{problema}")
+              sys.exit(1)
+
+          print(f"immagini pinnate e allineate: {sorted(da_compose)}")
+          PY
+      - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+
+          def flag(percorso, chiave):
+              # Solo righe non commentate: un `# - --storage...=3GB` lasciato sopra a
+              # un flag cambiato verrebbe letto come se fosse quello attivo, e il gate
+              # passerebbe su una divergenza vera.
+              for riga in open(percorso):
+                  if riga.lstrip().startswith("#"):
+                      continue
+                  trovato = re.search(rf"--storage\.tsdb\.retention\.{chiave}=([^\"'\s\\]+)", riga)
+                  if trovato:
+                      return trovato.group(1)
+              sys.exit(f"::error::{percorso} non dichiara --storage.tsdb.retention.{chiave}")
+
+          prod = {c: flag("railway/prometheus/Dockerfile", c) for c in ("time", "size")}
+          locale = {c: flag("docker/docker-compose.yml", c) for c in ("time", "size")}
+          if prod != locale:
+              sys.exit(f"::error::retention divergente. Produzione: {prod} — locale: {locale}. "
+                       "I due file sono due meta' della stessa decisione: si cambiano insieme.")
+
+          # `3GB` per Prometheus e' powers-of-2 ("Based on powers-of-2, so 1KB is 1024B").
+          unita = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+          numero, simbolo = re.fullmatch(r"([0-9.]+)([KMGT]B)", prod["size"]).groups()
+          cap = float(numero) * unita[simbolo]
+
+          dash = json.load(open("docker/grafana/dashboards/claude-code.json"))
+          pannello = next(p for p in dash["panels"] if p["title"].startswith("Blocchi TSDB"))
+          passi = pannello["fieldConfig"]["defaults"]["thresholds"]["steps"]
+          atteso = {"giallo": round(cap * 0.80), "rosso": round(cap * 0.95)}
+          trovato = {"giallo": passi[1]["value"], "rosso": passi[2]["value"]}
+          if atteso != trovato:
+              sys.exit(f"::error::le soglie del pannello non sono ancorate al cap {prod['size']}. "
+                       f"Attese {atteso}, trovate {trovato}: il pannello che sorveglia il disco "
+                       "andrebbe in rosso su un hub sano, ed e' cosi' che si insegna a ignorarlo.")
+          if prod["size"] not in pannello["title"]:
+              sys.exit(f"::error::il titolo del pannello non dice {prod['size']}: {pannello['title']!r}")
+
+          print(f"retention allineata nei tre posti: {prod}")
+          PY
