@@ -1,10 +1,24 @@
 {
   "uid": "claude-code-live",
-  "title": "Claude Code — Live Usage",
+  "title": "Agentic OS — salute hub e uso Claude Code",
   "timezone": "browser",
   "schemaVersion": 39,
-  "refresh": "10s",
+  "refresh": "1m",
   "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Salute hub — sta girando tutto?",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "description": "Si legge per prima perche' e' la domanda che si fa per prima: se qui qualcosa e' rosso, i numeri della riga sotto sono sbagliati e non solo bassi."
+    },
     {
       "id": 7,
       "title": "Target su/giù",
@@ -12,15 +26,16 @@
       "description": "`up` lo genera Prometheus per ogni target configurato, quindi vale 0 quando il target è morto invece di sparire: è la differenza fra un pannello che diventa rosso e uno che si appiattisce. Un rate() su un servizio morto è indistinguibile da 'nessuno sta lavorando'. «nessun dato» su TUTTI i riquadri significa che è caduto Prometheus stesso, che non può misurarsi da morto: quel caso lo coprono il watchdog Sentry e smoke.yml, non questa dashboard.",
       "gridPos": {
         "h": 4,
-        "w": 8,
+        "w": 6,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
           "expr": "up",
           "refId": "A",
-          "legendFormat": "{{job}}"
+          "legendFormat": "{{job}}",
+          "instant": true
         }
       ],
       "options": {
@@ -79,14 +94,15 @@
       "description": "La metrica che avrebbe visto il guasto del 13/08: il volume si era riempito e la compaction falliva una volta al minuto per ore, mentre le tre cifre pubbliche restavano giuste e in movimento perché il head sta in RAM. Da fuori non si vedeva niente. Qualunque valore diverso da zero è rosso: qui non esiste un tasso di fallimento accettabile.",
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 8,
-        "y": 0
+        "w": 6,
+        "x": 6,
+        "y": 1
       },
       "targets": [
         {
           "expr": "increase(prometheus_tsdb_compactions_failed_total[1h])",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "options": {
@@ -128,14 +144,15 @@
       "description": "Soglie ancorate a --storage.tsdb.retention.size=3GB: giallo a 2.4GiB (80%), rosso a 2.85GiB (95%). `3GB` in Prometheus e' powers-of-2, quindi 3 GiB. Non misura il volume e nemmeno cio' che la retention conta: questa metrica sono i SOLI blocchi, mentre retention.size conta anche WAL e m-mapped chunks (\"WAL and m-mapped chunks are counted in the total size\"). Quindi questo numero e' piu' BASSO di quello su cui scatta la retention, e il cap vero arriva prima di quanto il pannello lasci credere. Serve a vedere la salita prima che diventi il guasto, non a certificare lo spazio.",
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 0
+        "w": 6,
+        "x": 12,
+        "y": 1
       },
       "targets": [
         {
           "expr": "prometheus_tsdb_storage_blocks_bytes",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "options": {
@@ -181,14 +198,15 @@
       "description": "Da quanti giorni indietro arriva il campione piu' vecchio ancora nel TSDB. Esiste perche' il troncamento e' l'unico guasto di questa componente che non fa rumore: quando la retention per DIMENSIONE scatta prima di quella per tempo, Prometheus cancella i blocchi piu' vecchi e continua a rispondere correttamente a tutto — la finestra si accorcia e nessun pannello lo dice. Con 30d/3GB e la crescita misurata (~50 MB/giorno) deve vincere il TEMPO, quindi questo numero dovrebbe restare intorno a 30. NESSUNA soglia rossa di proposito: dopo un azzeramento del volume questo valore e' legittimamente piccolo per settimane, e un pannello rosso per settimane su un hub sano e' il modo piu' efficace di insegnare a ignorarlo.",
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 4
+        "w": 6,
+        "x": 18,
+        "y": 1
       },
       "targets": [
         {
           "expr": "(time() - prometheus_tsdb_lowest_timestamp_seconds) / 86400",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "options": {
@@ -221,84 +239,15 @@
       }
     },
     {
-      "id": 1,
-      "title": "Sessions (ultime ~25h)",
-      "type": "stat",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 4
-      },
-      "targets": [
-        {
-          "expr": "sum(max_over_time(claude_code_session_count[25h]))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "title": "Tokens in/out (rate, 5m)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 4
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(claude_code_token_usage[5m])) by (type)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "title": "Cost USD (ultime ~25h)",
-      "description": "Calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py.",
-      "type": "stat",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 12
-      },
-      "targets": [
-        {
-          "expr": "((sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"}[25h])) or vector(0)) * 10 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"}[25h])) or vector(0)) * 50 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 20 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 1 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"}[25h])) or vector(0)) * 5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"}[25h])) or vector(0)) * 25 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 10 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"}[25h])) or vector(0)) * 3 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"}[25h])) or vector(0)) * 15 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 6 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.3 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"}[25h])) or vector(0)) * 1 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"}[25h])) or vector(0)) * 5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"}[25h])) or vector(0)) * 2 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.1) / 1e6",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "title": "Cache hit rate (ultime ~25h)",
-      "type": "stat",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
-      "targets": [
-        {
-          "expr": "sum(max_over_time(claude_code_token_usage{type=\"cacheRead\"}[25h])) / sum(max_over_time(claude_code_token_usage[25h]))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
       "id": 5,
       "title": "Payload in arrivo al Collector (rate, 5m)",
       "description": "Il pannello da guardare quando gli altri sembrano fermi. Conta i payload che ENTRANO nel Collector, non il loro contenuto: sopra zero qualcuno sta parlando, a zero non parla nessuno. Senza questo, 'un client ha smesso di esportare' e 'Marco ha smesso di lavorare' danno lo stesso segnale — una serie piatta — perche' i pannelli guardano indietro 25h con max_over_time e in entrambi i casi continuano a mostrare l'ultimo totale. Diagnosticato male tre volte prima di avere questa serie.",
       "type": "timeseries",
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 5
       },
       "targets": [
         {
@@ -312,6 +261,92 @@
       ]
     },
     {
+      "id": 101,
+      "type": "row",
+      "title": "Uso Claude Code — quanto ho consumato",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "description": "Gli stessi tre numeri che l'endpoint pubblico espone, piu' il dettaglio che resta privato. La finestra ~25h e' CABLATA nelle query e non dipende dall'intervallo scelto in alto: questi pannelli sono istantanei."
+    },
+    {
+      "id": 1,
+      "title": "Sessions (ultime ~25h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "sum(max_over_time(claude_code_session_count[25h]))",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Cost USD (ultime ~25h)",
+      "description": "Calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py.",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "((sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"input\"}[25h])) or vector(0)) * 10 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"output\"}[25h])) or vector(0)) * 50 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 20 + (sum(max_over_time(claude_code_token_usage{model=\"claude-fable-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 1 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"input\"}[25h])) or vector(0)) * 5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"output\"}[25h])) or vector(0)) * 25 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 10 + (sum(max_over_time(claude_code_token_usage{model=\"claude-opus-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"input\"}[25h])) or vector(0)) * 3 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"output\"}[25h])) or vector(0)) * 15 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheCreation\"}[25h])) or vector(0)) * 6 + (sum(max_over_time(claude_code_token_usage{model=\"claude-sonnet-5\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.3 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"input\"}[25h])) or vector(0)) * 1 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"output\"}[25h])) or vector(0)) * 5 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheCreation\"}[25h])) or vector(0)) * 2 + (sum(max_over_time(claude_code_token_usage{model=\"claude-haiku-4-5-20251001\",type=\"cacheRead\"}[25h])) or vector(0)) * 0.1) / 1e6",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Cache hit rate (ultime ~25h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "sum(max_over_time(claude_code_token_usage{type=\"cacheRead\"}[25h])) / sum(max_over_time(claude_code_token_usage[25h]))",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Tokens in/out (rate, 5m)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(claude_code_token_usage[5m])) by (type)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 6,
       "title": "Token e costo per sessione (top 10, ultime ~25h)",
       "description": "Token E costo sulla stessa riga, per sessione. Il costo e' calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py. Le due query usano lo STESSO topk(10): con finestre diverse il merge produrrebbe righe con i token e il costo vuoto, che si leggono come una sessione gratis.",
@@ -320,7 +355,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 24
       },
       "targets": [
         {
@@ -405,5 +440,9 @@
       }
     }
   ],
-  "description": "Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il totale di ogni serie invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra la da' la query — max_over_time(...[25h]) — e NON piu' il metric_expiration del Collector, che e' tornato al default di 5m: su un contatore che solo cresce, il massimo nella finestra E' il valore finale, quindi i totali sopravvivono a un riavvio del Collector. Prima non sopravvivevano: le sessioni gia' chiuse sparivano da /metrics e 3 sessioni si leggevano come 1 (misurato il 14-08-2026). Query e metric_expiration sono UN cambiamento solo, mai due: rialzare l'expiration a 25h sotto una finestra di 25h fa contare ogni sessione per ~50h. Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori — e quando la serie smette di essere esposta, 5 minuti dopo l'ultimo export, rate() non ha piu' campioni nella finestra e il pannello resta senza dati invece di disegnare uno zero piatto. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare."
+  "description": "DUE MESTIERI, DUE RIGHE. Sopra la salute dell'hub, sotto l'uso di Claude Code: sono due domande, due letture, due cadenze, e fino al 20-08-2026 erano dieci pannelli in fila piatta con i due mestieri alternati e un titolo che ne nominava uno solo.\n\nL'INTERVALLO IN ALTO (now-6h) GOVERNA SOLO LE DUE TIMESERIES. Tutti gli stat sono `instant`: una valutazione sola invece di un range query di cui si tiene l'ultimo campione. Le finestre ~25h restano cablate nelle query, quindi cambiare l'intervallo in alto non cambia quei numeri — che e' esattamente cio' che si vuole, visto che sono gli stessi che l'API pubblica calcola con le stesse query. Prima c'erano due orologi per la stessa domanda; adesso uno solo, e dichiarato. Il refresh e' 1m e non 10s: sette pannelli su dieci leggevano max_over_time(...[25h]) e ricalcolarli ogni dieci secondi non cambiava il numero.\n\nPERCHE' max_over_time E NON increase(). Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il totale di ogni serie invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra la da' la query — max_over_time(...[25h]) — e NON piu' il metric_expiration del Collector, che e' tornato al default di 5m: su un contatore che solo cresce, il massimo nella finestra E' il valore finale, quindi i totali sopravvivono a un riavvio del Collector. Prima non sopravvivevano: le sessioni gia' chiuse sparivano da /metrics e 3 sessioni si leggevano come 1 (misurato il 14-08-2026). Query e metric_expiration sono UN cambiamento solo, mai due: rialzare l'expiration a 25h sotto una finestra di 25h fa contare ogni sessione per ~50h. Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori — e quando la serie smette di essere esposta, 5 minuti dopo l'ultimo export, rate() non ha piu' campioni nella finestra e il pannello resta senza dati invece di disegnare uno zero piatto. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare.",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  }
 }
