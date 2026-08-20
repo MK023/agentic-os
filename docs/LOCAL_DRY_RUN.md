@@ -137,6 +137,37 @@ and the datasource arrive by provisioning, nothing to import.
   as for per-request billing, Prometheus is not a good choice, as the collected data
   will likely not be detailed and complete enough."*
 
+- **The logs half was measured on 2026-08-20, against client 2.1.235, and it inverted
+  what the Phase 1.5 plan assumed.** Turning on `OTEL_LOGS_EXPORTER=otlp` — the variable
+  `docs/CLAUDE_CODE_TELEMETRY.md` deliberately leaves unset for the metrics-only phase —
+  and pointing a throwaway `logs` pipeline at the debug exporter produced **two disjoint
+  sets**:
+
+  - **Resource attributes: `host.arch`, `os.type`, `os.version`, `service.name`,
+    `service.version`.** No identity at all. The plan expected `user.email` here and was
+    wrong; the statement that keeps only `service.name` is still worth having, because
+    `OTEL_RESOURCE_ATTRIBUTES` is a documented injection point and the client's set is
+    not a contract.
+  - **Log record attributes: 64 keys across 10 events — and every one of them carries
+    `organization.id`, `user.email`, `user.id`, `user.account_id`, `user.account_uuid`.**
+    The vendor's own page marks these *always included*: no environment variable turns
+    them off. On the metrics side the same identity arrives as data point attributes and
+    the label allow-list drops it; on logs there is no second mechanism, so
+    `transform/log-allowlist` is the only thing standing between a real address and the
+    log store.
+
+  Content is the other half. `prompt` and `response` arrived `<REDACTED>`, which is the
+  **default**, not a guarantee: `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_ASSISTANT_RESPONSES`,
+  `OTEL_LOG_TOOL_DETAILS` and `OTEL_LOG_RAW_API_BODIES` each un-redact a different field,
+  and `OTEL_LOG_RAW_API_BODIES` ships whole request bodies. One exported variable in one
+  shell would put session content into Loki. The allow-list drops those keys by name so
+  that flipping a variable changes nothing here.
+
+  The tool events only appeared once a session actually **used** a tool: a
+  `claude -p "reply only: ok"` run emits no `tool_result`, so an allow-list written from
+  that run alone would have silently dropped the very thing this phase exists to answer.
+  Two parallel sessions produced two distinct `session.id` values, as on the metrics side.
+
 ## 5. Write down that you ran it
 
 The label half of this dry run is the only check that exists against a *new* Claude
