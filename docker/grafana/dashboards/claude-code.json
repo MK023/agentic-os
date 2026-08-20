@@ -295,7 +295,7 @@
     {
       "id": 3,
       "title": "Cost USD (ultime ~25h)",
-      "description": "Calcolato dai token per prezzo di listino, NON da claude_code_cost_usage{job=\"otel-collector\"}: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py.",
+      "description": "Calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py.",
       "type": "stat",
       "gridPos": {
         "h": 4,
@@ -349,7 +349,7 @@
     {
       "id": 6,
       "title": "Token e costo per sessione (top 10, ultime ~25h)",
-      "description": "Token E costo sulla stessa riga, per sessione. Il costo e' calcolato dai token per prezzo di listino, NON da claude_code_cost_usage{job=\"otel-collector\"}: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py. Le due query usano lo STESSO topk(10): con finestre diverse il merge produrrebbe righe con i token e il costo vuoto, che si leggono come una sessione gratis.",
+      "description": "Token E costo sulla stessa riga, per sessione. Il costo e' calcolato dai token per prezzo di listino, NON da claude_code_cost_usage: quella metrica e' la stima del client e sottostima (verificato il 30-07-2026). Le tariffe sono scritte a mano nella query, un blocco per modello, perche' PromQL non ha una tabella per modello; ogni sum() porta un `or vector(0)` perche' un modello mai visto renderebbe vuota l'INTERA espressione, non solo il suo termine. Un modello assente da questa query non viene contato qui (la status API lo prezza comunque, alla tariffa piu' cara nota, ed e' lei quella giusta in caso di disaccordo). Se i prezzi cambiano, o entra un modello nuovo, vanno aggiornati QUI e in PRICES_USD_PER_MTOK di main.py. Le due query usano lo STESSO topk(10): con finestre diverse il merge produrrebbe righe con i token e il costo vuoto, che si leggono come una sessione gratis.",
       "type": "table",
       "gridPos": {
         "h": 8,
