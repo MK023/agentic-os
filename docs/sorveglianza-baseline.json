@@ -1,0 +1,12 @@
+{
+  "_perche": "Tetti per la sonda sulla spesa Railway. NON sono un prezzo: sono quantita' di risorsa lette da estimatedUsage, con un margine largo. Railway non espone il limite di spesa in lettura e le unita' di queste misure non sono documentate, quindi convertirle in denaro richiederebbe di indovinare l'unita' E di replicare il prezzario in un quarto posto. Cio' che questa sonda intercetta e' la FUGA — un consumo che esplode — non la fattura.",
+  "workspace_id": "bacf99fb-34ee-4823-ac97-b1f3fc8ebf5b",
+  "misurato_il": "2026-08-20",
+  "osservato": { "CPU_USAGE": 248.3, "MEMORY_USAGE_GB": 12357.1 },
+  "_tetti": "circa 3x l'osservato: sotto e' rumore di crescita normale, sopra e' qualcosa che non dovrebbe girare",
+  "tetti": { "CPU_USAGE": 750, "MEMORY_USAGE_GB": 37000 },
+  "_sentry": "La regola d'allarme di agentic-os vive nel workflow Sentry qui sotto. NON si legge da /projects/.../rules/: quello e' una proiezione legacy che PERDE la condizione every_event (misurato il 20/08 — stessa regola, tre id diversi su tre viste, e /rules/ ne mostrava due condizioni su tre).",
+  "sentry_workflow_id": "727678",
+  "sentry_condizioni_attese": ["new_high_priority_issue", "existing_high_priority_issue", "every_event"],
+  "sentry_frequency_attesa": 60
+}

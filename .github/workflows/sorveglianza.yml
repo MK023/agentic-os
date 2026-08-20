@@ -78,3 +78,94 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           STATUS_API_TOKEN: ${{ secrets.STATUS_API_TOKEN }}
         run: bash scripts/verify-hub.sh "$GRAFANA_URL" "$STATUS_URL"
+
+  # ------------------------------------------------------------------------
+  # La seconda riga "nessuno" della tabella in SECURITY.md: la regola d'allarme
+  # Sentry. Il 13/08 un guasto e' rimasto invisibile SEI GIORNI perche' la regola
+  # scattava sulle transizioni di priorita': quattro eventi, una notifica. La
+  # correzione del 20/08 e' un trigger `every_event` accanto agli altri due, piu'
+  # il throttle a 60 minuti. Vive nella dashboard Sentry, fuori da git, e finora
+  # niente si sarebbe accorto se fosse sparita.
+  regola-sentry:
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # NON si legge da /projects/{org}/{proj}/rules/. Misurato il 20/08: Sentry e'
+      # migrata a detectors+workflows, e quell'endpoint e' una proiezione LEGACY che
+      # PERDE `every_event` — la stessa regola compariva con tre id diversi su tre
+      # viste, e su /rules/ aveva due condizioni invece di tre. Una sonda scritta li'
+      # sarebbe nata rossa su un allarme sano.
+      - name: la regola d'allarme ha ancora le tre condizioni e il throttle
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          # de.sentry.io, non sentry.io: l'organizzazione sta nella regione UE.
+          SENTRY_HOST: https://de.sentry.io
+          SENTRY_ORG: bellingeri
+        run: |
+          set -uo pipefail
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+            echo "::error::SENTRY_AUTH_TOKEN mancante. Questo job NON ha verificato niente."
+            echo "::error::Serve un token di INTERNAL INTEGRATION con Alerts:Read e Project:Read: un org auth token ha solo org:ci e prende 403 (misurato il 20/08)."
+            exit 1
+          fi
+          # Il token nel file di config di curl, non in argv: `ps` mostrerebbe la
+          # riga di comando a chiunque stia sullo stesso host.
+          umask 077
+          printf 'header = "Authorization: Bearer %s"\n' "$SENTRY_AUTH_TOKEN" > "$RUNNER_TEMP/sentry.curlrc"
+          codice=$(curl -sS -K "$RUNNER_TEMP/sentry.curlrc" --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
+            -o "$RUNNER_TEMP/wf.json" -w '%{http_code}' \
+            "${SENTRY_HOST}/api/0/organizations/${SENTRY_ORG}/workflows/")
+          rm -f "$RUNNER_TEMP/sentry.curlrc"
+          if [ "$codice" != "200" ]; then
+            echo "::error::Sentry ha risposto ${codice}: questo job NON ha verificato la regola, e non e' un allarme sparito."
+            exit 1
+          fi
+          python3 scripts/verifica-regola-sentry.py "$RUNNER_TEMP/wf.json"
+
+  # ------------------------------------------------------------------------
+  # La terza riga "nessuno": la spesa Railway. Il LIMITE di workspace ($15 soft /
+  # $30 hard) non e' leggibile — la collection GraphQL pubblica ha usageLimitSet e
+  # usageLimitRemove come mutation e nessuna query che lo rilegga. Il CONSUMO
+  # invece si legge, ed e' quello che questa sonda guarda.
+  #
+  # NON CALCOLA SOLDI, di proposito. L'enum MetricMeasurement non ha nessuna misura
+  # in denaro (verificato per introspezione: solo CPU, memoria, disco, rete), e le
+  # unita' di estimatedUsage non sono documentate: MEMORY_USAGE_GB diviso le ore di
+  # un mese darebbe ~$169 contro i ~5 euro della fattura vera. Convertire vorrebbe
+  # dire indovinare l'unita' E replicare il prezzario in un quarto posto. Cio' che
+  # questa sonda intercetta e' la FUGA — un processo che consuma e non dovrebbe —
+  # non la bolletta.
+  spesa-railway:
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: il consumo Railway resta sotto i tetti dichiarati
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::RAILWAY_TOKEN mancante. Questo job NON ha misurato niente, e non e' un consumo a posto."
+            exit 1
+          fi
+          workspace=$(python3 -c "import json;print(json.load(open('docs/sorveglianza-baseline.json'))['workspace_id'])")
+          umask 077
+          printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$RAILWAY_TOKEN" > "$RUNNER_TEMP/rw.curlrc"
+          python3 scripts/query-usage-railway.py "$workspace" > "$RUNNER_TEMP/query.json"
+          codice=$(curl -sS -K "$RUNNER_TEMP/rw.curlrc" --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
+            -X POST -d @"$RUNNER_TEMP/query.json" -o "$RUNNER_TEMP/usage.json" -w '%{http_code}' \
+            https://backboard.railway.com/graphql/v2)
+          rm -f "$RUNNER_TEMP/rw.curlrc" "$RUNNER_TEMP/query.json"
+          if [ "$codice" != "200" ]; then
+            echo "::error::Railway ha risposto ${codice}: questo job NON ha misurato niente."
+            exit 1
+          fi
+          python3 scripts/verifica-consumo-railway.py "$RUNNER_TEMP/usage.json"
