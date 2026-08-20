@@ -186,9 +186,13 @@ somebody remembered. So this is a reminder with a red light, not a gate on behav
 and the distinction is deliberate: a gate that claimed to verify the label set would
 be the exact kind of asserted-but-absent control this repository keeps removing.
 
-The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana behind
-Access and the status API's own bearer, and stays manual until its credentials
-exist as GitHub secrets.
+The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana behind Access
+and the status API's own bearer. Since 2026-08-20 `sorveglianza.yml` runs it daily
+instead of leaving it to memory — the same script the terminal runs, not a second copy,
+because a parallel road to the same question drifts in silence. It takes its token from
+the environment rather than from `argv`, where `ps` would show it. **If its secrets are
+missing the job is red and names them**, which is the same policy the rest of this
+section describes: a skipped required check reads as green.
 
 The reasoning behind each CI decision is in `docs/DECISIONS.md`.
 

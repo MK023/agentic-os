@@ -165,10 +165,16 @@ had already been decided and shipped.
 
 ## Still Marco's call
 
-- Whether to add `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` /
-  `STATUS_API_TOKEN` as GitHub secrets, which is what `verify-hub.sh` needs to run
-  in CI instead of by hand. It would extend the automatic check past the public
-  endpoint to Grafana behind Access and the status API's own bearer.
+- ~~Whether to add `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` /
+  `STATUS_API_TOKEN` as GitHub secrets.~~ **Decided 2026-08-20: yes**, together with a
+  Railway and a Sentry token. `sorveglianza.yml` is the workflow that uses the first
+  three — it runs `verify-hub.sh` daily, extending the automatic check past the public
+  endpoint to Grafana behind Access and the status API's own bearer. **Until the
+  secrets exist the job is red and says so**, naming the missing variable rather than
+  reporting an outage: a gate whose credential is missing stays red here, because a
+  skipped check reads as green. The Railway and Sentry probes follow once their tokens
+  exist — deliberately not written first, so each asserts the payload the vendor really
+  returns.
 - ~~Whether the hub stays past the first month.~~ **Decided 2026-08-16: it stays.**
   ~~The Railway plan changes on 2026-09-01.~~ **It changed on 2026-08-19** — twelve days
   early, and not by the calendar: the free plan had no volume left to give and the

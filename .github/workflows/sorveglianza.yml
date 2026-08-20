@@ -1,0 +1,80 @@
+name: sorveglianza
+
+# I controlli di questa produzione che NON vivono in git.
+#
+# `smoke.yml` copre cio' che non ha bisogno di segreti: l'endpoint pubblico,
+# l'autenticazione dell'ingest e la regola WAF davanti. Restava scoperto tutto
+# cio' che richiede una credenziale — e la conseguenza non era "meno copertura",
+# era che `SECURITY.md` elencava dei controlli con scritto "chi li riverifica:
+# nessuno". Un controllo che esiste ma che nessuno rilegge sparisce in silenzio,
+# e il documento continua ad affermarlo.
+#
+# Questo workflow chiude la prima di quelle righe. Gira una volta al giorno: la
+# domanda non e' "l'hub e' su adesso" — quella la fa smoke.yml ogni ora — ma
+# "Access e il bearer sono ancora al loro posto", che non cambia in un'ora.
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  # Nessun trigger su pull_request, e non e' una dimenticanza: i segreti non
+  # arrivano ai PR da fork, quindi il job sarebbe rosso per tutti tranne che per
+  # noi. Un rosso che dipende da chi apre la PR non e' un segnale.
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: sorveglianza
+  cancel-in-progress: false
+
+jobs:
+  hub-dietro-access:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    env:
+      # Hostname pubblici, non segreti: sono nel DNS e in docs/CLOUDFLARE_TUNNEL_SETUP.md.
+      GRAFANA_URL: https://grafana.marcobellingeri.dev
+      STATUS_URL: https://status.marcobellingeri.dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # PRIMA lo script, cosi' il fallimento NOMINA la causa. Senza questo step
+      # verify-hub.sh andrebbe comunque rosso — la status API risponderebbe con la
+      # sfida di Access — ma il messaggio direbbe "HTTP 403" e chi legge alle 3 di
+      # notte cercherebbe un guasto invece di una variabile mancante.
+      #
+      # Rosso e non `skip`: in questo repository un gate senza credenziale resta
+      # rosso, perche' un required check saltato si legge verde.
+      - name: i tre segreti esistono
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          STATUS_API_TOKEN: ${{ secrets.STATUS_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          mancanti=""
+          for nome in CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET STATUS_API_TOKEN; do
+            [ -n "${!nome:-}" ] || mancanti="${mancanti} ${nome}"
+          done
+          if [ -n "$mancanti" ]; then
+            echo "::error::segreti mancanti:${mancanti}. Questo job NON ha verificato niente — non e' un guasto dell'hub."
+            echo "::error::Si creano con: gh secret set <NOME> --repo MK023/agentic-os. I valori stanno nel Keychain, non qui."
+            exit 1
+          fi
+          echo "ok: i tre segreti sono presenti (i valori non vengono stampati)"
+
+      # Lo script e' lo stesso che si lancia a mano, non una copia: una seconda
+      # strada verso la stessa domanda diverge in silenzio, ed e' la ragione per
+      # cui la sonda del sito riusa il percorso del visitatore invece di
+      # riscriverlo.
+      #
+      # Il token va nell'AMBIENTE e non in argv: un segreto sulla riga di comando
+      # e' leggibile da `ps` per chiunque stia sullo stesso host.
+      - name: verify-hub.sh — Grafana dietro Access e il bearer della status API
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          STATUS_API_TOKEN: ${{ secrets.STATUS_API_TOKEN }}
+        run: bash scripts/verify-hub.sh "$GRAFANA_URL" "$STATUS_URL"
