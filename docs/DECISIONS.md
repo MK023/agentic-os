@@ -126,6 +126,37 @@ Declaring `limitOverride` on `status-api` — the one service reachable from the
 internet — is a cheap experiment, and it must be measured before this paragraph is
 rewritten again.
 
+**Measured 2026-08-20, and the measurement moved the question rather than answering
+it.** Railway's own metrics for `status-api` over 24 hours:
+
+| | average | peak |
+|---|---|---|
+| CPU | 0.0017 vCPU | **0.0094 vCPU** |
+| Memory | 0.065 GB | **0.087 GB** |
+
+And Railway bills *"per minute for what the service actually consumes"*, not for
+provisioned capacity — their own right-sizing guide, which also names the feature in
+the dashboard: **service settings → Deploy → Replica Limits**. Put those two facts
+together and **a per-service cap cannot lower this bill**. It is a runaway guard — it
+binds only if real consumption climbs, which is what a bug or a flood would do — and
+it is not a cost lever, because a cap above actual usage changes a
+consumption-metered bill by exactly nothing. That reframes the open item: the useful
+question was never *"does Hobby enforce `limitOverride`"* but *"would a cap change
+anything here"*, and the answer to the second is no while the service sits four
+orders of magnitude under the plan ceiling.
+
+**Two things stay genuinely unknown, and neither is worth a guess.** First, the plan
+limits Railway reports for this workspace carry `minReplicaCpuVCPU: 4` and
+`minReplicaMemoryGB: 4` beside a per-replica maximum of 8/8 — but the *measured*
+`CPU_LIMIT` for `status-api` ranged from **2 to 8 vCPU** over the same 24 hours, and
+`MEMORY_LIMIT_GB` from **1 to 8**. A limit observed at 2 is below a reported minimum
+of 4, so those fields do not mean "the floor you are allowed to set", or the metric
+does not mean what its name suggests. **Unresolved, and named as unresolved rather
+than resolved in whichever direction is convenient.** Second, nothing here has set an
+override, so enforcement is still untested — and setting one now would test a control
+that has already been shown unable to bind. The experiment got cheaper to *skip* than
+to run, which is a legitimate way for an open item to close.
+
 **The status-api → Prometheus hop is plain HTTP**, and this file had an entry for
 every other transport decision except that one. It crosses only Railway's private
 network, carries no credential (the queries are constant strings, Prometheus wants no
