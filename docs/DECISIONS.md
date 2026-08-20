@@ -584,6 +584,27 @@ installed again. The `rm -rf` of `ensurepip` is therefore part of the fix, not t
 — and its path is asked of the interpreter, because hard-coding `python3.14` would make
 the removal disappear silently at the next minor bump with nothing turning red.
 
+**`--web.cors.origin` passa da `.*` a `^$`, ed è l'unica famiglia di `--web.*` che il
+gate lascia entrare.** The default is not a vendor oversight: Prometheus expects to sit
+behind a proxy that decides origins for it. Nothing sits in front of this one. Measured
+2026-08-20 against the shipped image: `Origin: https://evil.example` comes back as
+`Access-Control-Allow-Origin: https://evil.example`, so any page open in a browser that
+can reach the port reads the whole TSDB in JavaScript — thirty days of a behavioural
+profile, which `SECURITY.md` names as the sensitive content of that volume. On Railway's
+private network the radius is small; locally, where the real data lives, the port is on
+the host.
+
+`^$` matches no origin: server-to-server queries keep working (Grafana and the status
+API send no `Origin` — verified, `200` either way), a third-party browser stops. The
+three write surfaces were re-verified the same day and were already off: `admin-api`,
+`lifecycle`, `remote-write-receiver` all `false`.
+
+The gate `prometheus non accende endpoint che non sa autenticare` rejected this flag,
+which is exactly what it is for. Rather than weakening it, it now carries a short
+allow-list of flags that **narrow** surface instead of adding it, and every future entry
+has to answer the same question here. A gate that blocks the fix for an open default is
+a gate that will be bypassed during an incident.
+
 ## Logs
 
 **No logs pipeline today.** The Prometheus exporter supports the metrics signal only,

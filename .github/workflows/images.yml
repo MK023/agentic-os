@@ -574,7 +574,20 @@ jobs:
           if not cmd:
               sys.exit(f"::error::{dockerfile} non ha un CMD leggibile: gate cieco")
 
-          vietati = [f for f in re.findall(r"--[a-z.\-]+", cmd.group(1)) if f.startswith("--web.")]
+          # Il gate blocca i flag `--web.*` che ACCENDONO superficie. Ce n'e' una
+          # famiglia che fa l'opposto — restringe — e vietarla significherebbe
+          # impedire di chiudere un default aperto del fornitore. `--web.cors.origin`
+          # e' il caso: il suo default e' `.*`, che rimanda indietro qualunque
+          # `Origin`, e passarlo a `^$` toglie superficie invece di aggiungerla
+          # (deciso e misurato il 2026-08-20, vedi DECISIONS.md).
+          #
+          # L'elenco e' un ALLOW-LIST e va tenuto corto: ogni voce nuova richiede la
+          # stessa domanda, "questo flag restringe o allarga?", e la risposta scritta
+          # in DECISIONS.md. Tutto cio' che non e' qui dentro resta vietato, compresi
+          # i tre `--web.enable-*` che sono la ragione per cui questo gate esiste.
+          RESTRINGONO = {"--web.cors.origin"}
+          vietati = [f for f in re.findall(r"--[a-z.\-]+", cmd.group(1))
+                     if f.startswith("--web.") and f not in RESTRINGONO]
           if vietati:
               print("::error::Prometheus non ha autenticazione configurata ed e' raggiungibile "
                     "da tutta la rete privata: un endpoint --web.* lo espone a chiunque ci stia "
@@ -584,7 +597,7 @@ jobs:
               print("::error::Se serve davvero, va deciso in DECISIONS.md e questo gate va "
                     "cambiato nello stesso commit — non aggirato durante un incidente.")
               sys.exit(1)
-          print("nessun endpoint --web.* acceso su prometheus")
+          print(f"nessun endpoint --web.* acceso su prometheus (ammessi solo i flag che restringono: {sorted(RESTRINGONO)})")
           PY
 
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano

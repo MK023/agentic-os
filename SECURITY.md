@@ -79,8 +79,20 @@ consistent by design.
 
 **What the Prometheus volume holds, stated plainly.** After the Collector's
 allow-list the labels are `model`, `type`, `query_source`, `start_type`,
-`terminal_type`, `session.id`, plus scrape metadata — no credential, no session
-content, no email. What 30 days of it *is*, though, is a behavioural profile at
+`terminal_type`, `session.id` — no credential, no session content, no email;
+counted against the live TSDB on 2026-08-20, zero strings shaped like an address.
+
+**Three more labels ride along, and "plus scrape metadata" was too generous a word
+for them.** `otel_scope_name`, `otel_scope_version` and `exported_job` are not added
+by the scrape: they come from the *payload*. The first two are OTLP **scope** fields
+— the same channel found uncovered on the log side and closed there — and
+`exported_job` derives from the resource's `service.name`, which the client controls
+through `OTEL_SERVICE_NAME`. None of them passes through `keep_keys`, so the
+guarantee written next to that processor — *"an attribute a future release invents is
+a missing label rather than a leak"* — **does not hold on these three**. Measured:
+one distinct value each, nothing identifying, no harm today. It is a declared gap,
+not a control: whoever holds the ingest token chooses those values, and the loud
+guard is `sample_limit` on the scrape, not an allow-list. What 30 days of it *is*, though, is a behavioural profile at
 15-second resolution: when work starts, how long it lasts, how intense it is, which
 models. The public endpoint's version of that side channel is bounded to one minute
 by the cache; the volume is the same channel at full resolution and full history.
