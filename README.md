@@ -175,6 +175,17 @@ repository now has two probes with different jobs — `smoke.yml`, throttled and
 for outages that last, and an edge probe every two minutes that sees the short ones
 and measures exactly what a visitor gets.
 
+**A second scheduled check runs weekly and does not measure anything**, which is the
+point of writing it down here. `telemetry-baseline.yml` asks the npm registry what
+version `@anthropic-ai/claude-code` is on and goes red when its *minor* moves past the
+version recorded in `docs/telemetry-baseline.json`. It cannot see what a new release
+sends — that still takes the five-minute dry run in `docs/LOCAL_DRY_RUN.md`, on a
+laptop, with the real client. It exists because that dry run is the only check the
+label allow-list gets against a future client, and until 2026-08-20 it ran when
+somebody remembered. So this is a reminder with a red light, not a gate on behaviour,
+and the distinction is deliberate: a gate that claimed to verify the label set would
+be the exact kind of asserted-but-absent control this repository keeps removing.
+
 The fuller check, `scripts/verify-hub.sh`, additionally covers Grafana behind
 Access and the status API's own bearer, and stays manual until its credentials
 exist as GitHub secrets.
