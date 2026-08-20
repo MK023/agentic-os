@@ -237,6 +237,10 @@ jobs:
           STATUS_API_TOKEN: dummy
           OTLP_INGEST_TOKEN: dummy
           SENTRY_DSN: ""
+          LOKI_R2_BUCKET: dummy
+          LOKI_R2_ENDPOINT: dummy
+          LOKI_R2_ACCESS_KEY_ID: dummy
+          LOKI_R2_SECRET_ACCESS_KEY: dummy
 
       # La coppia inseparabile: la finestra dei tre numeri sta NELLE QUERY
       # (max_over_time), e `metric_expiration` deve restare corto.

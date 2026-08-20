@@ -88,6 +88,28 @@ services:
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
 
+  loki:
+    image: grafana/loki:3.7.6@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: ["loki.railway.internal"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # Nessuna rotta del Tunnel verso questo servizio, mai — stessa regola di
+    # Prometheus. `auth_enabled: false` in loki.yaml riguarda il multi-tenancy,
+    # non l'accesso: qui non c'e' niente da autenticare perche' non c'e' nessuna
+    # rotta pubblica.
+    environment:
+      - LOKI_R2_BUCKET=${LOKI_R2_BUCKET}
+      - LOKI_R2_ENDPOINT=${LOKI_R2_ENDPOINT}
+      - LOKI_R2_ACCESS_KEY_ID=${LOKI_R2_ACCESS_KEY_ID}
+      - LOKI_R2_SECRET_ACCESS_KEY=${LOKI_R2_SECRET_ACCESS_KEY}
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    command: ["-config.file=/etc/loki/loki.yaml", "-config.expand-env=true"]
+
   status-api:
     build: ../services/public-status-api
     restart: unless-stopped
@@ -101,3 +123,6 @@ services:
 volumes:
   prometheus-data:
   grafana-data:
+  # Serve anche con lo storage su R2: `tsdb_shipper` tiene indice attivo e cache
+  # su disco locale prima di spedirli all'object storage.
+  loki-data:
