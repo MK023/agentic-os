@@ -6,6 +6,7 @@ no free-form query parameter, no pass-through to PromQL, no session content.
 """
 
 import asyncio
+import math
 import os
 import re
 import secrets
@@ -311,13 +312,22 @@ async def _cost_usd(payload: dict) -> float:
     # makes it an async generator, which sum() refuses to consume. The 0.0 start
     # keeps an empty result a float — `sum([])` is the int 0, and the endpoint would
     # answer `"cost_usd_today": 0` instead of `0.0` on a quiet day.
-    return sum(
+    cost = sum(
         [
             tokens * await _rate_usd_per_mtok(metric.get("model"), metric.get("type")) / 1_000_000
             for metric, tokens in _parse_series(payload)
         ],
         0.0,
     )
+    # La moltiplicazione fra float non solleva: trabocca a inf in silenzio, e
+    # round(inf, 2) resta inf, che pydantic serializza come null. Un campione finito
+    # ma enorme passava int() sui token e arrivava qui: 200 con "cost_usd_today":
+    # null, in cache per 60s, nessun 502 e nessun evento Sentry (misurato il
+    # 21/08/2026). ValueError e non una classe nuova: e' gia' nella tupla del try
+    # chiamante, quindi diventa il 502 controllato come ogni altro guasto a monte.
+    if not math.isfinite(cost):
+        raise ValueError("non-finite cost: an upstream value we cannot price")
+    return cost
 
 
 # `secrets.compare_digest` su due `str` solleva TypeError appena una delle due
@@ -340,10 +350,16 @@ async def _cost_usd(payload: dict) -> float:
 # tempo costante sul confronto che conta.
 _ATTESO = f"Bearer {STATUS_API_TOKEN}"
 
+# Su OGNI risposta, non solo sul 200: HTTPException costruisce una Response nuova che
+# non eredita gli header scritti sul parametro `response`, quindi 401 e 502 uscivano
+# senza (misurato il 21/08/2026). Il contratto "cos'e' questa risposta, detto a chi
+# la riceve" o vale per i tre codici dichiarati o non vale.
+_INTESTAZIONI = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
 
 def require_valid_token(authorization: str = Header(default="")) -> None:
     if not authorization.isascii() or not secrets.compare_digest(authorization, _ATTESO):
-        raise HTTPException(status_code=401, detail="unauthorized")
+        raise HTTPException(status_code=401, detail="unauthorized", headers=_INTESTAZIONI)
 
 
 RequireToken = Annotated[None, Depends(require_valid_token)]
@@ -461,9 +477,14 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     # sempre; qui ne resta uno solo, ed e' quello che paga le query.
     #
     # Resta dentro il try tutto cio' che puo' sollevare: la promessa e' che NIENTE in
-    # questa funzione possa far cadere /status.
+    # questa funzione possa far cadere /status. Il parse del campione compreso: fino
+    # al 21/08/2026 stava sotto, fuori dal try, e un 200 di forma inattesa (vettore
+    # senza "value", campione troncato, "+Inf") era un 500 senza cattura con i tre
+    # numeri gia' in mano — la classe chiusa per le tre query il 20/08 e mai
+    # specchiata qui, mentre la chiamata in status() e' fuori da ogni try per scelta.
     try:
         series = (await _query_one(client, PERSISTENCE_QUERY))["data"]["result"]
+        failures = float(series[0]["value"][1]) if series else None
     except Exception:  # noqa: BLE001 — see the docstring; silence is the contract
         return
 
@@ -473,7 +494,7 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     # blindness inside the very thing added to end it. The Collector job in
     # docker/prometheus.yml already spells out the general rule — no series means no
     # rule can fire — and this is that rule applied to the watchdog's own input.
-    if not series:
+    if failures is None:
         await _report_infra_throttled(
             "tsdb-watchdog-blind",
             PrometheusWatchdogBlind(
@@ -489,14 +510,14 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     # del prossimo incidente invece di lasciarla scivolare fino a un'ora dopo.
     _INFRA_ALERTS_SENT.pop("tsdb-watchdog-blind", None)
 
-    failures = float(series[0]["value"][1])
     if failures <= 0:
         _INFRA_ALERTS_SENT.pop("tsdb-compaction", None)
         return
     await _report_infra_throttled(
         "tsdb-compaction",
         PrometheusNotPersisting(
-            f"Prometheus failed {int(failures)} TSDB compactions in the last hour — "
+            # :.0f e non int(): int(float("inf")) e' OverflowError, fuori dal try.
+            f"Prometheus failed {failures:.0f} TSDB compactions in the last hour — "
             "it still answers queries, but it is not writing blocks; check the volume"
         ),
     )
@@ -614,8 +635,7 @@ async def status(_: RequireToken, response: Response) -> dict:
     # Prima del ramo che serve dalla cache, non dopo: in produzione e' da li' che esce
     # quasi ogni risposta, e un header presente una volta su N e' un difetto
     # intermittente invece che assente.
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers.update(_INTESTAZIONI)
 
     # Una passata al minuto, qualunque sia il traffico. L'endpoint pubblico non e'
     # throttlato e dal 19/08/2026 il progetto si paga a consumo: senza questa finestra
@@ -690,7 +710,9 @@ async def status(_: RequireToken, response: Response) -> dict:
             # ValueError e diventava il 500 senza cattura che il commento qui sopra
             # dichiarava chiuso.
             await _report_infra_throttled(f"upstream-{type(exc).__name__}", exc, value=_valore_pubblico(exc))
-            raise HTTPException(status_code=502, detail="upstream unavailable") from exc
+            raise HTTPException(
+                status_code=502, detail="upstream unavailable", headers=_INTESTAZIONI
+            ) from exc
 
         _status_cache = (now, values)
 

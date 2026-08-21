@@ -809,6 +809,39 @@ def test_the_blind_alert_has_its_own_memory(monkeypatch):
     assert sentry_call.call_count == 2
 
 
+@pytest.mark.parametrize(
+    "serie",
+    [
+        {"metric": {}},  # 200 con un vettore non vuoto ma senza "value"
+        {"value": [0]},  # "value" troncato: manca il campione
+        {"value": [0, "non-un-numero"]},
+        {"value": [0, "+Inf"]},  # float() lo accetta, int() no: OverflowError
+    ],
+    ids=["senza-value", "value-troncato", "non-numerico", "inf"],
+)
+@respx.mock
+def test_a_malformed_persistence_answer_never_takes_status_down(monkeypatch, serie):
+    # La docstring della sonda promette che NIENTE al suo interno puo' far cadere
+    # /status, e il primo blocco lo manteneva: fetch e ["data"]["result"] dentro il try.
+    # Il parse del campione stava FUORI, e la chiamata in status() e' fuori da ogni
+    # try per scelta (il watchdog non deve condividere il percorso di guasto delle tre
+    # query). Quindi un 200 di forma inattesa — Prometheus a meta' riavvio, una
+    # versione futura dell'API — diventava un 500 senza cattura con i tre numeri gia'
+    # in mano: la stessa classe chiusa per le tre query il 20/08, mai specchiata qui.
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5", "input", 284_000)])
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": main.PERSISTENCE_QUERY}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": [serie]}})
+    )
+
+    risposta = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert risposta.status_code == 200
+    assert risposta.json()["sessions_today"] == 3
+
+
 @respx.mock
 def test_the_watchdog_does_not_query_prometheus_on_every_public_request(monkeypatch):
     # Costo, non correttezza. L'endpoint pubblico non è throttlato e dal 19/08/2026 il
@@ -971,6 +1004,24 @@ def test_an_infinite_value_is_a_502_not_a_crash(monkeypatch):
     assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 502
 
 
+@respx.mock
+def test_a_cost_that_overflows_is_a_502_not_a_null(monkeypatch):
+    # La moltiplicazione fra float NON solleva: trabocca a inf in silenzio, e
+    # round(inf, 2) resta inf. Quindi il test qui sopra non copriva il costo da solo:
+    # con "+Inf" su TUTTE le query era int(sessions_today) a scattare per primo. Un
+    # campione finito ma enorme (4e306 e' un float64 valido, Prometheus lo conserva
+    # 25h con max_over_time) passa int() sui token, trabocca sul prezzo, e la
+    # risposta era 200 con "cost_usd_today": null — nessun 502, nessun evento Sentry,
+    # e in cache per 60s. Misurato il 21/08/2026.
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    _mock_scalars()
+    _mock_cost([_serie("claude-fable-5", "output", 4e306)])
+    _mock_persistence("0")
+
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 502
+
+
 def test_an_empty_token_is_refused_at_startup_not_served_open():
     # `os.environ["X"]` solleva se la variabile MANCA, non se e' VUOTA. Con un token
     # vuoto — una rotazione a meta', una variabile ripulita per sbaglio — il valore
@@ -1125,6 +1176,25 @@ def test_the_answer_declares_that_it_must_not_be_stored_or_sniffed():
     assert risposta.status_code == 200
     assert risposta.headers["cache-control"] == "no-store"
     assert risposta.headers["x-content-type-options"] == "nosniff"
+
+
+@respx.mock
+def test_the_refusal_and_the_502_declare_the_same_thing_as_the_200(monkeypatch):
+    # HTTPException costruisce una Response NUOVA: gli header scritti sul parametro
+    # `response` non la raggiungono, e fino al 21/08/2026 401 e 502 uscivano nudi —
+    # misurato, i due test qui sopra guardavano solo il 200. Il contratto vale per i
+    # tre codici dichiarati o non vale.
+    _reset_stato_di_processo(monkeypatch)
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    respx.get("http://prometheus:9090/api/v1/query").mock(return_value=httpx.Response(503))
+
+    rifiuto = client.get("/status", headers={"Authorization": "Bearer sbagliato"})
+    guasto = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert (rifiuto.status_code, guasto.status_code) == (401, 502)
+    for risposta in (rifiuto, guasto):
+        assert risposta.headers["cache-control"] == "no-store"
+        assert risposta.headers["x-content-type-options"] == "nosniff"
 
 
 @respx.mock

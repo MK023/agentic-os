@@ -53,4 +53,7 @@ USER 65534:65534
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD python -c "import os,urllib.request as u; u.urlopen(u.Request('http://localhost:8000/status', headers={'Authorization': 'Bearer ' + os.environ['STATUS_API_TOKEN']}), timeout=4)" || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-server-header: la superficie pubblica e' "esattamente tre numeri", e `Server:
+# uvicorn` era una quarta cosa che la risposta diceva. Il TestClient non lo emette,
+# quindi nessun test unitario lo vede: si legge con curl contro l'immagine.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]
