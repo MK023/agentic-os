@@ -438,11 +438,137 @@
           }
         ]
       }
+    },
+    {
+      "id": 102,
+      "title": "Log — cosa e' successo davvero",
+      "type": "row",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "id": 200,
+      "title": "Errori ed episodi degradati per evento (5m)",
+      "description": "La serie che dice se una sessione e' andata MALE, non solo quanto e' costata: i pannelli sopra sono tutti di consumo. `severity_text` non arriva dal fornitore — lo deriva il Collector (#134), e prima di quella PR ogni riga era `unk`. Il filtro tiene ERROR **e** WARN perche' le regole di derivazione sono QUATTRO e non due: `api_error` e `internal_error` diventano ERROR, `status=\"failed\"` (le connessioni MCP) diventa ERROR, e un `tool_result` con `success=\"false\"` diventa WARN. Tenere solo ERROR perderebbe i tool falliti; tenere solo l'elenco dei due `event.name` perderebbe l'MCP.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "targets": [
+        {
+          "expr": "sum by (event_name) (count_over_time({service_name=\"claude-code\"} | severity_text=~\"ERROR|WARN\" [5m]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 201,
+      "title": "Tool falliti, per tool e tipo d'errore (5m)",
+      "description": "Quale tool si rompe e come. E' la domanda per cui Loki e' stato aggiunto: delle metriche Claude Code il Collector ne lascia passare TRE, e nessuna delle tre porta l'esito di una tool call — questa risposta esiste solo nei log. `success` e `error_type` sono structured metadata, non label di indice: l'unica label e' `service_name`, di proposito (una label per sessione o per tool sarebbe il primo anti-pattern di cardinalita' che la doc di Loki nomina).",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "targets": [
+        {
+          "expr": "sum by (tool_name, error_type) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | success=\"false\" [5m]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 202,
+      "title": "Connessioni MCP fallite (5m)",
+      "description": "Un server MCP che non c'e' non produce nessun errore visibile nella sessione: il tool semplicemente non compare. Senza questa serie il modo di accorgersene e' notare che manca qualcosa.\n\nDUE stati, non uno: la doc del fornitore (letta il 2026-08-21) dichiara `status` fra `connected`, `failed` e `disconnected`. Contare solo `failed` perderebbe il caso peggiore — il server che si collega e poi CADE — che produce esattamente il sintomo descritto sopra.\n\nRotto per `transport_type` e `server_scope` perche' distinguono un binario locale che non parte da un server remoto irraggiungibile, che hanno rimedi diversi.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "expr": "sum by (transport_type, server_scope) (count_over_time({service_name=\"claude-code\"} | event_name=\"mcp_server_connection\" | status=~\"failed|disconnected\" [5m]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 203,
+      "title": "Timeline di sessione",
+      "description": "La sequenza degli eventi di UNA sessione, che e' la cosa per cui il log store esiste: le metriche sono cumulative per processo e non raccontano un ordine. La variabile `sessione` e' un testo libero con default `.+` (tutte): `session_id` e' structured metadata, quindi non compare in `label_values()` e una lista a tendina sarebbe vuota — misurato, non supposto.\n\nNON E' ESCAPATA, e va detto invece di lasciarlo scoprire: il valore finisce dentro un filtro regex LogQL. Grafana applica un escaping specifico del datasource, e QUALE non e' stato verificato; `${sessione:regex}` non e' il rimedio ovvio, perche' escaperebbe anche il punto e il default `.+` smetterebbe di valere \"tutte\". Il danno realistico e' un 400 su una parentesi digitata, non una fuga: Loki contiene solo chiavi allow-listed e Grafana sta dietro Access.",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "targets": [
+        {
+          "expr": "{service_name=\"claude-code\"} | session_id=~\"$sessione\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "enableLogDetails": true
+      }
     }
   ],
-  "description": "DUE MESTIERI, DUE RIGHE. Sopra la salute dell'hub, sotto l'uso di Claude Code: sono due domande, due letture, due cadenze, e fino al 20-08-2026 erano dieci pannelli in fila piatta con i due mestieri alternati e un titolo che ne nominava uno solo.\n\nL'INTERVALLO IN ALTO (now-6h) GOVERNA SOLO LE DUE TIMESERIES. Tutti gli stat sono `instant`: una valutazione sola invece di un range query di cui si tiene l'ultimo campione. Le finestre ~25h restano cablate nelle query, quindi cambiare l'intervallo in alto non cambia quei numeri — che e' esattamente cio' che si vuole, visto che sono gli stessi che l'API pubblica calcola con le stesse query. Prima c'erano due orologi per la stessa domanda; adesso uno solo, e dichiarato. Il refresh e' 1m e non 10s: sette pannelli su dieci leggevano max_over_time(...[25h]) e ricalcolarli ogni dieci secondi non cambiava il numero.\n\nPERCHE' max_over_time E NON increase(). Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il totale di ogni serie invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra la da' la query — max_over_time(...[25h]) — e NON piu' il metric_expiration del Collector, che e' tornato al default di 5m: su un contatore che solo cresce, il massimo nella finestra E' il valore finale, quindi i totali sopravvivono a un riavvio del Collector. Prima non sopravvivevano: le sessioni gia' chiuse sparivano da /metrics e 3 sessioni si leggevano come 1 (misurato il 14-08-2026). Query e metric_expiration sono UN cambiamento solo, mai due: rialzare l'expiration a 25h sotto una finestra di 25h fa contare ogni sessione per ~50h. Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori — e quando la serie smette di essere esposta, 5 minuti dopo l'ultimo export, rate() non ha piu' campioni nella finestra e il pannello resta senza dati invece di disegnare uno zero piatto. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare.",
+  "description": "TRE MESTIERI, TRE RIGHE. Sopra la salute dell'hub, sotto l'uso di Claude Code: sono due domande, due letture, due cadenze, e fino al 20-08-2026 erano dieci pannelli in fila piatta con i due mestieri alternati e un titolo che ne nominava uno solo.\n\nL'INTERVALLO IN ALTO (now-6h) GOVERNA LE TIMESERIES E I PANNELLI DI LOG, NON GLI STAT. Tutti gli stat sono `instant`: una valutazione sola invece di un range query di cui si tiene l'ultimo campione. Le finestre ~25h restano cablate nelle query, quindi cambiare l'intervallo in alto non cambia quei numeri — che e' esattamente cio' che si vuole, visto che sono gli stessi che l'API pubblica calcola con le stesse query. Prima c'erano due orologi per la stessa domanda; adesso uno solo, e dichiarato. Il refresh e' 1m e non 10s: sette pannelli leggevano max_over_time(...[25h]) e ricalcolarli ogni dieci secondi non cambiava il numero.\n\nPERCHE' max_over_time E NON increase(). Claude Code emette UNA SERIE PER SESSIONE (label session_id), e ogni serie e' un contatore cumulativo di quel solo processo: nasce, cresce mentre la sessione vive, resta piatta per sempre dopo. Per questo i pannelli sommano il totale di ogni serie invece di usare increase() su una finestra: su una serie che non cresce piu', increase e' zero per costruzione. La finestra la da' la query — max_over_time(...[25h]) — e NON piu' il metric_expiration del Collector, che e' tornato al default di 5m: su un contatore che solo cresce, il massimo nella finestra E' il valore finale, quindi i totali sopravvivono a un riavvio del Collector. Prima non sopravvivevano: le sessioni gia' chiuse sparivano da /metrics e 3 sessioni si leggevano come 1 (misurato il 14-08-2026). Query e metric_expiration sono UN cambiamento solo, mai due: rialzare l'expiration a 25h sotto una finestra di 25h fa contare ogni sessione per ~50h. Il pannello dei token resta a rate() perche' li' la crescita e' reale: e' la vista dal vivo, mentre lavori — e quando la serie smette di essere esposta, 5 minuti dopo l'ultimo export, rate() non ha piu' campioni nella finestra e il pannello resta senza dati invece di disegnare uno zero piatto. L'ultimo pannello non viene da Claude Code ma dal Collector stesso (job otel-collector-interno, porta 8888): e' quello che distingue un client muto da un utente inattivo, cosa che i quattro sopra non sanno fare.\n\nAGGIORNATO IL 2026-08-21, e la riga qui sopra spiega perche' va riletta ogni volta che si tocca la dashboard: fino a quel giorno questa descrizione contava dieci pannelli e due righe, ed erano sedici e tre. E' prosa, quindi nessun gate la sorveglia — anzi, il gate delle metriche ha appena smesso di leggerla, deliberatamente. La terza riga sono i pannelli sui LOG, che leggono Loki e non Prometheus.",
   "time": {
     "from": "now-6h",
     "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "sessione",
+        "type": "textbox",
+        "label": "session.id",
+        "query": ".+",
+        "current": {
+          "text": ".+",
+          "value": ".+"
+        },
+        "options": []
+      }
+    ]
   }
 }

@@ -847,6 +847,45 @@ estimate ($10-13/month) get halved by the first real bill. It gets written after
 of real running — which cannot start until the R2 bucket, its S3 credentials and the
 Railway service exist, and those are Marco's.
 
+**`loki` is the one service on `ALWAYS` instead of `ON_FAILURE`, and it is not a
+preference.** Decided 2026-08-21, out of the audit of its HTTP surface (`SECURITY.md`
+has the full table). Three facts that live in three different files and had never been
+read together:
+
+1. `loki` has no `healthcheckPath` — a closed decision, its witness is the Prometheus
+   scrape.
+2. It serves `GET /ingester/shutdown` on the private network with no credential, and
+   that route stops the process.
+3. **It exits with code `0`** doing so. Measured with `docker wait` on a real
+   container, because the alternative was to keep assuming.
+
+Railway's docs say `On Failure` restarts a service "only if it stops due to an error
+(e.g. crashes, exits with a non-zero code)". Put together: one unauthenticated GET
+stopped the log store and **nothing** brought it back — no restart, no healthcheck, no
+alert rule on `up{job="loki"}`. `ALWAYS` restarts on any stop, which does not close the
+route (the route is not closable) but turns a permanent silent outage into a blip.
+
+Two things were checked before writing the value rather than after: `ALWAYS` is in the
+**published** schema (`railway.schema.json`, `enum: [ON_FAILURE, ALWAYS, NEVER]`) — a
+CLI menu is not the platform — and the vendor's plan limits put `ALWAYS` behind a paid
+plan, which this project is on.
+
+**Two limits of that gate, written here because a gate whose reach is overestimated is
+worse than none.** It reads the repository, not the platform: the value that actually
+runs lives in the Railway workspace, nothing re-reads it, and no row was added to the
+"controls that live outside git" table in `SECURITY.md` for it — that is a declared gap,
+not an oversight. And the vendor's own config-as-code page carries a deprecation banner:
+existing files keep working for legacy services **until 2026-12-01**. After that date the
+gate can stay green while the file stops being applied and the policy falls back to the
+dashboard default, which is `ON_FAILURE` — the exact value it exists to prevent.
+
+The reason cannot live next to the value, because `railway.json` is JSON and takes no
+comments — so a future "let's align every service to ON_FAILURE" would read as tidying.
+That is why there is a gate: `images.yml` fails if the policy moves off `ALWAYS`, and
+also if `loki` ever gains a `healthcheckPath`, because that is the premise the decision
+rests on. Verified red on both breakages and green on the real file, by running the
+script extracted from the workflow.
+
 ## Observability of this project itself
 
 **Sentry yes, from the start** — zero-dependency envelope client in the status API,

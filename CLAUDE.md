@@ -57,6 +57,7 @@ three aggregate numbers are public, everything else stays inside the project.
 docker build -f railway/prometheus/Dockerfile -t p .   # same for the other four
 docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars only silence warnings; it exits 0 without them
 bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker only
+bash scripts/prova-ritenzione-loki.sh                          # gate: delete route closed AND retention still running, ~60s, Docker only
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
@@ -84,8 +85,9 @@ To validate the Collector config without a Docker daemon, download the real
   written, too**, which is the half that gets skipped: Sonnet 5's price was wrong by
   50% because the comment beside it said "expires 31/08" and the vendor had cancelled
   the increase. No test here can notice that somebody else's price list changed.
-- **MUST: this project runs on Railway's free credits, so deploys queue and take
-  time.** Never merge a run of PRs back to back and call it done. A push that arrives
+- **MUST: deploys on this project queue and take
+  time** — and since 2026-08-19 the plan is Hobby, billed on usage, not the free
+  credits this line used to name. Never merge a run of PRs back to back and call it done. A push that arrives
   while a build is still in flight **cancels** that build, and the replacement deploy
   is `SKIPPED` if its own commit misses that service's `watchPatterns` — so the change
   lands on `main` and never reaches production, green everywhere, silently. That
@@ -164,7 +166,10 @@ those files are correct in both places. Never fork a config to "fix it for local
   cumulative per process, so without it concurrent sessions collapse into one series
   and the last export wins — two sessions read as one.
 - **Never reduce the log path to one barrier, and never move the catch-all.** Two
-  allow-lists on purpose: `transform/log-allowlist` in the Collector — **three**
+  allow-lists on purpose — **and both govern the OTLP path only**: measured 2026-08-21,
+  Loki's native `POST /loki/api/v1/push` walks past both with arbitrary labels, so the
+  claim is "the Collector cannot leak identity", not "nothing can" (`SECURITY.md` has
+  the measurement). `transform/log-allowlist` in the Collector — **three**
   statements, `resource`, `scope` *and* `log`, all `keep_keys` — and `otlp_config` in
   `docker/loki.yaml` with `ignore_defaults: true` plus a `drop` catch-all **last** in all
   three sections. The `scope` statement is the one that looks droppable and is not:
