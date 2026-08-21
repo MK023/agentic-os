@@ -237,8 +237,16 @@ processors:
           # metadata e per giunta due volte, perche' Loki ne ricava anche
           # `detected_level`. Il client oggi non li manda — sono un default
           # aperto, non una fuga in corso, ed e' la forma che qui si rifiuta.
-          - set(log.severity_text, "")
-          - set(log.severity_number, 0)
+          # Il livello: PRIMA azzerato a un default nostro, POI derivato in fondo a
+          # questo elenco. Due gesti separati di proposito.
+          #
+          # Questa riga resta una barriera: sovrascrive INCONDIZIONATAMENTE cio' che
+          # il mittente ha messo, quindi il valore che arriva a Loki non e' mai suo.
+          # Misurato dalla doc del fornitore il 2026-08-21: Claude Code non mette
+          # NESSUN campo severity sui log record — quindi oggi non c'e' niente da
+          # sovrascrivere, e domani potrebbe esserci.
+          - set(log.severity_text, "INFO")
+          - set(log.severity_number, 9)
           # NON la stringa vuota. Il setter di `trace_id.string` passa per
           # `ParseTraceID`, che pretende 32 caratteri esadecimali (16 per lo span):
           # con "" lo statement FALLISCE a ogni record, il Collector lo scrive come
@@ -257,6 +265,29 @@ processors:
           - set(log.span_id.string, "0000000000000000")
           - set(log.flags, 0)
           - keep_keys(log.attributes, ["event.name", "event.sequence", "session.id", "prompt.id", "tool_name", "tool_use_id", "success", "error_type", "duration_ms", "decision", "source", "model", "query_source", "status", "status_code", "attempt", "error_code", "error_name", "transport_type", "server_scope", "prompt_length", "response_length"])
+          # LA DERIVAZIONE, e sta DOPO `keep_keys` di proposito: a questo punto
+          # esistono solo le chiavi dell'allow-list, quindi il livello si puo'
+          # ricavare soltanto da valori gia' filtrati. Metterla prima avrebbe
+          # funzionato uguale e avrebbe letto anche cio' che stiamo per buttare.
+          #
+          # Il fornitore non manda un livello (verificato sulla sua doc, non
+          # dedotto): manda i segnali per ricavarlo. Senza questo blocco Grafana
+          # mostra `unk` accanto a ogni riga e il pannello dei livelli e' inutile —
+          # e non per colpa dell'allow-list, che e' la spiegazione sbagliata data
+          # la prima volta.
+          #
+          # WARN e non ERROR per `success == "false"`: un tool che fallisce e'
+          # ordinario nel lavoro di un agente — un file che non c'e', un grep senza
+          # risultati. Chiamarlo ERROR renderebbe rosso il funzionamento normale, che
+          # e' il modo di insegnare a ignorare un colore.
+          - set(log.severity_text, "WARN") where log.attributes["success"] == "false"
+          - set(log.severity_text, "ERROR") where log.attributes["event.name"] == "api_error"
+          - set(log.severity_text, "ERROR") where log.attributes["event.name"] == "internal_error"
+          - set(log.severity_text, "ERROR") where log.attributes["status"] == "failed"
+          # I numeri della spec OTel: INFO 9, WARN 13, ERROR 17. Derivati dal testo
+          # invece che ripetuti su ogni riga, cosi' i due non possono divergere.
+          - set(log.severity_number, 13) where log.severity_text == "WARN"
+          - set(log.severity_number, 17) where log.severity_text == "ERROR"
 
   batch: {}
 
