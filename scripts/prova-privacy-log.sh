@@ -219,7 +219,15 @@ CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:
         {"key":"user.id","value":{"stringValue":"NON-DEVE-ARRIVARE-userid"}},
         {"key":"organization.id","value":{"stringValue":"NON-DEVE-ARRIVARE-org"}},
         {"key":"prompt","value":{"stringValue":"NON-DEVE-ARRIVARE-il-prompt"}},
-        {"key":"chiave.inventata.domani","value":{"stringValue":"NON-DEVE-ARRIVARE-futuro"}}]}]}]}]}')
+        {"key":"chiave.inventata.domani","value":{"stringValue":"NON-DEVE-ARRIVARE-futuro"}}]},
+      {
+      "timeUnixNano":"'"$ORA"'",
+      "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body-2"},
+      "attributes":[
+        {"key":"event.name","value":{"stringValue":"api_error"}},
+        {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
+        {"key":"status_code","value":{"stringValue":"500"}},
+        {"key":"attempt","value":{"stringValue":"1"}}]}]}]}]}')
 echo "push OTLP verso il Collector: HTTP $CODICE"
 [ "$CODICE" = "200" ] || { echo "FALLITO: il Collector ha rifiutato il payload"; cat "$TMP/push.txt"; exit 1; }
 
@@ -298,6 +306,30 @@ if "NON-DEVE-ARRIVARE" in query:
 for campo in ("deadbeefdeadbeefdeadbeefdeadbeef", "deadbeefdeadbeef"):
     if campo in query:
         fallimenti.append(f"(b-bis) {campo} e' interrogabile: il campo di record non e' stato azzerato dal Collector")
+
+# (c-bis) IL LIVELLO DERIVATO. Il fornitore non manda severity (verificato sulla sua
+# doc), quindi senza gli statement di derivazione Grafana mostra `unk` su ogni riga.
+# Qui si pretende che i due rami esistano davvero: il `tool_result` con
+# success="false" deve arrivare WARN, l'`api_error` deve arrivare ERROR. Senza
+# questa asserzione la derivazione sarebbe una difesa che nessuna prova esercita,
+# che e' il difetto gia' pagato il 2026-08-21 con set(log.trace_id.string, "").
+# Dove guardare: `query_range` restituisce la structured metadata dentro `stream`,
+# non nel terzo elemento di `values`. La prima versione di questo controllo cercava
+# solo li' e falliva su una derivazione che funzionava — rumorosamente, per
+# fortuna. Si leggono entrambi i posti, perche' quale dei due usi Loki dipende da
+# come la metadata si distribuisce fra le righe.
+livelli = set()
+for stream in risultato:
+    testo = (stream.get("stream") or {}).get("severity_text")
+    if testo:
+        livelli.add(testo)
+    for riga in (stream.get("values") or []):
+        meta = (riga[2] if len(riga) > 2 else None) or {}
+        if meta.get("severity_text"):
+            livelli.add(meta["severity_text"])
+for atteso in ("WARN", "ERROR"):
+    if atteso not in livelli:
+        fallimenti.append(f"(c-bis) livello {atteso} assente: trovati {sorted(livelli) or 'nessuno'} — la derivazione non si e' eseguita")
 
 # (c) cio' che serve C'E'. Un allow-list che scarta tutto passerebbe (a) e (b) e
 #     sembrerebbe un successo: questo e' il controllo che lo smaschera.
