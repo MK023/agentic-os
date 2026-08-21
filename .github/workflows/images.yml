@@ -310,8 +310,26 @@ jobs:
           python3 - <<'PY'
           import json, re, sys
           dash = json.load(open("docker/grafana/dashboards/claude-code.json"))
-          pannello = next(p for p in dash["panels"] if "sessione" in p.get("title", "").lower())
-          attese = sorted(set(re.findall(r"\* ([0-9.]+)", pannello["targets"][0]["expr"])), key=float)
+          # OGNI pannello che porta tariffe, non il primo con "sessione" nel titolo.
+          # La versione precedente ne guardava UNO e dichiarava "allineate nei tre
+          # posti": il 2026-08-21 il pannello «Cost USD» e' rimasto a Sonnet 3/15 e
+          # senza opus-4-8 mentre quello per-sessione veniva corretto, i due
+          # pannelli della STESSA dashboard si contraddicevano, e il gate era verde.
+          # Un gate che campiona un'istanza e riferisce sull'insieme e' un gate che
+          # non c'e' — ed e' la seconda volta in questo file (la prima:
+          # `for servizio in`, che leggeva un commento invece del codice).
+          pannelli = [(p["title"], t["expr"]) for p in dash["panels"]
+                      for t in (p.get("targets") or []) if re.search(r"\* [0-9.]", t.get("expr", ""))]
+          if len(pannelli) < 2:
+              print(f"::error::trovati solo {len(pannelli)} pannelli con tariffe: l'insieme si e' svuotato e questo gate non sta guardando niente")
+              sys.exit(1)
+          per_pannello = {titolo: sorted(set(re.findall(r"\* ([0-9.]+)", e)), key=float) for titolo, e in pannelli}
+          if len({tuple(v) for v in per_pannello.values()}) != 1:
+              for titolo, tar in per_pannello.items():
+                  print(f"::error::{titolo}: {tar}")
+              print("::error::due pannelli della stessa dashboard prezzano in modo diverso: uno dei due mente a chi lo guarda.")
+              sys.exit(1)
+          attese = next(iter(per_pannello.values()))
           trovate = sorted(set(re.findall(r"\* ([0-9.]+)", open("scripts/cost-per-session.promql-test.yml").read())), key=float)
           # Il TERZO posto, che il messaggio d'errore qui sotto nominava gia' e che il
           # gate non guardava: la tabella in main.py e' quella che PRODUCE il numero
