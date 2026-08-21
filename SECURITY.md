@@ -90,7 +90,7 @@ question a perimeter never answers.
 | Route | Measured | What it does | Closable here |
 |---|---|---|---|
 | `GET /ingester/shutdown` | `204`, then **exit code 0** | Stops the log store. See below — this one changed a deploy setting | **no** |
-| `POST /loki/api/v1/delete` | `204` on this branch; `403` once `deletion_mode: disabled` lands | Destroys logs without recording who — **present tense until that merge** | **yes**, and the change is in a separate PR: this row is the one place in the table that describes a control shipping elsewhere, so it says so |
+| `POST /loki/api/v1/delete` | `403` | Closed on 2026-08-21 by `deletion_mode: disabled` in `docker/loki.yaml`. This row read "`204` on this branch" for a day after the merge. `scripts/prova-ritenzione-loki.sh` proves both halves: the route refuses **and** retention still runs, because turning the delete API off is the kind of change that can quietly stop the compactor with it | no |
 | `POST /log_level?log_level=debug` | `200`, level changes | Floods the 5 GB volume and the R2 bill; or `error` to go quiet | **no** |
 | `GET /flush` | `204` | Forces a flush: many small chunks, R2 writes are billed per request | **no** |
 | `GET /config` | `200` | Prints `endpoint`, `bucket_name` and `access_key_id` **in cleartext**; `secret_access_key` is masked | **not tried** — see below; a candidate exists (`native_aws_auth_enabled`) and declaring it closed or impossible without running it would be the same mistake this section exists to avoid |
@@ -103,8 +103,8 @@ measurement.** Loki exits with code **0** (`docker wait`, on a real container).
 Railway's own docs say `On Failure` restarts "only if it stops due to an error (e.g.
 crashes, exits with a non-zero code)" — so under the previous
 `restartPolicyType: ON_FAILURE`, one unauthenticated GET stopped the log store **and
-nothing brought it back**: this service has no `healthcheckPath` (a closed decision) and
-`up{job="loki"}` has no alert rule yet. Since 2026-08-21 `railway/loki/railway.json`
+nothing brought it back**: this service has no `healthcheckPath` (a closed decision), and
+at the time nothing watched `up{job="loki"}` either. Since 2026-08-21 `railway/loki/railway.json`
 declares `ALWAYS`, which turns a permanent stop into a restart. It is not a fix for the
 route — the route cannot be turned off — it is the difference between an outage that
 ends by itself and one that waits for somebody to look.
@@ -116,8 +116,11 @@ R2 — Loki reads the delete-request store during `init compactor`, measured —
 plan is billed on usage while the row below still reads "R2 spend: **nobody**". The
 second cost is the failure *mode*: `ALWAYS` converts a stop into **flapping**, and
 flapping on a service with no `healthcheckPath` is exactly as quiet as the stop was.
-That half only closes when a rule watches `up{job="loki"}` — which is a separate PR, not
-a property of this one.
+That half closed later the same day, in the PR that added alerting: the `loki-giu` rule
+in `docker/grafana/provisioning/alerting/regole.yaml` watches `up{job="loki"}` with
+`for: 5m`, long enough that a redeploy of a service with a volume does not ring.
+`scripts/prova-allarmi.sh` makes that exact rule fire by removing Loki from the network
+and requires the notification to arrive.
 
 **One thing is deliberately not answered here, because reading the docs did not settle
 it.** The vendor's restart-policy page says the default `On Failure` comes "with a
@@ -220,7 +223,7 @@ re-verifies it, or declares itself unverified with the date of the last measurem
 
 | Control | Where it lives | Who re-verifies it | Last measured |
 |---|---|---|---|
-| WAF custom rule on `otel.` — since 2026-08-20 it passes **two** paths, `POST /v1/metrics` and `POST /v1/logs`. **Closing `/v1/logs` again is manual and nothing here would notice** — `docs/BLOCKERS.md` §4 | Cloudflare dashboard | `smoke.yml` — three assertions requiring an exact `403` (no header, `GET /`, `POST /v1/traces`) | every scheduled run |
+| WAF custom rule on `otel.`, which since 2026-08-20 passes **two** paths, `POST /v1/metrics` and `POST /v1/logs`. Closing `/v1/logs` again is manual, and only one direction is silent: `smoke.yml` requires an exact `401` there, so closing it at the edge turns the probe **red** and names the moved surface. What nothing here notices is the opposite mistake, leaving the path open after Loki is gone (`docs/BLOCKERS.md` §4) | Cloudflare dashboard | `smoke.yml`, four assertions requiring an exact `403` (no header on `/v1/metrics` and on `/v1/logs`, `GET /`, `POST /v1/traces`) | every scheduled run |
 | `bearertokenauth` on the ingest | in git (`docker/otel-collector-config.yaml`) | `smoke.yml` — three assertions requiring `401`: an empty and a wrong bearer on `/v1/metrics`, a wrong bearer on `/v1/logs` | every scheduled run |
 | Access policy on `grafana.` (single email) | Cloudflare dashboard | `sorveglianza.yml` — runs `scripts/verify-hub.sh` daily; a `200` without credentials is treated as the failure it is | every scheduled run |
 | Access + Service Auth on `status.` | Cloudflare dashboard | same job, same script: it calls `/status` exactly as the site's Worker does, with the Access service token *and* the bearer | every scheduled run |

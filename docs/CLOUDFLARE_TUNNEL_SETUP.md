@@ -1,7 +1,9 @@
 # Cloudflare Tunnel setup (one-time, manual)
 
 Manual work against the real Cloudflare account — not something this repo's CI
-drives. Run it once the five Railway services are deployed and running.
+drives. Run it once the Railway services are deployed and running. Only three of the six
+get a hostname here: the Collector, Grafana and the status API. Prometheus and Loki never
+do, and `cloudflared` is the thing making the connection.
 
 The compose file runs `cloudflared tunnel run` with a `TUNNEL_TOKEN`, which means
 a **remotely-managed** tunnel: it is created in the dashboard, and its routes

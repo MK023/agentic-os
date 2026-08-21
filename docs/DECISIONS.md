@@ -240,8 +240,12 @@ the same series and the last export wins — measured: two parallel sessions pro
 one series reading `1` instead of `2`. It is a random per-run UUID, it never leaves
 the hub, and the public endpoint returns only sums.
 
-**Prometheus never gets a hostname of its own**, on any ingress. Its HTTP API has no
-authentication; the only safe exposure is the project's private network.
+**Prometheus never gets a hostname of its own**, on any ingress. Not because it cannot
+authenticate: it supports TLS and basic auth through `--web.config.file`, which is on the
+vendor's own security page. It is simply not configured to here, and no route means
+nothing to authenticate. The reason written in this file until 2026-08-21 was the false
+one, "its HTTP API has no authentication", already corrected once in `SECURITY.md` and
+left standing here.
 
 **No service takes a public Railway domain.** The Cloudflare Tunnel is the only way
 in, so the platform's own hostnames stay unused rather than sitting unprotected
@@ -306,9 +310,14 @@ cloudflared ever ships a way to serve metrics without `/debug/`, this reopens.
 UnderscoreEscapingWithoutSuffixes`, because the default appends type *and unit*
 suffixes — `claude_code.token.usage` with unit `tokens` would become
 `claude_code_token_usage_tokens_total`, a name that depends on someone else's unit
-metadata. Measured against the real client, Prometheus sees
+metadata. Measured against the real client, the Collector receives
 `claude_code_session_count`, `claude_code_token_usage`, `claude_code_cost_usage` and
-`claude_code_active_time_total`.
+`claude_code_active_time_total`. **Prometheus sees the first three only**: since
+2026-08-19 `filter/metric-allowlist` drops every name that is not one of those three, so
+`active_time` and `lines_of_code` never reach `/metrics`. This paragraph listed four
+names as if all four arrived, which sent anyone looking for `active_time` in the TSDB to
+the wrong file. `scripts/prova-contratto-metriche.sh` pushes an invented name and
+requires it to disappear.
 
 **`metric_expiration: 5m` — the default, and it was `25h` until 2026-08-14.** The
 default drops a counter from `/metrics` five minutes after its last update, so under an
@@ -748,7 +757,8 @@ aggregates the same way sessions and tokens are — but it needs its own pass, a
 answer is not "publish what Loki has". Whatever it turns out to be, it goes through the
 same allow-list discipline as the labels: default deny, added deliberately.
 
-**Phase 1.5 was implemented on 2026-08-20, and it is on a branch — not in production.**
+**Phase 1.5 was implemented on 2026-08-20 and went live on 2026-08-21.** This heading
+said "on a branch, not in production" for a day after the six services were running.
 The shape is the one this section specced: Claude Code → the existing OTLP ingest → a
 new and *separate* `logs` pipeline in the Collector → Loki 3.7.6 single binary → chunks
 and index on Cloudflare R2, with Grafana querying it over the private network. The hub
@@ -1081,6 +1091,11 @@ platform's absence is exactly the mistake this file already records twice, on
 `RAILWAY_GIT_COMMIT_SHA` and on `limitOverride`. The full table of controls that live
 outside git, and who re-verifies each, is in `SECURITY.md`.
 
+> **Amended on 2026-08-20**: the rule passes **two** paths since the Phase 1.5 log
+> ingest, `POST /v1/logs` beside `POST /v1/metrics`, on the same condition. The table
+> below carries both. The reasoning is unchanged, and so is the boundary: the rule reads
+> whether an `Authorization` header is present, never its value.
+
 **A WAF custom rule fronts the OTLP ingest, and it is not the authentication.**
 Deployed 2026-08-20 on `otel.marcobellingeri.dev`: everything except `POST
 /v1/metrics` is blocked at the edge. Access control stays where it was —
@@ -1106,6 +1121,8 @@ Measured against production after each of the two deploys:
 | `POST /v1/metrics`, empty bearer | `401` | `401` | the Collector |
 | `POST /v1/metrics`, header uppercased | — | `401` | the Collector |
 | `POST /v1/metrics`, **no** `Authorization` | `401` | **`403`** | the edge |
+| `POST /v1/logs`, **no** `Authorization` | `401` | **`403`** | the edge |
+| `POST /v1/logs`, wrong bearer | `401` | `401` | the Collector |
 | `GET /`, `GET /v1/metrics` | `403` | `403` | the edge |
 | `POST /v1/traces`, `POST /v1/logs` | `403` | `403` | the edge |
 | `POST /v1/metrics/` (trailing slash) | `403` | `403` | the edge |
@@ -1186,6 +1203,8 @@ call there fails offline.
 | `GF_SECURITY_ADMIN_PASSWORD` | yes | `grafana` | — | — |
 | `SENTRY_DSN` | yes | `status-api` | — | — |
 | Access service token (ID + secret) | yes | **never** | for `verify-hub.sh` | `AGENTIC_OS_ACCESS_CLIENT_*` |
+| the four `LOKI_R2_*` (bucket, endpoint, key id, secret) | yes | `loki` | — | — |
+| `SLACK_WEBHOOK_URL` | yes | `grafana` | — | — |
 
 The Access credentials never touch Railway on purpose: it is Cloudflare that verifies
 them, at the edge. The hub does not even see them as something to check.
@@ -1197,11 +1216,14 @@ silence**: Claude Code keeps exporting with the old value and the Collector answ
 between the Railway service and the Worker secret **whose name is different**
 (`AGENTIC_OS_STATUS_TOKEN`).
 
-A Doppler → Railway sync was evaluated on 2026-07-29 and not adopted: the five
-services hold different secrets, so respecting least privilege would mean four
-separate Doppler configs to manage five values that change approximately never.
-Revisit if the secrets multiply, if rotation becomes routine, or if a second
-environment appears.
+A Doppler → Railway sync was evaluated on 2026-07-29 and not adopted: the services hold
+different secrets, so respecting least privilege would mean one Doppler config per
+service to manage a handful of values that change approximately never. The count in this
+paragraph has already moved once. It said "five services, four configs, five values"
+until 2026-08-21, and by then Phase 1.5 had added four `LOKI_R2_*` and the alerting had
+added `SLACK_WEBHOOK_URL`: eleven values across six services. That is the trigger this
+decision named for itself, so it is worth reopening the next time something is added
+rather than counting again.
 
 ## How things get verified here
 

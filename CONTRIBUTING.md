@@ -25,8 +25,12 @@ gate that was meant to enforce it. Rename one only together with the ruleset, an
 check the result with `gh api repos/MK023/agentic-os/rules/branches/main`.
 
 Nothing runs with `continue-on-error` — a gate either blocks or is removed on
-purpose. Two more workflows are not gates and do not block a merge: `mutation.yml`
-(nightly) and `smoke.yml` (every 10 minutes, against production).
+purpose. Five more workflows are not gates and do not block a merge, and two of them do
+produce a check on the PR, which is why the count matters: `mutation.yml` (nightly),
+`smoke.yml` (asks for every 10 minutes and gets whatever GitHub gives it, against
+production), `sorveglianza.yml` (daily, `verify-hub.sh` with the Access and bearer
+credentials), `telemetry-baseline.yml` (weekly, plus on PRs that touch two paths) and
+`codeql.yml` (per-PR, push and weekly, reporting rather than blocking).
 
 A failing gate is never re-run until green. Either it found something, or it is
 flaky and gets fixed (see the flaky policy in the README).
