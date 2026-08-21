@@ -1,7 +1,8 @@
 # What is not done yet
 
 Current as of 2026-08-20. The last tag is **v1.1.0** (2026-08-16) and `main` is
-ahead of it: the five services run, the Tunnel serves its three hostnames, the
+ahead of it: the six services run — `loki` since 2026-08-21 — the Tunnel serves its
+three hostnames, the
 public endpoint answers with real numbers, and `smoke.yml` watches it from
 outside — since 2026-08-20 on the ingest's own authentication and on the WAF rule
 in front of it, not only on the public endpoint. Everything settled lives in
@@ -225,33 +226,31 @@ as a task instead of trusted to a check.
   of `DECISIONS.md`. The caveat this entry had carried is untouched and stays closed:
   **nothing log-derived goes on the public site**, the public surface is still exactly
   three aggregate numbers, and Loki has no Tunnel route at all. What is *not* closed is
-  the infrastructure — see the four items below.
+  the infrastructure, and **all four items closed on 2026-08-21** — the R2 bucket and
+  its S3 credentials, the `loki` service, the four `LOKI_R2_*` variables and the volume
+  on `/loki`. What is left is one thing the platform cannot do for us: see below.
 
-- **Create the R2 bucket and its S3 credentials.** Loki's chunks and index live there;
-  without them the service starts against nothing. Marco's, like every other real
-  resource in this project.
+- **Nothing has been written to the log store yet, and that is the correct state.**
+  `OTEL_LOGS_EXPORTER=otlp` is the switch on the *client*, not on the hub
+  (`docs/CLAUDE_CODE_TELEMETRY.md`), and until an operator exports it Loki holds one
+  object on R2 — `loki_cluster_seed.json`, written at startup — and no log records.
+  Worth writing down because the empty store looks identical to a broken one: an
+  operator who reads "Loki is up, R2 is empty" will go looking at the storage
+  configuration, which is the half that has already been proven.
 
-- **Create the `loki` service on Railway** from `railway/loki/`. Until it exists there
-  are six services in the repository and five on the platform, and this file says so
-  rather than letting the count drift.
+  Measured at the deploy rather than assumed: Loki reached `"Loki started"` in 957 ms
+  with WAL recovery clean, wrote the cluster seed to R2 — so the credentials, the
+  schemeless endpoint and `use_thanos_objstore: true` all hold in production — and the
+  5 GB volume mounted with `RAILWAY_RUN_UID=0` set from the start, so the
+  `permission denied` this list warned about never happened. **The one check that could
+  not be made from outside is `up{job="loki"}`**: Prometheus has no public route and
+  Grafana sits behind an email policy, so that number is read in Grafana Explore by a
+  person, and no script here can assert it.
 
-- **Set the four `LOKI_R2_*` service variables** — `LOKI_R2_BUCKET`,
-  `LOKI_R2_ENDPOINT`, `LOKI_R2_ACCESS_KEY_ID`, `LOKI_R2_SECRET_ACCESS_KEY`. The endpoint
-  goes in **without** a scheme: `-verify-config` accepts the `https://` form the
-  Cloudflare dashboard hands you and Loki dies at startup on it, which is the one error
-  in that file no gate can see.
-
-- **Mount a Railway volume on `/loki`** — the item this list was missing until a review
-  asked for it, and the one whose absence is quiet. `docker/docker-compose.yml` declares
-  `loki-data:/loki` with the reason next to it: chunks and index go to R2, but
-  `tsdb_shipper` keeps the *active* index and its cache on local disk, and
-  `docker/loki.yaml` also puts `compactor.working_directory` and the WAL there. Without
-  a volume Railway gives ephemeral storage, so every restart loses the WAL and the
-  active index — recent logs vanish while everything reads healthy.
-  `railway/README.md` already carries the troubleshooting entry for this exact symptom
-  on Prometheus (`fs_type=OVERLAYFS_SUPER_MAGIC`). Decide `RAILWAY_RUN_UID=0` at the
-  same time if the volume comes up owned by root: the image runs as `10001`, and that
-  is the same trap documented for the other services.
+- **A service with a volume has a short outage on every redeploy** — Railway's own
+  reference: it prevents two deployments from mounting the same volume, healthcheck or
+  not. So `up{job="loki"}` dips on each deploy of that service. Written here so the
+  first person to see the gap stops looking for a fault that is a documented property.
 
 ## Closed since the last revision of this file
 

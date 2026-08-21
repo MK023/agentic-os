@@ -23,9 +23,11 @@ disclosure.
 
 ## What this project exposes, and what it deliberately does not
 
-The hub runs five services on Railway today, and six once Loki lands — the Phase 1.5
-log store is written and gated but its Railway service and R2 bucket do not exist yet, so
-nothing below describes it as running. **None of them has a public platform domain.** The
+The hub runs six services on Railway. The sixth is the Phase 1.5 log store, **live
+since 2026-08-21**: this paragraph said "five today, six once Loki lands" until then.
+Loki takes no Tunnel hostname and no public Railway domain, so nothing about the public
+surface changed when it landed — what changed is that a component described here as
+absent is now running, which is the half that goes stale silently. **None of them has a public platform domain.** The
 only ingress is a Cloudflare Tunnel with three hostnames:
 
 - `grafana.`: Cloudflare Access with a single-email policy.

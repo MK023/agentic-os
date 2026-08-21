@@ -35,10 +35,11 @@ metrics port and `smoke.yml` are what watch a running system; this is a gate on 
 promotion, and reading it as more than that is how a green dashboard hides a dead
 service.
 
-**The other three services deliberately have no `healthcheckPath`, decided
+**The other four services deliberately have no `healthcheckPath`, decided
 2026-08-20.** Grafana, Prometheus and the Collector could all answer one — Grafana has
 `/api/health`, Prometheus has `/-/healthy` and `/-/ready`, and the Collector has the
-`health_check` extension. None of them gets one, and the reason is not inertia:
+`health_check` extension — and since 2026-08-21 `loki` joins them, with `/ready` it does
+not use. None of them gets one, and the reason is not inertia:
 
 - **Railway wants a literal 200 with no credentials.** Grafana's and Prometheus'
   health routes would satisfy that by opening an *unauthenticated* route, and Grafana
