@@ -91,6 +91,23 @@ To validate the Collector config without a Docker daemon, download the real
   running commit of each affected service** (`list-deployments` → the newest `SUCCESS`
   and its `commitHash`), not just that the deploys are green. `SKIPPED` and `REMOVED`
   are the two statuses that mean "did not ship".
+- **Read the service's own logs on the first real traffic, before calling anything
+  working.** Not the exit code and not the green checks — the lines the process writes
+  while a real payload goes through it. On 2026-08-21 `set(log.trace_id.string, "")`
+  failed on **every single record** and only the Collector said so: six green gates, a
+  hand review of fourteen files and a proof that *executes* all missed it, because OTTL
+  rejects the empty string at parse time and carries on. A component can be doing
+  nothing, correctly, in silence.
+- **Run it in Docker before running it in production**, on the image that ships. Grafana
+  emitted 1823 lines in 35 seconds — measured locally, not estimated — and Railway
+  dropped 676 of them; in that window the one surviving line was the notice about the
+  dropping. Neither number was guessable, and the second one hides the first.
+- **Read the vendor's docs before writing a value, including a value that is already
+  there.** Sonnet 5's price was wrong by 50% — not from carelessness, but because the
+  comment beside it said "expires 31/08" and the vendor had cancelled the increase. No
+  test in this repository can notice that somebody else's price list changed. This is
+  the global rule 7, repeated here **with its case attached**: a process rule without a
+  concrete failure next to it gets read and not applied.
 
 ## Conventions
 
