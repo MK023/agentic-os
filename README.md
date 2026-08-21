@@ -67,7 +67,7 @@ it out for billing-grade accuracy; that is the tool's stated scope, not a defect
 | `railway/` | Production: one Dockerfile + one config-as-code file per service, and the deployment guide (`railway/README.md`). **Start here** for infra. |
 | `docker/` | The local environment **and the single copy of every configuration file**. Railway images copy them at build time; Compose mounts them. |
 | `services/public-status-api/` | FastAPI service exposing the three whitelisted numbers. The only application code. |
-| `scripts/` | `verify-hub.sh`, the post-deploy smoke test; `prova-privacy-log.sh`, the executed proof that identity and content do not reach the log store; `prova-allarmi.sh`, which makes a rule fire on a broken reality and requires the notification to be delivered. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
+| `scripts/` | `verify-hub.sh`, the post-deploy smoke test; `prova-privacy-log.sh`, the executed proof that identity and content do not reach the log store; `prova-ritenzione-loki.sh`, which checks that closing Loki's delete route did not also stop automatic retention; `prova-allarmi.sh`, which makes a rule fire on a broken reality and requires the notification to be delivered. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
 | `docs/` | Decisions, deployment, telemetry setup, local dry run. Index at the bottom. |
 
 ## Running it
@@ -88,8 +88,8 @@ checkov --config-file .checkov.yml -d .
 bash scripts/check-image-users.sh
 bash scripts/prova-privacy-log.sh                            # ~90s, Docker only
 bash scripts/prova-contratto-metriche.sh                       # ~40s, Docker only
-bash scripts/prova-allarmi.sh                                  # ~2m, Docker only
-```
+bash scripts/prova-ritenzione-loki.sh                          # ~60s, Docker only
+bash scripts/prova-allarmi.sh                                  # ~2m, Docker only```
 
 ## Security
 
@@ -108,7 +108,13 @@ The short version:
   there is no route, not because they cannot authenticate. Grafana and the status API sit
   behind Cloudflare Access (email policy / service token + own bearer, two layers).
 - **Log attributes pass two allow-lists**, one in the Collector and one in Loki, each
-  able to hold on its own. This is the half that had to be *run* rather than read:
+  able to hold on its own — **on the OTLP path, which is the one the Collector uses.**
+  That qualifier is not pedantry: measured 2026-08-21, a push straight to Loki's *native*
+  `POST /loki/api/v1/push` carries arbitrary labels and structured metadata past both
+  (`user_email` came back as an index label). So the guarantee reads *the Collector
+  cannot leak identity into Loki*, not *nothing can*; what bounds the rest is
+  `max_global_streams_per_user` and the fact that reaching that endpoint already means
+  being inside Railway's private network. This is the half that had to be *run* rather than read:
   identity is on the log records and the vendor sends it always, redaction of prompts is
   a default rather than a control, and one missing statement had quietly made the two
   barriers dependent on each other. `scripts/prova-privacy-log.sh` is the proof, and it

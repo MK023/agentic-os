@@ -3,6 +3,12 @@ apiVersion: 1
 datasources:
   - name: Loki
     type: loki
+    # UID FISSO, e non e' cosmesi: senza, Grafana ne genera uno a caso al primo
+    # provisioning e i pannelli che lo nominano nella dashboard puntano a un
+    # datasource inesistente. Quel guasto e' muto nel modo peggiore — il pannello
+    # non e' vuoto per mancanza di dati, e' rotto, ma sembra identico a "non e'
+    # ancora successo niente".
+    uid: loki
     access: proxy
     # Stesso hostname in locale e su Railway (vedi gli alias di rete nel compose).
     url: http://loki.railway.internal:3100

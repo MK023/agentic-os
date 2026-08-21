@@ -57,8 +57,8 @@ three aggregate numbers are public, everything else stays inside the project.
 docker build -f railway/prometheus/Dockerfile -t p .   # same for the other four
 docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars only silence warnings; it exits 0 without them
 bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker only
-bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker only
-cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
+bash scripts/prova-ritenzione-loki.sh                          # gate: delete route closed AND retention still running, ~60s, Docker only
+bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker onlycd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
 checkov --config-file .checkov.yml -d .
@@ -81,9 +81,13 @@ To validate the Collector config without a Docker daemon, download the real
   Marco's, always. Writing and validating the code for them is not.
 - Vendor behaviour is read from the vendor's docs before it is written down here.
   Twelve bugs in the original plan survived an execute-everything pass and died to a
-  read-the-docs pass; that is the house lesson.
-- **MUST: this project runs on Railway's free credits, so deploys queue and take
-  time.** Never merge a run of PRs back to back and call it done. A push that arrives
+  read-the-docs pass; that is the house lesson. **It holds for a value that is already
+  written, too**, which is the half that gets skipped: Sonnet 5's price was wrong by
+  50% because the comment beside it said "expires 31/08" and the vendor had cancelled
+  the increase. No test here can notice that somebody else's price list changed.
+- **MUST: deploys on this project queue and take
+  time** — and since 2026-08-19 the plan is Hobby, billed on usage, not the free
+  credits this line used to name. Never merge a run of PRs back to back and call it done. A push that arrives
   while a build is still in flight **cancels** that build, and the replacement deploy
   is `SKIPPED` if its own commit misses that service's `watchPatterns` — so the change
   lands on `main` and never reaches production, green everywhere, silently. That
@@ -92,6 +96,24 @@ To validate the Collector config without a Docker daemon, download the real
   running commit of each affected service** (`list-deployments` → the newest `SUCCESS`
   and its `commitHash`), not just that the deploys are green. `SKIPPED` and `REMOVED`
   are the two statuses that mean "did not ship".
+- **Read the service's own logs on the first real traffic, before calling anything
+  working.** Not the exit code and not the green checks. On 2026-08-21
+  `set(log.trace_id.string, "")` failed on **every record** — and the failure is at
+  **execution** time, once per record (`failed to execute statement` /
+  `trace ids must be 32 hex characters`, because the setter goes through
+  `ParseTraceID`). That is exactly why nothing static could see it: the config parses,
+  so `validate` exits 0 and the Collector starts. The twelve blocking gates
+  (`CONTRIBUTING.md`) were green, a hand review missed it, and so did a proof that
+  *executes* — the Collector's own log line was the only witness. **What to look for:
+  `failed to execute statement` in the Collector's log while a real payload flows.**
+- **Measure log volume on the image that ships, and remember the platform has limits
+  the laptop does not.** Two numbers from 2026-08-21, and they come from **two
+  different measurements** — do not read one as a subset of the other: Grafana emitted
+  **1823 lines in 35 seconds**, measured locally on the shipped image; and separately,
+  in production, Railway reported **676 messages dropped** in a two-second window,
+  because it discards above **500 lines/second per replica**. Neither number was
+  guessable, and the local run could not have produced the second one — that ceiling
+  does not exist on a laptop.
 
 ## Conventions
 
@@ -144,7 +166,10 @@ those files are correct in both places. Never fork a config to "fix it for local
   cumulative per process, so without it concurrent sessions collapse into one series
   and the last export wins — two sessions read as one.
 - **Never reduce the log path to one barrier, and never move the catch-all.** Two
-  allow-lists on purpose: `transform/log-allowlist` in the Collector — **three**
+  allow-lists on purpose — **and both govern the OTLP path only**: measured 2026-08-21,
+  Loki's native `POST /loki/api/v1/push` walks past both with arbitrary labels, so the
+  claim is "the Collector cannot leak identity", not "nothing can" (`SECURITY.md` has
+  the measurement). `transform/log-allowlist` in the Collector — **three**
   statements, `resource`, `scope` *and* `log`, all `keep_keys` — and `otlp_config` in
   `docker/loki.yaml` with `ignore_defaults: true` plus a `drop` catch-all **last** in all
   three sections. The `scope` statement is the one that looks droppable and is not:
