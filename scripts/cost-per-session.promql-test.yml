@@ -30,6 +30,17 @@ tests:
         values: '200000x5'
       - series: 'claude_code_token_usage{session_id="B",model="claude-haiku-4-5-20251001",type="cacheRead"}'
         values: '10000000x5'
+      # C e D esistono perche' questo file diceva di se' stesso: "esercita solo opus
+      # input/output e haiku cacheRead e quei moltiplicatori non li valuta mai".
+      # Era vero, ed e' costato: il 2026-08-21 le tariffe di Sonnet sono cambiate e
+      # nessuno di questi casi le avrebbe viste sbagliate. C prezza Sonnet, D prezza
+      # Opus 4.8 — i due modelli toccati da quel cambio.
+      - series: 'claude_code_token_usage{session_id="C",model="claude-sonnet-5",type="input"}'
+        values: '1000000x5'
+      - series: 'claude_code_token_usage{session_id="C",model="claude-sonnet-5",type="cacheCreation"}'
+        values: '500000x5'
+      - series: 'claude_code_token_usage{session_id="D",model="claude-opus-4-8",type="output"}'
+        values: '400000x5'
 
     promql_expr_test:
       # The union form: one row per session, sessions with a partial model mix included.
@@ -43,10 +54,14 @@ tests:
            or claude_code_token_usage{model="claude-opus-5",type="output"} * 25
            or claude_code_token_usage{model="claude-opus-5",type="cacheCreation"} * 10
            or claude_code_token_usage{model="claude-opus-5",type="cacheRead"} * 0.5
-           or claude_code_token_usage{model="claude-sonnet-5",type="input"} * 3
-           or claude_code_token_usage{model="claude-sonnet-5",type="output"} * 15
-           or claude_code_token_usage{model="claude-sonnet-5",type="cacheCreation"} * 6
-           or claude_code_token_usage{model="claude-sonnet-5",type="cacheRead"} * 0.3
+           or claude_code_token_usage{model="claude-opus-4-8",type="input"} * 5
+           or claude_code_token_usage{model="claude-opus-4-8",type="output"} * 25
+           or claude_code_token_usage{model="claude-opus-4-8",type="cacheCreation"} * 10
+           or claude_code_token_usage{model="claude-opus-4-8",type="cacheRead"} * 0.5
+           or claude_code_token_usage{model="claude-sonnet-5",type="input"} * 2
+           or claude_code_token_usage{model="claude-sonnet-5",type="output"} * 10
+           or claude_code_token_usage{model="claude-sonnet-5",type="cacheCreation"} * 4
+           or claude_code_token_usage{model="claude-sonnet-5",type="cacheRead"} * 0.2
            or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="input"} * 1
            or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="output"} * 5
            or claude_code_token_usage{model="claude-haiku-4-5-20251001",type="cacheCreation"} * 2
@@ -58,6 +73,12 @@ tests:
             value: 1.0e+01
           - labels: '{session_id="B"}'
             value: 1.0e+00
+          # C: 1e6 input * 2 + 5e5 cacheCreation * 4 = 4e6 / 1e6 = 4
+          - labels: '{session_id="C"}'
+            value: 4.0e+00
+          # D: 4e5 output * 25 = 1e7 / 1e6 = 10
+          - labels: '{session_id="D"}'
+            value: 1.0e+01
 
       # The naive form — per-model sums added with `+` — returns NOTHING at all:
       # `+` matches label sets, so a session missing any model drops out entirely.
