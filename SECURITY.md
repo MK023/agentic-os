@@ -186,10 +186,20 @@ by the scrape: they come from the *payload*. The first two are OTLP **scope** fi
 `exported_job` derives from the resource's `service.name`, which the client controls
 through `OTEL_SERVICE_NAME`. None of them passes through `keep_keys`, so the
 guarantee written next to that processor — *"an attribute a future release invents is
-a missing label rather than a leak"* — **does not hold on these three**. Measured:
-one distinct value each, nothing identifying, no harm today. It is a declared gap,
-not a control: whoever holds the ingest token chooses those values, and the loud
-guard is `sample_limit` on the scrape, not an allow-list. What 30 days of it *is*, though, is a behavioural profile at
+a missing label rather than a leak"* — **did not hold on these three, and it was
+worse than the sentence above admitted**: measured 2026-08-21, a scope *attribute*
+crossed the Collector and reached `:8889` as `otel_scope_<key>`, verbatim, through no
+allow-list at all. **Closed the same day**, with the vendor's own switch and not a
+third list: `without_scope_info: true` on the `prometheus` exporter drops scope name,
+version, schema URL and attributes as labels, and a `resource` statement in
+`transform/label-allowlist` pins `service.name` to `claude-code`, so `exported_job` is
+no longer a value the client picks. `scripts/prova-contratto-metriche.sh` sends
+identity on all three levels — resource, scope, data point — plus a client-chosen
+`service.name`, and fails if any of it is exposed; it was run red against the previous
+config before it was run green against this one. The resource half was measured too,
+and did **not** leak even before: with the conversion off this exporter emitted no
+`target_info`, which is why the `keep_keys` on the resource is there for the value of
+`job`, not for a key that was escaping. What 30 days of it *is*, though, is a behavioural profile at
 15-second resolution: when work starts, how long it lasts, how intense it is, which
 models. The public endpoint's version of that side channel is bounded to one minute
 by the cache; the volume is the same channel at full resolution and full history.
