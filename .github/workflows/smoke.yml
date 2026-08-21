@@ -88,21 +88,41 @@ jobs:
             # buono per entrambi i casi, e' un messaggio sbagliato per uno dei due.
             # Questa e' la frase che qualcuno legge alle 3 di notte.
             #
-            # Si sceglie sul CODICE ATTESO, non sul percorso: 401 lo dice solo il
-            # Collector, 403 solo il bordo. Instradare sul percorso era sbagliato
-            # dal 20/08 sera, quando la richiesta senza header su /v1/metrics ha
-            # smesso di arrivare al Collector pur restando sullo stesso percorso.
-            if [ "$attesi" = "401" ]; then
-              echo "L'ingest e' l'unica superficie pubblica che accetta scritture:" >&2
-              echo "un 200 qui significa che chiunque puo' scrivere nel TSDB, e i tre" >&2
-              echo "numeri pubblici diventano quelli che decide lui." >&2
-            else
-              echo "Questo lo doveva fermare la regola WAF su otel., che vive nella" >&2
-              echo "dashboard Cloudflare e non in questo repository: se e' sparita o" >&2
-              echo "e' stata disattivata, nessun altro controllo se ne accorge." >&2
-              echo "L'autenticazione regge comunque — e' bearertokenauth dentro il" >&2
-              echo "Collector — ma la superficie raggiungibile si e' riaperta." >&2
-            fi
+            # Si sceglie sul CODICE RICEVUTO, non sull'atteso e non sul percorso.
+            # Instradare sul percorso era sbagliato dal 20/08 mattina; instradare
+            # sull'atteso lo e' diventato il 20/08 pomeriggio, aprendo /v1/logs:
+            # 401 e 403 sono entrambi vivi, dicono solo CHI ha risposto, quindi uno
+            # scambio fra i due e' sempre la superficie che si e' spostata. Solo un
+            # 2xx significa che non ha risposto nessuno dei due controlli.
+            case "$codice" in
+              5*|000)
+                # Il codice non-conforme PIU' PROBABILE su una sonda che gira 144
+                # volte al giorno, e per due versioni finiva nel ramo del bordo:
+                # chi legge andava ad aprire la dashboard Cloudflare per un guasto
+                # che sta su Railway. Due rami non bastavano.
+                echo "Ne' il bordo ne' il Collector hanno risposto: e' il Tunnel o" >&2
+                echo "l'origine. Guarda i deploy Railway e lo stato di cloudflared," >&2
+                echo "NON la regola WAF — quella e' il caso 401/403 qui sotto." >&2
+                echo "Da fuori il sistema e' irraggiungibile mentre dentro puo'" >&2
+                echo "continuare a funzionare benissimo: le tre cifre pubbliche si" >&2
+                echo "congelano senza che niente all'interno se ne accorga." >&2
+                ;;
+              2*)
+                echo "L'ingest e' l'unica superficie pubblica che accetta scritture:" >&2
+                echo "un 200 qui significa che chiunque puo' scrivere nel TSDB, e i tre" >&2
+                echo "numeri pubblici diventano quelli che decide lui." >&2
+                ;;
+              *)
+                echo "La superficie raggiungibile si e' spostata: la regola WAF su otel." >&2
+                echo "vive nella dashboard Cloudflare e non in questo repository, quindi" >&2
+                echo "nessun altro controllo se ne accorge. Atteso ${attesi}, arrivato" >&2
+                echo "${codice}: se il bordo ha smesso di bloccare, una rotta e' tornata" >&2
+                echo "aperta; se blocca un percorso che deve passare, l'ingest di quel" >&2
+                echo "segnale e' fermo e nessuno lo sta dicendo." >&2
+                echo "L'autenticazione regge comunque — e' bearertokenauth dentro il" >&2
+                echo "Collector — ma non e' piu' lei a decidere chi arriva." >&2
+                ;;
+            esac
             exit 1
           }
 
@@ -124,6 +144,13 @@ jobs:
           # provata solo la regola WAF e non l'autenticazione che sta sotto.
           controlla 401 "un bearer non valido" /v1/metrics "${post[@]}" \
             -H 'Authorization: Bearer questo-token-non-esiste'
+          # `/v1/logs` e' aperto dal 20/08/2026 perche' Loki ingerisce i log event di
+          # Claude Code (Fase 1.5). Il bordo lo lascia passare, quindi il 401 lo dice
+          # il Collector: e' la prova che l'autenticazione vale sul percorso NUOVO e
+          # non solo su quello vecchio. Aprire una rotta e non asserirla e' come
+          # aprirla e dimenticarsene.
+          controlla 401 "un bearer non valido su /v1/logs" /v1/logs "${post[@]}" \
+            -H 'Authorization: Bearer questo-token-non-esiste'
 
           # --- Cio' che prova la regola WAF --------------------------------
           # La regola vive nella dashboard Cloudflare, fuori da git: nessun gate di
@@ -139,6 +166,12 @@ jobs:
           # transizione, non una tolleranza. Un controllo che accetta due codici per
           # sempre e' un controllo che non puo' fallire.
           controlla 403 "una richiesta senza header Authorization" /v1/metrics "${post[@]}"
+          # La stessa asserzione sul percorso NUOVO. SECURITY.md dichiara la misura
+          # "su entrambi i percorsi" e finora era provata su uno: se la regola WAF
+          # diventasse permissiva su /v1/logs senza header, l'autenticazione
+          # reggerebbe (il Collector risponde 401) ma la superficie raggiungibile si
+          # allargherebbe e nessuna delle sei asserzioni se ne accorgeva.
+          controlla 403 "una richiesta senza header Authorization su /v1/logs" /v1/logs "${post[@]}"
           controlla 403 "un GET sulla radice" /
           controlla 403 "una POST su /v1/traces" /v1/traces "${post[@]}"
 

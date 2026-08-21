@@ -97,6 +97,35 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
+  # Loki, dalla Fase 1.5. Questo job non e' un extra: e' il SOLO modo in cui
+  # qualcuno si accorge che Loki e' morto. Non ha un `healthcheckPath` su Railway
+  # (decisione chiusa per i servizi senza rotta pubblica), non ha un hostname del
+  # Tunnel, e `smoke.yml` non lo puo' vedere da fuori perche' non c'e' un fuori.
+  # Senza `up{job="loki"}` sarebbe l'unico servizio dell'hub senza nessun testimone,
+  # e il guasto si scoprirebbe il giorno in cui si va a cercare il log che spiega un
+  # incidente — con `retention_period: 720h`, il buco a quel punto e' irrecuperabile.
+  #
+  # Scritto perche' un audit ha trovato che `railway/loki/Dockerfile` e `CLAUDE.md`
+  # affermavano gia' l'esistenza di questo scrape mentre non c'era: un controllo
+  # affermato e assente e' peggio di un'assenza dichiarata, perche' chi legge smette
+  # di cercarlo.
+  #
+  # `loki_ingester_*` e `loki_distributor_*` sono le famiglie che dicono se sta
+  # ingerendo; `up` copre il caso in cui non risponda affatto.
+  - job_name: loki
+    # Il tetto stava solo su otel-collector, e la ragione scritta li' era "e' qui che
+    # si paga". Era vera con tre job. Misurato il 2026-08-20 subito dopo aver aggiunto
+    # questi due: 3064 campioni per scrape da loki, contro i ~305 del Collector —
+    # cioe' l'87% dell'ingestione entrava dalle due porte senza serratura. Un loki
+    # compromesso poteva servire un /metrics da centomila serie e Prometheus le
+    # prendeva tutte. Superata la soglia fallisce l'INTERO scrape, ed e' la scelta
+    # rumorosa voluta: meglio un target rosso che un TSDB gonfio in silenzio.
+    sample_limit: 6000
+    label_limit: 30
+    label_value_length_limit: 128
+    static_configs:
+      - targets: ["loki.railway.internal:3100"]
+
   # Grafana. Aggiunto il 2026-08-20 non per completezza ma perche' una frase lo
   # dava gia' per fatto: la decisione chiusa "niente healthcheckPath" (DECISIONS.md,
   # BLOCKERS.md, CLAUDE.md) si regge sull'argomento "tanto uno scrape `up` li guarda

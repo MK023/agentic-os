@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "railway/loki/Dockerfile",
+    "watchPatterns": [
+      "docker/loki.yaml",
+      "railway/loki/**"
+    ]
+  },
+  "deploy": {
+    "restartPolicyType": "ON_FAILURE"
+  }
+}

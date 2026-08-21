@@ -1,7 +1,10 @@
 {
   "_perche": "L'allow-list delle label protegge per default, ma nessun gate vede cosa comincia a mandare una versione FUTURA di Claude Code. Il dry run di docs/LOCAL_DRY_RUN.md copre quel buco; questo file e' il suo innesco. Si aggiorna DOPO aver rieseguito il dry run, mai prima: e' il verbale di una misura, non una configurazione.",
   "pacchetto": "@anthropic-ai/claude-code",
-  "versione": "2.1.227",
-  "dry_run": "2026-08-16",
-  "_cosa_fu_misurato": "Quattro nomi di metrica invariati; il set di label esattamente l'allow-list (model, type, query_source, start_type, session_id, piu' gli otel_scope_* che aggiunge l'exporter); zero occorrenze di user_email / user_id / user_account* / organization_id; due sessioni headless con due session_id DISTINTI."
+  "versione": "2.1.235",
+  "dry_run": "2026-08-20",
+  "_cosa_fu_misurato": "Quattro nomi di metrica invariati; il set di label esattamente l'allow-list (model, type, query_source, start_type, session_id, piu' gli otel_scope_* che aggiunge l'exporter); zero occorrenze di user_email / user_id / user_account* / organization_id; due sessioni headless con due session_id DISTINTI.",
+  "_log_resource_attributes": "host.arch, os.type, os.version, service.name, service.version — misurate 2026-08-20 con OTEL_LOGS_EXPORTER=otlp. NESSUNA identita' qui: e' la meta' che il piano della Fase 1.5 dava per contaminata e non lo era.",
+  "_log_record_attributes": "64 chiavi su 10 eventi (user_prompt, assistant_response, api_request, tool_decision, tool_result, mcp_server_connection, hook_registered, hook_execution_start, hook_execution_complete, plugin_loaded). L'IDENTITA' STA QUI, non nella resource: organization.id, user.email, user.id, user.account_id, user.account_uuid su OGNI evento. La doc del fornitore le dichiara 'always included': nessuna variabile d'ambiente le spegne, quindi l'allow-list del Collector e' l'unico controllo. Contenuto: prompt e response arrivano <REDACTED> per default, ma OTEL_LOG_USER_PROMPTS / OTEL_LOG_ASSISTANT_RESPONSES / OTEL_LOG_TOOL_DETAILS / OTEL_LOG_RAW_API_BODIES li riaccendono — un default non e' un controllo.",
+  "_log_dry_run": "2026-08-20"
 }

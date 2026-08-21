@@ -8,8 +8,10 @@ in front of it, not only on the public endpoint. Everything settled lives in
 `DECISIONS.md`; everything verified lives in the commit that verified it. This
 file is only what is still open.
 
-**No engineering task blocks anything.** What follows is one thing to watch, one
-thing nobody downstream can fix, and a handful of judgement calls.
+**No engineering task blocks anything.** What follows is two things to watch, one
+thing nobody downstream can fix, and a handful of judgement calls — plus, since
+2026-08-20, three pieces of infrastructure that only Marco can create before Phase 1.5
+runs at all.
 
 ## 1. Claude Code's metric names, against a future version
 
@@ -163,6 +165,23 @@ named in one repo can be filled in another, and neither repo notices on its own.
 This one sat here as "a decision rather than a task" for the fifteen hours after it
 had already been decided and shipped.
 
+## 4. The WAF rule passes two paths now, and closing one again is manual
+
+Since 2026-08-20 the custom rule on `otel.marcobellingeri.dev` lets through
+`POST /v1/logs` as well as `POST /v1/metrics`, both only with an `Authorization` header
+present (never its value). That is **a change to the reachable surface**, not a config
+detail: it was opened for one reason, Loki ingesting Claude Code's log events.
+
+**If Loki ever leaves, `/v1/logs` has to be closed by hand, in the Cloudflare dashboard,
+in the same breath.** Nothing in this repository does it and nothing would notice: the
+rule lives outside git, and every gate would stay green in front of a route that no
+longer serves anybody. An open path nobody needs is exactly the surface this project
+spends a WAF rule reducing. `smoke.yml` catches the *opposite* mistake and only that one
+— it requires an exact `401` on `/v1/logs`, so closing the route at the edge while the
+assertion stands turns the probe red and names the moved surface. Leaving the route open
+after the reason for it is gone stays silent. That asymmetry is why this is written down
+as a task instead of trusted to a check.
+
 ## Still Marco's call
 
 - ~~Whether to add `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` /
@@ -198,26 +217,41 @@ had already been decided and shipped.
   `projectServiceUsage` are readable queries. Nothing watches the balance because no
   Railway token exists in CI, not because the platform hides it. See the table in
   `SECURITY.md`.
-- Grafana Loki as a Phase 1.5 — **not now, and no longer waiting on a date.** The
-  criterion was applied on 2026-08-14 after sixteen days of real use: the questions Phase
-  1 actually left unanswered were about the hub's own containers, and a targeted metric
-  plus a Sentry event answered each of them for the price of a query. It reopens on
-  either of two triggers, whichever comes first: a question that recurs **twice** and no
-  metric or Sentry event can answer, or **a paid Railway plan** — the free-credit budget
-  and the deploy queue are what make a sixth service expensive, and those belong to the
-  plan, not to Loki. Full reasoning, including why "richer data on the public site" is a
-  design question rather than a free upgrade, in `DECISIONS.md`.
+- ~~Grafana Loki as a Phase 1.5.~~ **Closed 2026-08-20: the design pass happened and
+  the code is written.** The trigger had fired on 2026-08-19 with the plan change, and
+  the pass produced `docs/superpowers/specs/2026-08-20-loki-fase-1.5-design.md` and
+  `docs/superpowers/plans/2026-08-20-loki-fase-1.5.md`; what changed about the design
+  while it was being built, and what measuring overturned in it, is in the Logs section
+  of `DECISIONS.md`. The caveat this entry had carried is untouched and stays closed:
+  **nothing log-derived goes on the public site**, the public surface is still exactly
+  three aggregate numbers, and Loki has no Tunnel route at all. What is *not* closed is
+  the infrastructure — see the four items below.
 
-  ~~The second trigger now has a date: the plan changes on 2026-09-01.~~ **The second
-  trigger has fired: the plan changed on 2026-08-19**, twelve days before the date this
-  paragraph was carrying. The condition was always "a paid plan", never a calendar — the
-  calendar was only how it was expected to arrive. So Loki has been "due for its design
-  pass" since 2026-08-19, not since some future date, and this file said otherwise for a
-  day. The pass starts from the caveat already written down: the public surface stays
-  three aggregate numbers, so the question to answer first is *which log-derived
-  aggregate can be public without becoming content*. Usage billing also changes the sum
-  it has to justify — a sixth service is now a line on a bill, not a slice of a fixed
-  free budget.
+- **Create the R2 bucket and its S3 credentials.** Loki's chunks and index live there;
+  without them the service starts against nothing. Marco's, like every other real
+  resource in this project.
+
+- **Create the `loki` service on Railway** from `railway/loki/`. Until it exists there
+  are six services in the repository and five on the platform, and this file says so
+  rather than letting the count drift.
+
+- **Set the four `LOKI_R2_*` service variables** — `LOKI_R2_BUCKET`,
+  `LOKI_R2_ENDPOINT`, `LOKI_R2_ACCESS_KEY_ID`, `LOKI_R2_SECRET_ACCESS_KEY`. The endpoint
+  goes in **without** a scheme: `-verify-config` accepts the `https://` form the
+  Cloudflare dashboard hands you and Loki dies at startup on it, which is the one error
+  in that file no gate can see.
+
+- **Mount a Railway volume on `/loki`** — the item this list was missing until a review
+  asked for it, and the one whose absence is quiet. `docker/docker-compose.yml` declares
+  `loki-data:/loki` with the reason next to it: chunks and index go to R2, but
+  `tsdb_shipper` keeps the *active* index and its cache on local disk, and
+  `docker/loki.yaml` also puts `compactor.working_directory` and the WAL there. Without
+  a volume Railway gives ephemeral storage, so every restart loses the WAL and the
+  active index — recent logs vanish while everything reads healthy.
+  `railway/README.md` already carries the troubleshooting entry for this exact symptom
+  on Prometheus (`fs_type=OVERLAYFS_SUPER_MAGIC`). Decide `RAILWAY_RUN_UID=0` at the
+  same time if the volume comes up owned by root: the image runs as `10001`, and that
+  is the same trap documented for the other services.
 
 ## Closed since the last revision of this file
 
@@ -233,12 +267,16 @@ had already been decided and shipped.
 
 - **The OTLP ingest was reachable for anything, not just for ingest** — since
   2026-08-20 a Cloudflare WAF custom rule on `otel.marcobellingeri.dev` blocks
-  everything except `POST /v1/metrics` carrying an `Authorization` header, presence
+  everything except a `POST` to `/v1/metrics` (and, since the same day, `/v1/logs`)
+  carrying an `Authorization` header, presence
   only, never the value. It is **defence in depth and not the authentication**: that
   stays `bearertokenauth` inside the Collector, and `smoke.yml` proves it with a
   *wrong* token, the only shape the edge still lets through (PRs #99, #100, #101). The
-  rule lives in the Cloudflare dashboard, outside git — the five assertions in
-  `smoke.yml` are the only thing that notices if it is switched off.
+  rule lives in the Cloudflare dashboard, outside git — the six assertions in
+  `smoke.yml` are the only thing that notices if it is switched off. **Since 2026-08-20
+  it passes two paths, not one**: `POST /v1/logs` as well, for the Phase 1.5 log
+  ingest — see §4 above, and note that only the *opposite* mistake is caught by a
+  check.
 
 - **The spend backstop was declared unverified** — a workspace usage limit of $15 soft
   / $30 hard has existed since 2026-08-20 (PR #99). It is confirmed by the operator and
@@ -297,8 +335,10 @@ had already been decided and shipped.
   service that accepts writes from the internet**. Against that, a Prometheus `up`
   scrape watches each of them every 15s **for as long as they run**, which is more
   than a healthcheck does — Railway stops probing once a deploy is promoted. **The
-  premise had a hole until 2026-08-20**: Grafana was never scraped at all. It was added
-  rather than rewriting the decision it holds up. Full
+  premise had a hole until 2026-08-20**: Grafana was never scraped, and the Loki job did
+  not exist. Both were added rather than rewriting the decision they hold up — six jobs
+  in `docker/prometheus.yml`, covering every service except `status-api`, which is the
+  one that already has both a `healthcheckPath` and an outside witness in `smoke.yml`. Full
   reasoning in `DECISIONS.md`. If it is ever reopened, `PORT` goes first.
 
 - ~~The dry run in `LOCAL_DRY_RUN.md` has no trigger.~~ **It has one since

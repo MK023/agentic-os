@@ -6,7 +6,7 @@ name: immagini
 # dei job. Rinominarne uno durante la divisione avrebbe lasciato il ruleset ad
 # aspettare per sempre un contesto che nessuno produce piu'.
 #
-# Tutto cio' che si costruisce o si valida come artefatto: le cinque immagini
+# Tutto cio' che si costruisce o si valida come artefatto: le sei immagini
 # con la scansione CVE e il validate della config del Collector, la guardia
 # sull'utente non-root, e lo schema del compose.
 #
@@ -37,7 +37,7 @@ concurrency:
 # in mappe `env:`, quindi non c'e' superficie di template injection. Lo impone
 # zizmor, nel job workflow-lint (lint.yml).
 jobs:
-  # Builds every image the platform will build. The four Railway Dockerfiles copy
+  # Builds every image the platform will build. The five Railway Dockerfiles copy
   # configuration out of docker/, so a moved or renamed config file breaks them —
   # and that breakage would otherwise surface as a failed deploy rather than a
   # failed check. Also builds the status API image, which is where the hash-locked
@@ -79,7 +79,7 @@ jobs:
             done
             return 1
           }
-          for servizio in otel-collector prometheus grafana cloudflared; do
+          for servizio in otel-collector prometheus grafana cloudflared loki; do
             costruisci -f "railway/${servizio}/Dockerfile" -t "agentic-${servizio}:ci" .
           done
           costruisci -t agentic-status-api:ci services/public-status-api
@@ -175,6 +175,15 @@ jobs:
           exit-code: "0"
           format: table
 
+      - name: CVE dell'immagine loki (informativo — immagine di terzi)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: agentic-loki:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
       # Il Collector ha il suo `validate` qui sotto dal primo giorno; Prometheus non
       # aveva niente. E il test promtool era il caso peggiore: il file porta in cima
       # l'istruzione per eseguirlo — "promtool test rules scripts/..." — e nessuno lo
@@ -237,6 +246,10 @@ jobs:
           STATUS_API_TOKEN: dummy
           OTLP_INGEST_TOKEN: dummy
           SENTRY_DSN: ""
+          LOKI_R2_BUCKET: dummy
+          LOKI_R2_ENDPOINT: dummy
+          LOKI_R2_ACCESS_KEY_ID: dummy
+          LOKI_R2_SECRET_ACCESS_KEY: dummy
 
       # La coppia inseparabile: la finestra dei tre numeri sta NELLE QUERY
       # (max_over_time), e `metric_expiration` deve restare corto.
@@ -544,9 +557,9 @@ jobs:
       # recuperare spazio nel TSDB e' proprio l'admin API, e il volume si e' riempito
       # due volte. Il momento in cui qualcuno la accendera' e' un'emergenza, che e'
       # esattamente quando nessuno rilegge il confine di sicurezza.
-      # hadolint sui cinque Dockerfile. Checkov ne copre alcune regole, hadolint
+      # hadolint sui sei Dockerfile. Checkov ne copre alcune regole, hadolint
       # altre: sono liste diverse, non la stessa lista due volte. Aggiunto dopo aver
-      # controllato che trovi qualcosa di VERO — quattro file puliti e un solo
+      # controllato che trovi qualcosa di VERO — cinque file puliti e un solo
       # rilievo, gia' deciso e documentato — perche' un gate che produce solo rumore
       # viene ignorato, e questo repo ha gia' pagato per gate ignorati.
       #
@@ -600,6 +613,96 @@ jobs:
           print(f"nessun endpoint --web.* acceso su prometheus (ammessi solo i flag che restringono: {sorted(RESTRINGONO)})")
           PY
 
+      # CLAUDE.md dice "Never put the `prometheus` exporter in a `logs` pipeline" —
+      # il Collector si RIFIUTA di partire. Era scritto in un file che nessun gate
+      # legge, e fino alla Fase 1.5 non c'era nemmeno una pipeline logs in cui
+      # sbagliare. Adesso c'e'. Un commento non e' un gate.
+      # Il commento sopra il build loop dice: "il giorno che si aggiunge
+      # un'immagine senza uno step a valle che la nomini, quel fallimento diventa
+      # muto". Era vero e non lo sorvegliava nessuno — e la Fase 1.5 e' proprio il
+      # giorno in cui si aggiunge un'immagine. Due condizioni, entrambe necessarie:
+      # ogni servizio in railway/ deve essere COSTRUITO, e il suo tag deve essere
+      # NOMINATO da uno step a valle, altrimenti si costruisce e nessuno lo guarda.
+      # I gate qui sotto guardano la FORMA: due leggono le allow-list, il terzo
+      # controlla che ogni servizio railway sia costruito. Nessuno esegue niente.
+      # Questo ESEGUE le allow-list: fa passare un payload OTLP dal Collector vero a
+      # Loki vero e poi interroga Loki. Su questo progetto una config valida ha gia'
+      # mentito — `-verify-config` accetta un endpoint che a runtime uccide Loki, e
+      # `validate` esce 0 su nomi deprecati che compaiono solo all'avvio.
+      #
+      # Il test ha i denti, ed e' stato provato: togliendo entrambe le barriere
+      # diventa rosso e nomina le chiavi trapelate; togliendone una sola resta verde,
+      # che e' la definizione di "due barriere indipendenti" e va riverificata quando
+      # una delle due cambia.
+      - name: identita' e contenuto non arrivano nel log store (prova eseguita)
+        run: bash scripts/prova-privacy-log.sh
+
+      # Il gate "la finestra sta nelle query" e quello sulle tariffe confrontano TESTO
+      # fra i file accoppiati. Il testo puo' essere identico in tutti e tre e sbagliato
+      # in tutti e tre insieme, perche' il nome vero delle metriche lo decide
+      # `translation_strategy` e nessuno dei tre file la esegue. Questo chiede al
+      # Collector cosa espone davvero.
+      - name: il contratto delle metriche regge fra Collector, status API e pannello
+        run: bash scripts/prova-contratto-metriche.sh
+
+      - name: ogni servizio railway e' costruito e scansionato
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, sys, yaml
+          w = yaml.safe_load(open(".github/workflows/images.yml"))
+          steps = w["jobs"]["images"]["steps"]
+          # Le sole righe che COSTRUISCONO, non il testo intero dello step. La prima
+          # versione prendeva tutto il `run:` commenti inclusi, e il commento sopra il
+          # loop nomina quattro dei cinque servizi: togliere `grafana` dal `for`
+          # lasciava il gate verde perche' la sottostringa sopravviveva nel commento.
+          # E' lo stesso difetto corretto un'ora prima nel gate delle allow-list, che
+          # cercava `keep_keys` nel testo intero del processor — la seconda volta nello
+          # stesso pomeriggio, il che dice che la forma va cercata apposta e non
+          # ricordata: se il gate legge prosa insieme al codice, la prosa lo passa.
+          righe = [l for s in steps if "run" in s for l in s["run"].split("\n")
+                   if ("for servizio in" in l or "costruisci -f" in l) and not l.strip().startswith("#")]
+          build = "\n".join(righe)
+          # I tag citati da qualunque step a valle: `image-ref:` di trivy-action, o
+          # una riga `run:` che nomini il tag.
+          # Il lato `citati` aveva lo STESSO buco del lato build, e non l'avevo
+          # visto perche' l'avevo appena corretto sull'altra meta': leggeva tutto
+          # il `run:` commenti inclusi, quindi un `# TODO: agentic-loki:ci lo
+          # scansioneremo` soddisfaceva il gate. E il messaggio promette una
+          # scansione, non una sottostringa: quindi si pretende che il tag compaia
+          # in un `image-ref:` di uno step trivy-action, cioe' il mestiere che il
+          # messaggio nomina.
+          citati = set()
+          for s in steps:
+              if "aquasecurity/trivy-action" in str(s.get("uses", "")):
+                  citati |= set(re.findall(r"agentic-([a-z0-9-]+):ci", str(s.get("with", {}))))
+              if "run" in s and "costruisci" not in s["run"]:
+                  for l in s["run"].split("\n"):
+                      if not l.strip().startswith("#"):
+                          citati |= set(re.findall(r"agentic-([a-z0-9-]+):ci", l))
+          servizi = sorted(d.name for d in pathlib.Path("railway").iterdir()
+                           if d.is_dir() and (d / "Dockerfile").exists())
+          # Un pavimento. Se una riorganizzazione — un rename di `Dockerfile`, una
+          # directory spostata — svuota l'insieme, questo gate direbbe "tutti
+          # costruiti" piu' forte di prima. Una prova che riporta "tutto a posto"
+          # quando non c'era niente da guardare e' la stessa bugia di un allarme
+          # che non puo' scattare.
+          if len(servizi) < 5:
+              print(f"::error::trovati solo {len(servizi)} servizi sotto railway/ ({servizi}): l'insieme si e' svuotato e questo gate non sta guardando niente")
+              sys.exit(1)
+          fallimenti = []
+          for s in servizi:
+              if not re.search(rf"\b{re.escape(s)}\b", build):
+                  fallimenti.append(f"railway/{s}/Dockerfile esiste ma nessuno step lo COSTRUISCE: un errore in quel file non lo vede nessun check, e muore al deploy")
+              elif s not in citati:
+                  fallimenti.append(f"agentic-{s}:ci viene costruito ma nessuno step a valle lo NOMINA: la build fallisce in silenzio se qualcuno toglie `set -e`, e non viene scansionato")
+          if fallimenti:
+              for f in fallimenti:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          print(f"ok: {len(servizi)} servizi railway, tutti costruiti e nominati a valle: {servizi}")
+          PY
+
       # La regola di casa dice: una sola copia di ogni config, e il compose da' a ogni
       # container un alias di rete uguale al suo DNS interno Railway, cosi' gli
       # hostname dentro quelle config sono corretti in ENTRAMBI gli ambienti.
@@ -608,7 +711,7 @@ jobs:
       # `no such host`, perche' Grafana, cloudflared e status-api non avevano alias.
       # In produzione avrebbe funzionato — quindi il guasto era LOCALE e silenzioso,
       # cioe' il tipo che fa dire "in locale non si puo' provare" e smettere di
-      # provare.
+      # provare. Quattro revisioni non l'avevano visto; un dry run si'.
       - name: ogni hostname .railway.internal ha il suo alias nel compose
         run: |
           set -euo pipefail
@@ -646,12 +749,171 @@ jobs:
           print(f"ok: {len(citati)} hostname citati, tutti con il loro alias: {sorted(citati)}")
           PY
 
-      # I gate accanto confrontano TESTO fra i file accoppiati. Il testo puo' essere
-      # identico in tutti e tre e sbagliato in tutti e tre insieme, perche' il nome
-      # vero delle metriche lo decide `translation_strategy` e nessuno dei tre file
-      # la esegue. Questo chiede al Collector cosa espone davvero.
-      - name: il contratto delle metriche regge fra Collector, status API e pannello
-        run: bash scripts/prova-contratto-metriche.sh
+      - name: la pipeline logs non contiene l'exporter prometheus
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+          cfg = yaml.safe_load(open("docker/otel-collector-config.yaml"))
+          logs = (cfg.get("service", {}).get("pipelines", {}) or {}).get("logs")
+          if logs is None:
+              print("::error::la pipeline `logs` non esiste piu' in docker/otel-collector-config.yaml.")
+              print("::error::Se e' stata rimossa apposta, va tolto anche questo gate nello stesso commit.")
+              sys.exit(1)
+          # `startswith("prometheus")` e non il solo nome esatto piu' le istanze
+          # con nome: anche `prometheusremotewrite` supporta il solo segnale
+          # metriche e fa rifiutare l'avvio allo stesso modo.
+          cattivi = [e for e in logs.get("exporters", []) if e.startswith("prometheus")]
+          if cattivi:
+              print(f"::error::la pipeline logs esporta verso {cattivi}: l'exporter prometheus supporta il solo segnale metriche.")
+              print("::error::Il Collector NON PARTE, quindi si fermano anche le metriche e i tre numeri pubblici si congelano.")
+              sys.exit(1)
+          print(f"ok: la pipeline logs esporta verso {logs.get('exporters')}")
+          PY
+
+      # Stessa famiglia del gate sulle label delle metriche. La forma da
+      # sorvegliare non e' l'elenco delle chiavi — quello cambia con il client — ma
+      # che sia un ALLOW-LIST: `keep_keys` nel Collector e `ignore_defaults: true`
+      # piu' un `drop` finale in Loki. Un delete-list fallisce aperto su ogni
+      # attributo che una versione futura inventa, ed e' esattamente la forma che
+      # questo progetto ha gia' rifiutato una volta sulle metriche.
+      - name: i log passano da due allow-list, non da una delete-list
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+          fallimenti = []
+
+          cfg = yaml.safe_load(open("docker/otel-collector-config.yaml"))
+          proc = cfg.get("processors", {})
+          allow = [n for n in proc if n.startswith("transform/log-allowlist")]
+          if not allow:
+              fallimenti.append("il Collector non ha piu' un processor transform/log-allowlist")
+          else:
+              testo = yaml.safe_dump(proc[allow[0]])
+              # OGNI statement, non "da qualche parte nel processor". La prima
+              # versione di questo controllo cercava keep_keys nel testo intero:
+              # trasformando in delete_key il solo statement `log` restava VERDE,
+              # perche' la sottostringa sopravviveva nello statement `resource`.
+              # Un gate che vede la meta' sbagliata e' un gate che non c'e'.
+              # ALMENO UN keep_keys per contesto, e nessuna delete_* da nessuna
+              # parte. Non "keep_keys in ogni statement": accanto agli allow-list
+              # ci sono i `set(...)` che chiudono cio' che keep_keys non tocca (il
+              # body, nome e versione dello scope, il valore di service.name), e
+              # pretenderli keep_keys renderebbe il gate rosso sulla config giusta.
+              # Nemmeno "keep_keys da qualche parte nel processor": la prima
+              # versione faceva cosi' e trasformare in delete_key il solo contesto
+              # `log` restava verde, perche' la sottostringa sopravviveva altrove.
+              per_contesto = {}
+              for st in (proc[allow[0]].get("log_statements") or []):
+                  per_contesto.setdefault(st.get("context"), []).extend(st.get("statements") or [])
+              if not per_contesto:
+                  fallimenti.append("transform/log-allowlist non ha nessuno statement")
+              for contesto, xs in per_contesto.items():
+                  if not any("keep_keys(" in x for x in xs):
+                      fallimenti.append(f"il contesto {contesto} non ha nessun keep_keys: e' diventata una delete-list")
+                  for x in xs:
+                      if "delete_key(" in x or "delete_matching_keys(" in x:
+                          fallimenti.append(f"il contesto {contesto} usa una funzione delete_*: un allow-list non cancella, tiene ({x})")
+              pipeline = cfg["service"]["pipelines"].get("logs", {})
+              if allow[0] not in pipeline.get("processors", []):
+                  fallimenti.append(f"{allow[0]} esiste ma NON e' nella pipeline logs: e' come non averlo")
+
+              # DUE statement, non uno: keep_keys sul solo contesto `log` lascia
+              # passare le resource attribute. Misurato il 2026-08-20 che l'identita'
+              # NON e' nella resource su questo client — ma OTEL_RESOURCE_ATTRIBUTES
+              # e' un punto d'iniezione documentato, e il set del client non e' un
+              # contratto: la barriera vale sul futuro, non sulla misura di ieri.
+              # TRE contesti, non due. Il piano ne prevedeva due; con quelli, gli
+              # attributi di SCOPE attraversavano il Collector intatti e a fermarli
+              # restava la sola allow-list di Loki. Misurato il 2026-08-20 con
+              # scripts/prova-privacy-log.sh: togliendo la barriera di Loki,
+              # `scope.secret` arrivava interrogabile. Due barriere che condividono
+              # un punto cieco sono una barriera, ed e' un errore gia' corretto una
+              # volta in spec (#119).
+              contesti = {st.get("context") for st in (proc[allow[0]].get("log_statements") or [])}
+              if contesti != {"resource", "scope", "log"}:
+                  fallimenti.append(f"transform/log-allowlist copre {sorted(contesti)}: servono resource, scope E log — cio' che manca passa la barriera #1 intatto")
+
+              # L'identita' che il fornitore dichiara "always included" non deve MAI
+              # comparire dentro un keep_keys: sarebbe un allow-list che permette
+              # esattamente cio' contro cui esiste.
+              vietate = {"user.email", "user.id", "user.account_id", "user.account_uuid",
+                         "organization.id", "prompt", "response", "error",
+                         "tool_parameters", "tool_input", "body"}
+              trovate = sorted(v for v in vietate if f'"{v}"' in testo)
+              if trovate:
+                  fallimenti.append(f"transform/log-allowlist TIENE {trovate}: identita' o contenuto di sessione dentro un allow-list")
+
+          loki = yaml.safe_load(open("docker/loki.yaml"))
+          limits = loki.get("limits_config", {}) or {}
+          otlp = limits.get("otlp_config", {}) or {}
+          if limits.get("allow_structured_metadata") is not True:
+              fallimenti.append("loki.yaml non ha allow_structured_metadata: true: Loki rifiuta il payload")
+          res = otlp.get("resource_attributes", {}) or {}
+          if res.get("ignore_defaults") is not True:
+              fallimenti.append("loki.yaml non ha ignore_defaults: true: le resource attribute finiscono nell'INDICE")
+
+          # IL CONTROLLO CHE -verify-config NON FA. `ignore_defaults` toglie le
+          # resource attribute dall'indice ma NON le scarta: il fallback di Loki e'
+          # `structured_metadata`. Senza un `drop` catch-all in FONDO a ogni sezione,
+          # cio' che nessuna regola nomina resta memorizzato e interrogabile.
+          def chiude(voci, dove):
+              voci = voci or []
+              if not voci or voci[-1].get("action") != "drop" or voci[-1].get("regex") != ".*":
+                  fallimenti.append(f"{dove} non finisce con un drop catch-all: cio' che nessuna regola nomina resta come structured metadata, interrogabile")
+          chiude(res.get("attributes_config"), "resource_attributes.attributes_config")
+          chiude(otlp.get("scope_attributes"), "scope_attributes")
+          chiude(otlp.get("log_attributes"), "log_attributes")
+
+          # L'ACCOPPIAMENTO. Le stesse chiavi vivono in due file: il `keep_keys` del
+          # Collector e la lista `structured_metadata` di Loki. Nessuno le confrontava.
+          # La direzione che fa male e' silenziosa: una chiave aggiunta al solo
+          # Collector la scarta il catch-all di Loki, verde ovunque, e il dato non c'e'.
+          # E' la stessa famiglia di "Metric names live in three places".
+          import re
+          st_log = [x for st in (proc.get(allow[0], {}).get("log_statements") or [])
+                    if st.get("context") == "log" for x in (st.get("statements") or [])
+                    if x.startswith("keep_keys(")]
+          if len(st_log) != 1:
+              fallimenti.append(f"mi aspetto ESATTAMENTE un keep_keys sul contesto log, ne ho trovati {len(st_log)}")
+          else:
+              coll = set(re.findall(r'"([^"]+)"', st_log[0].split("[", 1)[1]))
+              sm = set()
+              for voce in (otlp.get("log_attributes") or []):
+                  if voce.get("action") == "structured_metadata":
+                      sm |= set(voce.get("attributes") or [])
+              if coll != sm:
+                  solo_coll = sorted(coll - sm)
+                  solo_loki = sorted(sm - coll)
+                  if solo_coll:
+                      fallimenti.append(f"chiavi tenute dal Collector e NON da loki.yaml: {solo_coll} — il catch-all di Loki le scarta in silenzio, verde ovunque e il dato non c'e'")
+                  if solo_loki:
+                      fallimenti.append(f"chiavi in loki.yaml e NON nel Collector: {solo_loki} — la barriera #1 le ha gia' tolte, quindi la riga in Loki e' morta e mente su cosa arriva")
+
+          # I quattro statement che chiudono cio' che `keep_keys` non tocca. Trovati
+          # da un audit il 2026-08-20, ciascuno provato portante togliendolo: il body
+          # attraversava entrambe le allow-list, nome e versione dello scope sono
+          # una classe a barriera singola (non l'unica: vedi il commento nel file di
+          # config), e il VALORE di service.name e' l'unica
+          # label di indice e lo sceglieva il mittente.
+          tutti = " ".join(x for st in (proc.get(allow[0], {}).get("log_statements") or [])
+                           for x in (st.get("statements") or []))
+          for frammento, perche in [
+              ("set(log.body", "il body del log record non e' governato da nessuna delle due allow-list: senza questo statement la riga arriva verbatim, indicizzata e conservata"),
+              ("set(scope.name", "nome e versione dello scope finiscono in structured metadata per costruzione, e otlp_config non ha nessuna chiave per governarli: e' una classe a barriera singola"),
+              ("set(scope.version", "nome e versione dello scope finiscono in structured metadata per costruzione, e otlp_config non ha nessuna chiave per governarli: e' una classe a barriera singola"),
+              ('set(resource.attributes["service.name"]', "keep_keys filtra le CHIAVI, non i valori: senza questo statement il mittente sceglie il valore dell'unica label di indice, e ogni valore nuovo e' uno stream nuovo"),
+          ]:
+              if frammento not in tutti:
+                  fallimenti.append(f"manca `{frammento}...)` in transform/log-allowlist: {perche}")
+
+          if fallimenti:
+              for f in fallimenti:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          print(f"ok: due allow-list chiuse, {len(sm)} chiavi allineate fra i due file, e i quattro statement che keep_keys non copre")
+          PY
 
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
