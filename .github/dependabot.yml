@@ -52,6 +52,18 @@ updates:
     ignore:
       - dependency-name: "grafana/grafana"
         versions: ["13.2.0"]
+  # Aggiunta il 21/08/2026: mancava, e la Fase 1.5 era gia' in produzione da un
+  # giorno. Il servizio del log store non avrebbe MAI ricevuto un bump — e il
+  # difetto sarebbe arrivato al contrario: Dependabot avrebbe aggiornato il solo
+  # compose (voce `/docker`, che pinna la stessa immagine) e il gate "le immagini
+  # del compose non divergono dai Dockerfile" avrebbe segnato rosso su una PR
+  # automatica, mentre l'immagine di produzione invecchiava.
+  - package-ecosystem: "docker"
+    directory: "/railway/loki"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
   - package-ecosystem: "docker"
     directory: "/railway/cloudflared"
     schedule:
@@ -69,6 +81,21 @@ updates:
   # questa voce un bump Dependabot aggiornerebbe solo i Dockerfile e locale e
   # produzione girerebbero immagini diverse in silenzio — esattamente il drift che
   # "una copia di ogni configurazione" esiste per impedire.
+  #
+  # LA CONSEGUENZA VA SAPUTA PRIMA, non scoperta davanti a una PR rossa. Le due
+  # meta' della stessa immagine stanno in due voci, quindi arrivano in DUE PR
+  # (storia: #39/#40, #44/#45, #76/#82, #77/#80) — ed e' la forma esatta del guasto
+  # del 13/08, dove la seconda PR cancello' il build della prima. Dal gate #95
+  # (20/08) ciascuna meta' e' anche ROSSA da sola: il confronto compose/Dockerfile
+  # trova la divergenza che la PR ha appena creato.
+  # Non e' un difetto del gate: e' il gate che fa il suo mestiere. La procedura e'
+  # una sola, e sta scritta qui perche' non ci sia da indovinarla — si prende UNA
+  # delle due PR, si porta a mano l'altra meta' nello stesso ramo, e diventa una
+  # PR sola che passa. L'altra si chiude. `multi-ecosystem-groups` unirebbe le due
+  # voci in una PR sola, ma la sua interazione con `ignore` e `directory` non e'
+  # documentata dal fornitore (letto il 21/08/2026) e qui non e' verificabile senza
+  # farla girare: una configurazione che sbaglia in silenzio smetterebbe di aprire
+  # PR e nessuno se ne accorgerebbe. Assenza dichiarata, non controllo affermato.
   - package-ecosystem: "docker-compose"
     directory: "/docker"
     schedule:
