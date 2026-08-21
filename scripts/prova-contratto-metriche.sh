@@ -101,10 +101,24 @@ cerca_codice = set(re.findall(r"claude_code_[a-z_]+", codice))
 # pannello nuovo. E' la terza volta in questo repository che un gate legge prosa
 # come se fosse codice: era gia' successo due volte in images.yml, con i commenti.
 dashboard = json.loads(pathlib.Path("docker/grafana/dashboards/claude-code.json").read_text())
-espressioni = " ".join(t.get("expr", "")
-                       for p in dashboard.get("panels", [])
-                       for t in (p.get("targets") or []))
-cerca_pannello = set(re.findall(r"claude_code_[a-z_]+", espressioni))
+
+def espressioni_di(pannelli):
+    # RICORSIVA, e non e' zelo: quando una `row` e' COLLASSATA, Grafana sposta i
+    # pannelli figli dentro `row["panels"]`. Con la lettura piatta il gate trovava
+    # zero metriche su una dashboard identica ma con le righe chiuse — e senza la
+    # guardia qui sotto sarebbe passato verde. La versione precedente (regex sul
+    # testo intero) i figli li trovava comunque: correggere il falso positivo
+    # senza ricorsione avrebbe introdotto un falso NEGATIVO, che e' peggio.
+    for pannello in pannelli or []:
+        for bersaglio in (pannello.get("targets") or []):
+            yield bersaglio.get("expr", "")
+        yield from espressioni_di(pannello.get("panels"))
+
+cerca_pannello = set(re.findall(r"claude_code_[a-z_]+", " ".join(espressioni_di(dashboard.get("panels")))))
+# Un insieme vuoto rende `mancanti` vuoto e il gate passa: e' la stessa guardia
+# che questo repository ha gia' scritto tre volte in images.yml.
+if not cerca_pannello:
+    fallimenti.append("nessuna metrica claude_code_* trovata nelle query della dashboard: questo gate non sta guardando niente")
 
 for nome, cercati in (("services/public-status-api/main.py", cerca_codice),
                       ("docker/grafana/dashboards/claude-code.json", cerca_pannello)):

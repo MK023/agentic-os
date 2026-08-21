@@ -236,7 +236,17 @@ CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:
         {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
         {"key":"status","value":{"stringValue":"failed"}},
         {"key":"transport_type","value":{"stringValue":"stdio"}},
-        {"key":"server_scope","value":{"stringValue":"user"}}]}]}]}]}')
+        {"key":"server_scope","value":{"stringValue":"user"}}]},
+      {
+      "timeUnixNano":"'"$ORA"'",
+      "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body-4"},
+      "attributes":[
+        {"key":"event.name","value":{"stringValue":"mcp_server_connection"}},
+        {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
+        {"key":"status","value":{"stringValue":"disconnected"}},
+        {"key":"transport_type","value":{"stringValue":"sse"}},
+        {"key":"server_scope","value":{"stringValue":"project"}},
+        {"key":"error_code","value":{"stringValue":"DEVE-ARRIVARE-E42"}}]}]}]}]}')
 echo "push OTLP verso il Collector: HTTP $CODICE"
 [ "$CODICE" = "200" ] || { echo "FALLITO: il Collector ha rifiutato il payload"; cat "$TMP/push.txt"; exit 1; }
 
@@ -366,7 +376,7 @@ PY
 # VENGONO SPEDITE, lette dalla dashboard. Copiarle significherebbe provare la copia.
 echo "--- (d) i pannelli Loki della dashboard trovano davvero qualcosa"
 python3 - "$ORA" <<'PYD'
-import json, sys, urllib.error, urllib.parse, urllib.request
+import json, re, sys, urllib.error, urllib.parse, urllib.request
 
 ora = int(sys.argv[1])
 d = json.load(open("docker/grafana/dashboards/claude-code.json"))
@@ -377,16 +387,49 @@ d = json.load(open("docker/grafana/dashboards/claude-code.json"))
 variabili = {v["name"]: (v.get("current") or {}).get("value", "")
              for v in (d.get("templating", {}) or {}).get("list", [])}
 
+# Lo uid ATTESO si legge dal file di provisioning, non si scrive qui: e'
+# l'accoppiamento fra due file, ed e' esattamente il guasto che lo uid fisso
+# esiste per chiudere. Senza questo controllo la prova interroga Loki DIRETTAMENTE
+# e scavalca la risoluzione del datasource, quindi uno uid sbagliato nei pannelli
+# la lascerebbe verde mentre Grafana mostra "Datasource ... was not found".
+uid_atteso = None
+for riga in open("docker/grafana/provisioning/datasources/loki.yml"):
+    spoglia = riga.strip()
+    if spoglia.startswith("uid:"):
+        uid_atteso = spoglia.split(":", 1)[1].strip()
+        break
+if not uid_atteso:
+    print("FALLITO: (d) il datasource Loki non dichiara nessun uid: Grafana ne genererebbe uno a caso e i pannelli punterebbero a una fonte inesistente")
+    sys.exit(1)
+
 bersagli = []
+fuori_posto = []
 for p in d["panels"]:
     ds = p.get("datasource") or {}
-    if (ds.get("type") if isinstance(ds, dict) else ds) != "loki":
-        continue
+    tipo = ds.get("type") if isinstance(ds, dict) else ds
     for t in (p.get("targets") or []):
         espressione = t.get("expr", "")
+        # UNA QUERY LogQL SI RICONOSCE DA SOLA: comincia con un selettore di
+        # stream. E' cosi' che si smette di dipendere da come il pannello e'
+        # etichettato — togliere il blocco `datasource` da UN pannello lo faceva
+        # sparire dai bersagli e la prova restava verde, mentre in Grafana quella
+        # query finiva su Prometheus, che e' il datasource di default.
+        sembra_logql = espressione.lstrip().startswith("{") or "count_over_time({" in espressione
+        if tipo != "loki":
+            if sembra_logql:
+                fuori_posto.append((p.get("title"), tipo))
+            continue
+        if (ds.get("uid") if isinstance(ds, dict) else None) != uid_atteso:
+            fuori_posto.append((p.get("title"), f"uid={ds.get('uid')!r}, atteso {uid_atteso!r}"))
+            continue
         for nome, valore in variabili.items():
             espressione = espressione.replace("$" + nome, str(valore))
         bersagli.append((p.get("title"), espressione))
+
+if fuori_posto:
+    for titolo, perche in fuori_posto:
+        print(f"FALLITO: (d) il pannello \"{titolo}\" porta una query LogQL ma non e' agganciato al datasource Loki ({perche}): in Grafana finisce sulla fonte di default, che e' Prometheus")
+    sys.exit(1)
 
 # Un'asserzione che non guarda niente passa sempre: e' il modo in cui questo gate
 # morirebbe in silenzio se qualcuno togliesse i pannelli o il riferimento al
@@ -419,10 +462,24 @@ for titolo, espressione in bersagli:
     if risposta.get("status") != "success":
         fallimenti.append('(d) "%s": Loki non ha risposto success -> %s' % (titolo, json.dumps(risposta)[:200]))
         continue
-    if not risposta["data"]["result"]:
+    risultato = risposta["data"]["result"]
+    if not risultato:
         fallimenti.append('(d) "%s": zero serie. La query e\' valida e non trova niente — su un pannello si vede come "non e\' ancora successo nulla". Query: %s' % (titolo, espressione))
-    else:
-        print("  ok: %s -> %d serie" % (titolo, len(risposta["data"]["result"])))
+        continue
+
+    # "ALMENO UNA SERIE" E' PIU' DEBOLE DI CIO' CHE IL PANNELLO PROMETTE.
+    # `sum by (transport_type, server_scope) (...)` su uno stream in cui quelle
+    # chiavi fossero cadute NON restituisce zero serie: ne restituisce UNA, con il
+    # label set vuoto. Il gate sarebbe verde e il pannello disegnerebbe una riga
+    # anonima. Quindi si pretende che ogni label del `by (...)` esista davvero, con
+    # un valore non vuoto, in almeno una serie: e' la differenza fra una query che
+    # si esegue e un campo che viene esercitato.
+    raggruppate = re.findall(r"by\s*\(([^)]*)\)", espressione)
+    attese = [l.strip() for gruppo in raggruppate for l in gruppo.split(",") if l.strip()]
+    for label in attese:
+        if not any((s.get("metric") or {}).get(label) for s in risultato):
+            fallimenti.append('(d) "%s": la label `%s` del raggruppamento non compare con un valore in nessuna serie: la query si esegue ma quel campo non e\' esercitato, e sul pannello sarebbe una riga anonima' % (titolo, label))
+    print("  ok: %s -> %d serie, label %s" % (titolo, len(risultato), attese or "nessuna"))
 
 if fallimenti:
     for f in fallimenti:
