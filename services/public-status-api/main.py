@@ -136,7 +136,8 @@ QUERIES = {
     ),
 }
 
-# Anthropic list prices, USD per million tokens, as published on 2026-07-30. These
+# Anthropic list prices, USD per million tokens. Re-read from the vendor's pricing
+# page on 2026-08-21 (previously: 2026-07-30). These
 # are a hand-maintained copy of someone else's price list: when Anthropic changes a
 # price, or a model lands that is not in here, this table is what must be edited —
 # nothing downstream will notice on its own. The `type` keys are Claude Code's own
@@ -147,8 +148,11 @@ QUERIES = {
 # Haiku arrives with its dated suffix (measured 2026-07-30, via the very
 # UnknownPricingKey event this table exists to answer). A wrong or missing key is
 # safe by construction — it falls through to the dearest rate and files a report.
-# Sonnet is priced at the standard list, not the introductory price that runs to
-# 2026-08-31: overstating for a month beats editing this table twice.
+# The line that used to sit here — "Sonnet is priced at the standard list, not the
+# introductory price that runs to 2026-08-31" — was reasonable and became wrong: the
+# introductory price is now the standard one and the increase was cancelled. A
+# deliberate overstatement with an expiry date is only honest while someone re-reads
+# the source, and nothing here forces that.
 #
 # `cacheCreation` is 2x input, not 1.25x. Anthropic publishes two cache-write
 # rates -- 1.25x for the 5-minute TTL, 2x for the 1-hour one -- and
@@ -171,11 +175,33 @@ PRICES_USD_PER_MTOK = {
         "cacheCreation": 10.00,
         "cacheRead": 0.50,
     },
+    # Aggiunto il 2026-08-21 perche' la produzione lo ha emesso e questa tabella non
+    # lo conosceva: l'evento UnknownPricingKey che questa tabella esiste per
+    # rispondere e' arrivato davvero (AGENTI-OS-8, tre occorrenze). Fino ad allora
+    # ogni token di Opus 4.8 era prezzato alla tariffa piu' cara conosciuta, cioe'
+    # quella di Fable — sovrastima dichiarata, non errore silenzioso, ed e' il
+    # comportamento voluto per un buco. Listino identico a Opus 5, verificato.
+    "claude-opus-4-8": {
+        "input": 5.00,
+        "output": 25.00,
+        "cacheCreation": 10.00,
+        "cacheRead": 0.50,
+    },
+    # 2,00 e non 3,00. Questa riga diceva 3,00/15,00 con accanto la ragione
+    # "sovrastimare per un mese e' meglio che editare la tabella due volte", perche'
+    # il 2,00 era un prezzo introduttivo in scadenza il 2026-08-31. **Quella ragione
+    # e' scaduta**: il fornitore ha reso standard il prezzo introduttivo e ha
+    # annullato l'aumento, testuale — "The previously scheduled increase to $3/$15
+    # per million input/output tokens on September 1, 2026 will not occur". Quindi
+    # non era una sovrastima per un mese, era una sovrastima del 50% per sempre, su
+    # una delle tre cifre pubbliche. Trovata leggendo la pagina del listino mentre
+    # se ne cercava un'altra, non da un controllo: nessun gate qui puo' vedere il
+    # prezzario di qualcun altro cambiare.
     "claude-sonnet-5": {
-        "input": 3.00,
-        "output": 15.00,
-        "cacheCreation": 6.00,
-        "cacheRead": 0.30,
+        "input": 2.00,
+        "output": 10.00,
+        "cacheCreation": 4.00,
+        "cacheRead": 0.20,
     },
     "claude-haiku-4-5-20251001": {
         "input": 1.00,
