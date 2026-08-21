@@ -933,6 +933,37 @@ jobs:
           print(f"ok: due allow-list chiuse, {len(sm)} chiavi allineate fra i due file, e i quattro statement che keep_keys non copre")
           PY
 
+      # Tre pezzi accoppiati che stanno in file diversi e si leggono uno alla volta:
+      # loki non ha `healthcheckPath` (decisione chiusa), espone `GET
+      # /ingester/shutdown` senza credenziale, e quella rotta fa uscire il processo
+      # con codice **0** — misurato con `docker wait`, non dedotto. La doc di Railway
+      # dice che `ON_FAILURE` riavvia solo su codice NON zero: con quella policy una
+      # GET dalla rete privata ferma il log store e nessuno lo rialza, senza nessun
+      # rosso da nessuna parte. `ALWAYS` non chiude la rotta — non e' chiudibile — ma
+      # rende il guasto temporaneo invece che definitivo.
+      #
+      # Questo gate esiste perche' la ragione di quel valore NON e' leggibile dal
+      # file: railway.json e' JSON e non ammette commenti, quindi un allineamento
+      # "tutti i servizi a ON_FAILURE" sembrerebbe pulizia.
+      - name: loki resta a restartPolicyType ALWAYS (esce 0 su una rotta pubblica)
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          c = json.load(open("railway/loki/railway.json"))
+          deploy = c.get("deploy", {}) or {}
+          politica = deploy.get("restartPolicyType")
+          if politica != "ALWAYS":
+              print(f"::error::railway/loki/railway.json ha restartPolicyType={politica!r}: con qualunque valore diverso da ALWAYS, `GET /ingester/shutdown` (uscita con codice 0, nessuna credenziale) ferma il log store e nessuno lo riavvia — loki non ha healthcheckPath")
+              sys.exit(1)
+          # La seconda meta' dell'accoppiamento: se un giorno loki prendesse un
+          # healthcheckPath, questa riga andrebbe ridiscussa invece di restare vera
+          # per inerzia.
+          if "healthcheckPath" in deploy:
+              print("::error::loki ora dichiara healthcheckPath: la ragione di ALWAYS era proprio la sua assenza — si rilegge la decisione, non si lascia il valore per inerzia")
+              sys.exit(1)
+          print("ok: loki a ALWAYS, e senza healthcheckPath come la decisione presuppone")
+          PY
+
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
         run: |
           python3 - <<'PY'

@@ -76,6 +76,59 @@ later reader turns into a security claim, in whichever direction suits the sente
 only thing that reaches Loki is the Collector, on Railway's private network, and Grafana
 querying it from behind Access.
 
+### What Loki actually serves on `:3100` — measured 2026-08-21, not read
+
+`loki` was the one service never audited: the other five were swept in the week of
+2026-08-20 (#127 Prometheus CORS, #128 pprof on cloudflared, #129 six hardenings on
+status-api), and Loki was born after. This is that sweep, run **against the live
+container** on the shipped config, because that is the method that found those defects.
+
+"No route means nothing to authenticate against" stays true. What follows is what
+anything *already inside* the private network can do without a credential — which is the
+question a perimeter never answers.
+
+| Route | Measured | What it does | Closable here |
+|---|---|---|---|
+| `GET /ingester/shutdown` | `204`, then **exit code 0** | Stops the log store. See below — this one changed a deploy setting | **no** |
+| `POST /loki/api/v1/delete` | `403` since 2026-08-21 | Destroyed logs without recording who | **yes — closed**, `deletion_mode: disabled` |
+| `POST /log_level?log_level=debug` | `200`, level changes | Floods the 5 GB volume and the R2 bill; or `error` to go quiet | **no** |
+| `GET /flush` | `204` | Forces a flush: many small chunks, R2 writes are billed per request | **no** |
+| `GET /config` | `200` | Prints `access_key_id` **in cleartext**. `secret_access_key` is masked `********` | **no** |
+| `GET /debug/pprof/heap` | `200` | Heap dump — log records in flight | **no**, see below |
+| `POST /ingester/prepare_shutdown` | `204`, state `set` | Arms the shutdown path; `DELETE` disarms it | **no** |
+| `POST /loki/api/v1/push` | `204` | **Bypasses both allow-lists** — see below | bounded, not closed |
+
+**The shutdown route was worse than this file used to imply, and the difference is a
+measurement.** Loki exits with code **0** (`docker wait`, on a real container).
+Railway's own docs say `On Failure` restarts "only if it stops due to an error (e.g.
+crashes, exits with a non-zero code)" — so under the previous
+`restartPolicyType: ON_FAILURE`, one unauthenticated GET stopped the log store **and
+nothing brought it back**: this service has no `healthcheckPath` (a closed decision) and
+`up{job="loki"}` has no alert rule yet. Since 2026-08-21 `railway/loki/railway.json`
+declares `ALWAYS`, which turns a permanent stop into a restart. It is not a fix for the
+route — the route cannot be turned off — it is the difference between an outage that
+ends by itself and one that waits for somebody to look.
+
+**The native push API is not governed by the two allow-lists.** Measured: a push to
+`/loki/api/v1/push` carrying `etichetta_arbitraria` and `user_email` produced an index
+label *and* queryable structured metadata with both values intact. `otlp_config` in
+`docker/loki.yaml` governs the **OTLP** endpoint; the native endpoint has no allow-list
+at all. The privacy guarantee therefore reads: *the Collector cannot leak identity into
+Loki*, not *nothing can*. What bounds the damage is `max_global_streams_per_user: 200`
+and the fact that reaching this endpoint already means being inside the private network.
+
+**`/config` leaking `access_key_id` is why the R2 token is least-privilege**, and that
+scoping was verified rather than assumed: `403` on any other bucket and on the account.
+The value that matters, `secret_access_key`, is masked.
+
+**pprof stays open, deliberately, and the alternative was measured rather than
+assumed.** The flag's own help text says `-server.register-instrumentation` registers
+"the intrumentation handlers (/metrics etc)" — "etc" is not an answer, so it was run:
+with `=false`, `/metrics` **and** `/debug/pprof/*` both return `404`, while `/ready`
+still serves. Closing the heap dump therefore deletes Loki's only witness, since this
+service has no healthcheck and the Prometheus scrape is what watches it. A declared
+absence beats trading the monitor for the hardening.
+
 The public surface of the whole system is three aggregate numbers (sessions,
 tokens, cost). No session content, no free-form PromQL, and no path from the
 public widget to anything else.
@@ -135,7 +188,7 @@ re-verifies it, or declares itself unverified with the date of the last measurem
 | `bearertokenauth` on the ingest | in git (`docker/otel-collector-config.yaml`) | `smoke.yml` — three assertions requiring `401`: an empty and a wrong bearer on `/v1/metrics`, a wrong bearer on `/v1/logs` | every scheduled run |
 | Access policy on `grafana.` (single email) | Cloudflare dashboard | `sorveglianza.yml` — runs `scripts/verify-hub.sh` daily; a `200` without credentials is treated as the failure it is | every scheduled run |
 | Access + Service Auth on `status.` | Cloudflare dashboard | same job, same script: it calls `/status` exactly as the site's Worker does, with the Access service token *and* the bearer | every scheduled run |
-| R2 spend, from log ingestion | **nowhere yet** — no bucket, no ceiling set | **nobody.** The Railway workspace limit below does not bound a Cloudflare bill. What exists is upstream: `docker/loki.yaml` declares `ingestion_rate_mb: 1` / `ingestion_burst_size_mb: 2` / `max_global_streams_per_user: 10` instead of the vendor defaults (4 MB/s ≈ 345 GB a day toward R2), and the Collector's queue is capped. Those bound what can be *sent*, not what is *billed* | not measured — the bucket does not exist |
+| R2 spend, from log ingestion | **nowhere still** — no ceiling on the bucket. **Two halves of this row were stale until 2026-08-21**: the bucket exists and has been serving since 2026-08-21, and the stream cap says `200`, not the `10` written here (`10` was live for a few hours on 2026-08-20 and was a denial of service with our own name on it) | **nobody.** The Railway workspace limit below does not bound a Cloudflare bill. What exists is upstream: `docker/loki.yaml` declares `ingestion_rate_mb: 1` / `ingestion_burst_size_mb: 2` / `max_global_streams_per_user: 200` instead of the vendor defaults (4 MB/s ≈ 345 GB a day toward R2), and the Collector's queue is capped. Those bound what can be *sent*, not what is *billed*. What is **not** shared between the two ingest paths is the allow-list: `otlp_config` governs the OTLP endpoint, and `POST /loki/api/v1/push` has none (measured 2026-08-21) | ceilings re-read from the shipped config 2026-08-21; the bill itself, never |
 | Workspace usage limit ($15 soft / $30 hard) | Railway workspace | **still nobody for the *limit*** — see below. Since 2026-08-20 `sorveglianza.yml` watches the *consumption* instead, against ceilings in `docs/sorveglianza-baseline.json` | 2026-08-20, set and confirmed by the operator |
 | Sentry alert rule (`Every event`, 60m throttle, three conditions) | Sentry project | `sorveglianza.yml` — daily, and it fails naming the six-day outage if `every_event` goes missing | every scheduled run |
 | `PORT` on `status-api` and `cloudflared` | Railway service variables | **nobody**, but its absence fails every deploy loudly rather than silently | 2026-08-20, both services list `PORT` |
