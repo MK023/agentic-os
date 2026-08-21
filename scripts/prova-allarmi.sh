@@ -77,6 +77,39 @@ for g in d["groups"]:
 yaml.safe_dump(d, open(p, "w"))
 PY
 
+# --- (e) IL PROVISIONING SPEDITO, prima di qualunque mutazione.
+# Il resto di questa prova monta una copia con `for` e `interval` accorciati, cioe'
+# Grafana non parse MAI i byte che finiscono nell'immagine. Un `for: 5min` o
+# qualunque refuso nei campi riscritti sarebbe invisibile qui e fatale la'. Venti
+# secondi per chiuderlo, e senza la variabile del webhook: e' anche la guardia sul
+# guasto peggiore trovato in revisione — con `SLACK_WEBHOOK_URL` assente Grafana
+# NON PARTIVA AFFATTO, il modulo provisioning si portava dietro l'intero server.
+echo -n "--- (e) il provisioning SPEDITO, senza SLACK_WEBHOOK_URL: "
+docker rm -f allarmi-spedito >/dev/null 2>&1 || true
+docker run -d --rm --name allarmi-spedito -p 3094:3000 \
+  -e GF_SECURITY_ADMIN_PASSWORD="$PASSWORD" agentic-grafana:ci >/dev/null
+spedito_pronto=""
+for _ in $(seq 1 45); do
+  [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3094/api/health)" = "200" ] && { spedito_pronto=si; break; }
+  sleep 2
+done
+if [ -z "$spedito_pronto" ]; then
+  echo "NON E' PARTITO"
+  echo "FALLITO: (e) Grafana non parte con il provisioning spedito e senza SLACK_WEBHOOK_URL. In produzione sarebbe un crash loop, e questo servizio non ha healthcheckPath: nessuno lo direbbe. I suoi log:"
+  docker logs allarmi-spedito 2>&1 | tail -20
+  docker rm -f allarmi-spedito >/dev/null 2>&1 || true
+  exit 1
+fi
+regole_spedite=$(curl -s -u "admin:$PASSWORD" http://localhost:3094/api/v1/provisioning/alert-rules \
+  | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+docker rm -f allarmi-spedito >/dev/null 2>&1 || true
+if [ "${regole_spedite:-0}" != "5" ]; then
+  echo "solo ${regole_spedite} regole"
+  echo "FALLITO: (e) il provisioning SPEDITO carica ${regole_spedite} regole invece di 5: il resto di questa prova gira su una copia mutata e non lo vedrebbe"
+  exit 1
+fi
+echo "parte, e carica 5 regole"
+
 docker network create "$RETE" >/dev/null
 
 # Alias di rete uguale al DNS interno di Railway: gli hostname dentro
@@ -194,15 +227,32 @@ fi
 
 # Il CONTROLLO NEGATIVO. Senza, "tutte le regole scattano sempre" passerebbe per
 # successo: e' la stessa forma dell'allow-list rotta nel verso "scarta tutto".
+# NESSUNA REGOLA DEVE ESSERE IN ERRORE. Una query che Grafana non riesce a valutare
+# non e' rumorosa: e' muta, e da fuori e' identica a una regola che sta zitta perche'
+# va tutto bene. Grafana lo dice nel campo `health`, e nessuno lo leggeva.
+malate=$(python3 -c "
+import json
+d = json.load(open('$TMP/stato.json')).get('data', {}).get('groups', [])
+rotte = [(r.get('name'), r.get('health'), (r.get('lastError') or '')[:120])
+         for g in d for r in g.get('rules', []) if r.get('health') == 'error']
+for nome, salute, errore in rotte:
+    print(f'{nome}: {salute} — {errore}')
+")
+if [ -n "$malate" ]; then
+  echo "FALLITO: (d) regole che Grafana NON riesce a valutare:"
+  echo "$malate"
+  exit 1
+fi
+
 stato_prom=$(python3 -c "
 import json
 d = json.load(open('$TMP/stato.json')).get('data', {}).get('groups', [])
 for g in d:
     for r in g.get('rules', []):
-        if r.get('name', '').startswith('I blocchi TSDB'):
+        if r.get('name', '').startswith('Prometheus cancella blocchi'):
             print(r.get('state', '')); break
 ")
-echo "--- controllo negativo: 'I blocchi TSDB...' e' in stato ${stato_prom:-sconosciuto}"
+echo "--- controllo negativo: 'Prometheus cancella blocchi...' e' in stato ${stato_prom:-sconosciuto}"
 [ "$stato_prom" = "inactive" ] || {
   echo "FALLITO: (d) anche la regola sul TSDB e' in stato '${stato_prom}' su un Prometheus appena nato e vuoto: se scattano tutte, non sta discriminando niente"
   exit 1
@@ -236,10 +286,32 @@ if [ "${ricevute:-0}" -eq 0 ]; then
   docker logs allarmi-grafana 2>&1 | grep -iE 'notif|contact|slack|alertmanager' | tail -20
   exit 1
 fi
-# La notifica deve riguardare la regola SCATTATA, non una qualunque: senza questo
-# controllo un invio di prova a vuoto passerebbe per successo.
-grep -q "Loki" "$TMP/ricevute/notifiche.jsonl" || {
-  echo "FALLITO: (c) e' arrivata una notifica che non nomina la regola scattata"
-  exit 1
-}
+# LA NOTIFICA DEVE ESSERE QUELLA GIUSTA, E DEVE AVERE UN CORPO. Cercare "Loki"
+# non bastava: TRE regole su cinque hanno "Loki" nel titolo, e nella topologia di
+# questa prova anche `loki-volume-pieno` consegna — in NoData — un messaggio che
+# contiene "Il volume di Loki", nella stessa finestra di group_wait. L'asserzione
+# poteva quindi passare senza che la regola scattata avesse mai notificato.
+# E il corpo va preteso: con due righe di template sbagliate (nomi Alertmanager
+# dentro Grafana) le notifiche arrivavano con `text` VUOTO, cioe' senza nessuna
+# delle descrizioni scritte in regole.yaml — e nessuno se ne accorgeva.
+python3 - "$TMP/ricevute/notifiche.jsonl" <<'PYN'
+import json, sys
+righe = [r for r in open(sys.argv[1]) if r.strip()]
+giusta = None
+for r in righe:
+    if "loki-giu" in r or "Loki e' giu'" in r:
+        giusta = json.loads(r)
+        break
+if giusta is None:
+    print("FALLITO: (c) sono arrivate %d notifiche e nessuna e' della regola scattata (`loki-giu`): l'asserzione stava per accettare quella sbagliata" % len(righe))
+    sys.exit(1)
+corpo = " ".join(a.get("text", "") for a in (giusta.get("attachments") or [])) + giusta.get("text", "")
+if not corpo.strip():
+    print("FALLITO: (c) la notifica giusta e' arrivata con il CORPO VUOTO: nessuna delle descrizioni scritte in regole.yaml raggiunge il destinatario (e' cosi' che si comportano i template di Alertmanager dentro Grafana)")
+    sys.exit(1)
+if "healthcheckPath" not in corpo:
+    print("FALLITO: (c) il corpo non contiene la description della regola. Corpo: %s" % corpo[:300])
+    sys.exit(1)
+print("  ok: la notifica e' di `loki-giu` e porta la sua description")
+PYN
 echo "ok: (c) la catena regola -> politica -> contact point -> consegna regge, e \$SLACK_WEBHOOK_URL era interpolato"

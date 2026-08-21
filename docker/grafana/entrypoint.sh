@@ -27,4 +27,27 @@ if [ -z "${GF_SECURITY_ADMIN_PASSWORD:-}" ]; then
 	exit 1
 fi
 
+# SLACK_WEBHOOK_URL assente NON deve impedire a Grafana di partire, e senza questa
+# riga lo impediva. Misurato il 2026-08-21 sull'immagine spedita: con la variabile
+# vuota il provisioning dell'alerting fallisce
+#   "failed to validate integration slack: recipient must be specified when using
+#    the Slack chat API"
+# — perche' con `url` vuoto Grafana ricade sulla chat API, che vuole token e
+# recipient — e il modulo `provisioning` si porta dietro l'INTERO server: exit 1,
+# /api/health non risponde, zero dashboard. Su Railway sarebbe un crash loop, e
+# Grafana non ha healthcheckPath, quindi nessuno lo direbbe.
+#
+# Il segnaposto rende la config VALIDA e l'invio fallisce dove deve fallire: al
+# momento della notifica, nei log di Grafana. E' il degrado che la documentazione
+# dichiara — "gli allarmi ci sono e nessuno te li porta" — invece del suo opposto.
+if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+	echo "ATTENZIONE: SLACK_WEBHOOK_URL non e' impostata." >&2
+	echo "Le regole d'allarme valuteranno e gli allarmi si vedranno nella UI di" >&2
+	echo "Grafana, ma nessuna notifica uscira': il contact point punta a un" >&2
+	echo "segnaposto. Impostala come variabile del servizio Railway per chiudere" >&2
+	echo "l'ultimo pezzo." >&2
+	SLACK_WEBHOOK_URL="https://hooks.slack.invalid/SLACK_WEBHOOK_URL-NON-IMPOSTATA"
+	export SLACK_WEBHOOK_URL
+fi
+
 exec /run.sh "$@"

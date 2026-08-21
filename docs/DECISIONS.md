@@ -876,6 +876,24 @@ within a week. "Flat" stays the right question for *diagnosis* and is already a 
 The rule watches `otelcol_receiver_refused_*` instead, which is always a fault: the data
 arrived and the Collector did not take it.
 
+**Four things in that first draft were wrong, and all four were found by running it
+rather than reading it** — worth recording because three of them are invisible to any
+review of the YAML. (1) With `SLACK_WEBHOOK_URL` unset, Grafana **did not start at
+all**: an empty `url` makes it treat the receiver as the Slack chat API, validation
+fails, and the provisioning module brings the server down with it — the opposite of the
+degradation this file claimed. (2) `sum(A) + sum(B)` returns an **empty** vector when
+either family is absent, and `otelcol_receiver_refused_log_records` does not exist until
+the first log is exported: with `noDataState: OK` that rule was **mute**, which looks
+exactly like "all is well". (3) `slack.default.title` / `slack.default.text` are
+*Alertmanager* template names; inside Grafana an unknown name renders the empty string
+in silence, so every notification arrived with an empty body — none of the descriptions
+written into the rules reached anybody. (4) The threshold on Prometheus' TSDB was
+calibrated to fire **in the normal regime**: `retention.size` is a ceiling the system is
+designed to hit, so the blocks settle just under it and stay permanently above 80% with
+nothing wrong; measured growth of ~88 MB/day put the first false alarm around day 26.
+The rule now counts `prometheus_tsdb_size_retentions_total`, which increments exactly
+when the size cap starts biting and never before.
+
 `scripts/prova-allarmi.sh` runs the shipped Grafana and Prometheus images, makes
 `up{job="loki"} == 0` true by leaving Loki off the network, and requires four things a
 YAML review cannot establish: the rules are all loaded (Grafana logs a provisioning
