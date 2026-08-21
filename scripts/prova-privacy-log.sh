@@ -25,7 +25,14 @@ cd "$(dirname "$0")/.."
 RETE=prova-privacy-log
 TOKEN=token-di-prova-non-un-segreto
 IMG_LOKI=grafana/loki:3.7.6@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
-IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0-386@sha256:93e4793719dd55d0d9499328e7b45af219116cc9d1bcb95df5b3a0f8cade831d
+# Lo STESSO digest della produzione (docker-compose.yml e railway/otel-collector/
+# Dockerfile), non il tag `-386`. Quel suffisso non e' un numero di build: e' la
+# piattaforma, ed e' il difetto che #126 ha tolto dalla produzione mentre questi due
+# script hanno continuato a pinnarlo — la prova eseguiva un binario a 32 bit per
+# convalidare una config che ne spedisce uno a 64. E' la stessa famiglia del dry run
+# senza alias di rete: misura una cosa diversa da quella che gira. Il digest e' un
+# manifest list (386, amd64, arm64, ...), quindi lo stesso valore vale in CI e qui.
+IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
 # Pinnata per digest come ogni altra immagine del repository: un tag e' un'etichetta
 # e si puo' ripuntare sotto lo stesso nome. Era l'unica immagine del ramo senza, e
 # gira in CI su un checkout — con `contents: read` e nessun segreto, ma pinnarla costa
@@ -250,8 +257,24 @@ if valori != ["claude-code"]:
 
 # (b) niente di proibito, in NESSUNA forma: ne' label, ne' structured metadata, ne' body
 if "NON-DEVE-ARRIVARE" in query:
-    posti = sorted({p for p in ("user.email","user_email","user_id","organization_id","prompt","scope_secret","host_arch","chiave_inventata_domani","scope_name","scope_version","nel-body","nome-scope","versione-scope") if p in query})
-    fallimenti.append(f"(b) il payload proibito e' interrogabile — chiavi coinvolte: {posti}")
+    # I nomi si ricavano da DOVE sta il marcatore, non da un elenco confrontato con
+    # il testo intero. La prima versione faceva la seconda cosa e nominava
+    # `scope_name` a ogni fallimento: quella chiave c'e' sempre, con un valore
+    # innocuo messo da `set(scope.name, ...)`, quindi la diagnosi mandava a cercare
+    # in un posto sano. E' lo stesso difetto corretto in smoke.yml — la spiegazione
+    # appartiene all'esito, non alla lista di cio' che si temeva.
+    def porta(k, v): return "NON-DEVE-ARRIVARE" in str(k) or "NON-DEVE-ARRIVARE" in str(v)
+    posti = set()
+    for stream in risultato:
+        for k, v in (stream.get("stream") or {}).items():
+            if porta(k, v): posti.add(f"label:{k}")
+        for riga in (stream.get("values") or []):
+            if len(riga) > 1 and "NON-DEVE-ARRIVARE" in str(riga[1]): posti.add("body")
+            for k, v in ((riga[2] if len(riga) > 2 else None) or {}).items():
+                if porta(k, v): posti.add(k)
+    # Se il marcatore e' nella risposta ma non in nessuno di questi posti, il
+    # fallimento resta — con scritto che non si sa dire dove, invece di indovinare.
+    fallimenti.append(f"(b) il payload proibito e' interrogabile — chiavi coinvolte: {sorted(posti) or 'in una forma che questo controllo non sa localizzare'}")
 
 # (c) cio' che serve C'E'. Un allow-list che scarta tutto passerebbe (a) e (b) e
 #     sembrerebbe un successo: questo e' il controllo che lo smaschera.

@@ -25,7 +25,14 @@ cd "$(dirname "$0")/.."
 PORTA=38889
 NOME=contratto-metriche
 TOKEN=token-di-prova-non-un-segreto
-IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0-386@sha256:93e4793719dd55d0d9499328e7b45af219116cc9d1bcb95df5b3a0f8cade831d
+# Lo STESSO digest della produzione (docker-compose.yml e railway/otel-collector/
+# Dockerfile), non il tag `-386`. Quel suffisso non e' un numero di build: e' la
+# piattaforma, ed e' il difetto che #126 ha tolto dalla produzione mentre questi due
+# script hanno continuato a pinnarlo — la prova eseguiva un binario a 32 bit per
+# convalidare una config che ne spedisce uno a 64. E' la stessa famiglia del dry run
+# senza alias di rete: misura una cosa diversa da quella che gira. Il digest e' un
+# manifest list (386, amd64, arm64, ...), quindi lo stesso valore vale in CI e qui.
+IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
 
 pulisci() { docker rm -f "$NOME" >/dev/null 2>&1 || true; }
 trap pulisci EXIT
