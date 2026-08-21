@@ -195,12 +195,18 @@ limits_config:
         regex: .*
   retention_period: 720h
 
-  # Loki NON ha autenticazione, e i due buchi che ne derivano non pesano uguale.
-  # `GET /ingester/shutdown` spegne il processo, ma `flush=true` spedisce i chunk a
-  # R2 prima di uscire e Railway riavvia: e' un disservizio, non una perdita — e non
-  # e' disattivabile da configurazione. `POST /loki/api/v1/delete` invece DISTRUGGE,
-  # senza registrare chi, ed e' l'unico dei due che si puo' chiudere. Questa riga lo
-  # chiude: la rotta risponde 403 (misurato: rispondeva 204).
+  # Loki NON ha autenticazione, e i due buchi che ne derivano non pesano uguale —
+  # ma NON nel modo scritto qui fino al 2026-08-21.
+  # `GET /ingester/shutdown` spegne il processo e non e' disattivabile da
+  # configurazione. La riga diceva "Railway riavvia, quindi e' un disservizio":
+  # FALSO, e misurato subito dopo averlo scritto. Loki esce con codice **0**
+  # (`docker wait` su container vero), e la doc di Railway dice che `On Failure`
+  # riavvia solo su codice NON zero. Con la policy di railway/loki/railway.json quel
+  # GET ferma il log store e nessuno lo rialza: nessun healthcheck su questo
+  # servizio, e `up{job="loki"}` non ha ancora una regola d'allarme.
+  # `POST /loki/api/v1/delete` invece DISTRUGGE, senza registrare chi, ed e' l'unico
+  # dei due che si chiude da qui. Questa riga lo chiude: la rotta risponde 403
+  # (misurato: rispondeva 204, e la richiesta veniva accettata e registrata).
   #
   # Ammessi: disabled | filter-only | filter-and-delete. Il default e'
   # `filter-and-delete`, cioe' aperto.
