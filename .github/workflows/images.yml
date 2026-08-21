@@ -1012,6 +1012,24 @@ jobs:
               sys.exit(f"::error::retention divergente. Produzione: {prod} — locale: {locale}. "
                        "I due file sono due meta' della stessa decisione: si cambiano insieme.")
 
+          # L'INSIEME dei flag, non solo i due di retention: `--web.cors.origin=^$` e'
+          # stato nel solo Dockerfile dal 20/08 al 21/08/2026 e questo gate era verde,
+          # perche' leggeva due chiavi per nome. Ogni `--web.*` e `--storage.tsdb.*`
+          # e' una meta' della stessa decisione, e il prossimo aggiunto "solo per
+          # debug locale" deve essere rosso qui.
+          def flags(percorso):
+              trovati = set()
+              for riga in open(percorso):
+                  if riga.lstrip().startswith("#"):
+                      continue
+                  trovati.update(re.findall(r"(--(?:web|storage\.tsdb)\.[a-z.]+=[^\"'\s\\]+)", riga))
+              if not trovati:
+                  sys.exit(f"::error::{percorso} non dichiara nessun flag --web.*/--storage.tsdb.*: questo gate non sta guardando niente")
+              return trovati
+          if flags("railway/prometheus/Dockerfile") != flags("docker/docker-compose.yml"):
+              sys.exit(f"::error::flag di Prometheus divergenti. Produzione: {sorted(flags('railway/prometheus/Dockerfile'))} — "
+                       f"locale: {sorted(flags('docker/docker-compose.yml'))}. Una copia sola della decisione, in due file.")
+
           # `3GB` per Prometheus e' powers-of-2 ("Based on powers-of-2, so 1KB is 1024B").
           unita = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
           numero, simbolo = re.fullmatch(r"([0-9.]+)([KMGT]B)", prod["size"]).groups()
@@ -1029,5 +1047,5 @@ jobs:
           if prod["size"] not in pannello["title"]:
               sys.exit(f"::error::il titolo del pannello non dice {prod['size']}: {pannello['title']!r}")
 
-          print(f"retention allineata nei tre posti: {prod}")
+          print(f"retention allineata nei tre posti: {prod}; flag di Prometheus identici nei due file")
           PY

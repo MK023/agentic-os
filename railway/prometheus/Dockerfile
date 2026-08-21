@@ -72,8 +72,9 @@ COPY docker/prometheus.yml /etc/prometheus/prometheus.yml
 # https://evil.example`, quindi qualunque pagina aperta nel browser di chi puo'
 # raggiungere questa porta legge l'INTERO TSDB in JavaScript — trenta giorni di
 # profilo di lavoro, che SECURITY.md identifica come il contenuto sensibile del
-# volume. Sulla rete privata di Railway il raggio e' piccolo; in locale, dove il
-# dato vero passa, la porta e' sull'host.
+# volume. Sulla rete privata di Railway il raggio e' piccolo, e in locale il
+# compose non pubblica nessuna porta sull'host (fino al 21/08/2026 questa riga
+# diceva il contrario, e il compose non aveva nemmeno il flag).
 # `^$` non matcha nessuna origine: le API restano interrogabili da server a
 # server (Grafana e la status API non mandano `Origin`), e smettono di esserlo
 # da un browser di terzi. Le altre tre superfici di scrittura erano gia' chiuse
