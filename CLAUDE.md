@@ -7,13 +7,19 @@
 ## What this is
 
 Personal observability hub for AI-assisted work. Phase 1: OTel Collector →
-Prometheus → Grafana plus a tiny FastAPI status API, five services on **Railway**
+Prometheus → Grafana plus a tiny FastAPI status API on **Railway**
 behind a Cloudflare Tunnel, with a public widget living in the
 `marcobellingeri.dev` repo. **Phase 1.5 adds a sixth service, `loki`** — a private
 log store whose chunks and index live on **Cloudflare R2**, so a full Railway volume
 cannot take them with it; the local disk holds only the active index and the
-`tsdb_shipper` cache. Written and gated, **but its Railway service and R2 bucket do not
-exist yet**: six is the count in `docker/` and `railway/`, not the count that is running.
+`tsdb_shipper` cache. **Live since 2026-08-21**: six in `docker/` and `railway/` is now
+also six on the platform. What that deploy proved, rather than assumed: Loki wrote
+`loki_cluster_seed.json` to R2 on startup, so the credentials, the schemeless endpoint
+and `use_thanos_objstore: true` all work in production — and the 5 GB volume mounted
+without the `permission denied` that `RAILWAY_RUN_UID=0` exists to prevent. What it did
+**not** prove is the log path end to end: nothing reaches Loki until a client exports
+with `OTEL_LOGS_EXPORTER=otlp`, and until then an empty log store is the correct state,
+not a fault.
 The priority here is **the public/private boundary**:
 three aggregate numbers are public, everything else stays inside the project.
 
@@ -115,7 +121,7 @@ those files are correct in both places. Never fork a config to "fix it for local
 ## What NOT to do (closed decisions — don't reopen without new data)
 
 - **No Kubernetes/K3s, no Docker Swarm**, no self-hosted Langfuse, no LangChain.
-  Five small services for one user: an orchestrator buys nothing here, and Docker's
+  Six small services for one user: an orchestrator buys nothing here, and Docker's
   own docs say to use Compose if you are not deploying to Swarm.
 - **No going back to a VPS.** Decided 2026-07-29 and settled: the point of this
   platform is that there is no machine to maintain.

@@ -7,7 +7,7 @@ and what runs in production do not drift.
 ## Why Railway
 
 Decided 2026-07-29, after a VPS variant had already been written and validated. The
-hub is five small services for one user: a VPS costs about the same and adds a server
+hub is six small services for one user: a VPS costs about the same and adds a server
 to patch, harden and back up — maintenance that has nothing to do with the goal.
 Railway gives private networking by default and no machine at all. The
 infrastructure-practice argument belongs to a different project; this one is meant to
@@ -15,7 +15,8 @@ be *used*, not demonstrated. Reasoning in full: `../docs/DECISIONS.md`.
 
 ## Topology
 
-Five services in one project. **None of them takes a public Railway domain** — the
+Six services in one project — `loki` since 2026-08-21. **None of them takes a public
+Railway domain** — the
 only ingress is the tunnel, so the platform's own hostnames stay unused and there is
 no second door.
 
@@ -94,6 +95,7 @@ Neither blocks a first deploy. They decide when the Hobby plan stops being optio
 | `prometheus` | `RAILWAY_RUN_UID=0` (see "volume ownership" below — not a secret, and not optional) |
 | `grafana` | `GF_SECURITY_ADMIN_PASSWORD`, `GF_AUTH_ANONYMOUS_ENABLED=false` |
 | `status-api` | `PROMETHEUS_URL=http://prometheus.railway.internal:9090`, `STATUS_API_TOKEN`, `SENTRY_DSN` (optional) |
+| `loki` | the four `LOKI_R2_*`, plus `RAILWAY_RUN_UID=0` (same reason as `prometheus`). `LOKI_R2_ENDPOINT` goes in **without** a scheme — `-verify-config` accepts the `https://` form and Loki dies at startup on it |
 
 Generate the two tokens once, with `openssl rand -hex 32`. `OTLP_INGEST_TOKEN` also
 goes into Claude Code's `OTEL_EXPORTER_OTLP_HEADERS` (see
@@ -130,13 +132,16 @@ discovering them from an empty dashboard.
    within an attached volume. If you are affected by this, you can set
    `RAILWAY_RUN_UID=0` environment variable in your service."*
 
-   So the `prometheus` service — and only that one — carries `RAILWAY_RUN_UID=0` and
-   runs as root. The cost is stated plainly: it is the single service in this project
+   So `prometheus` carries `RAILWAY_RUN_UID=0` and runs as root — and since
+   2026-08-21 `loki` does too, for the same reason: its image runs as `10001` and its
+   volume on `/loki` is presented owned by root. **This paragraph said "and only that
+   one" until then**, which is the sentence a second volume was always going to
+   falsify. The cost is stated plainly: these are the two services in this project
    without the non-root property. The `cap_drop` clause used to read as though this
    service were the exception; it is not. **No Railway service has `cap_drop` or
    `no-new-privileges`** — the platform exposes no equivalent, so those two lines in
    `docker/docker-compose.yml` are local fidelity, not a production control, for all
-   five services. What limits the exposure here is that Prometheus has no public
+   six services. What limits the exposure here is that Prometheus has no public
    domain and is reachable only from inside the project's private network.
 
    The variable, not `USER 0` in the Dockerfile, on purpose: the weakening then

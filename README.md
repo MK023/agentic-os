@@ -4,7 +4,7 @@ Personal platform to observe (and later orchestrate) AI-assisted work.
 
 **Phase 1, live since 2026-07-29**: every Claude Code session streams metrics into a
 private hub: OTel Collector → Prometheus → Grafana plus a small FastAPI status
-API, running as five services on **Railway** behind a **Cloudflare Tunnel**, with a
+API, running on **Railway** behind a **Cloudflare Tunnel**, with a
 sanitized public widget on [marcobellingeri.dev](https://marcobellingeri.dev).
 
 **Phase 1.5, written and gated, not deployed**: a private **Loki** log store as a sixth
