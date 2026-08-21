@@ -655,6 +655,15 @@ jobs:
       - name: identita' e contenuto non arrivano nel log store (prova eseguita)
         run: bash scripts/prova-privacy-log.sh
 
+      # `deletion_mode: disabled` chiude la sola rotta di Loki che DISTRUGGE senza
+      # registrare chi. Che la chiuda davvero, e che chiudendola non si sia spenta
+      # anche la ritenzione automatica, sono due cose che nessuna lettura della config
+      # decide: la doc del fornitore lega le rotte di cancellazione a
+      # `retention_enabled`, quindi la separazione fra le due va misurata. Se la
+      # ritenzione si fermasse, i 720h diventerebbero "per sempre" con Loki up=1.
+      - name: la rotta di cancellazione e' chiusa e la ritenzione gira ancora (prova eseguita)
+        run: bash scripts/prova-ritenzione-loki.sh
+
       # Il gate "la finestra sta nelle query" e quello sulle tariffe confrontano TESTO
       # fra i file accoppiati. Il testo puo' essere identico in tutti e tre e sbagliato
       # in tutti e tre insieme, perche' il nome vero delle metriche lo decide
@@ -931,6 +940,46 @@ jobs:
                   print(f"::error::{f}")
               sys.exit(1)
           print(f"ok: due allow-list chiuse, {len(sm)} chiavi allineate fra i due file, e i quattro statement che keep_keys non copre")
+          PY
+
+      # Tre pezzi accoppiati che stanno in file diversi e si leggono uno alla volta:
+      # loki non ha `healthcheckPath` (decisione chiusa), espone `GET
+      # /ingester/shutdown` senza credenziale, e quella rotta fa uscire il processo
+      # con codice **0** — misurato con `docker wait`, non dedotto. La doc di Railway
+      # dice che `ON_FAILURE` riavvia solo su codice NON zero: con quella policy una
+      # GET dalla rete privata ferma il log store e nessuno lo rialza, senza nessun
+      # rosso da nessuna parte. `ALWAYS` non chiude la rotta — non e' chiudibile — ma
+      # rende il guasto temporaneo invece che definitivo.
+      #
+      # Questo gate esiste perche' la ragione di quel valore NON e' leggibile dal
+      # file: railway.json e' JSON e non ammette commenti, quindi un allineamento
+      # "tutti i servizi a ON_FAILURE" sembrerebbe pulizia.
+      - name: loki resta a restartPolicyType ALWAYS (esce 0 su una rotta pubblica)
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          c = json.load(open("railway/loki/railway.json"))
+          # `deploy` UNITO agli override per ambiente, e non e' zelo: lo schema
+          # pubblicato ha `environments.<nome>.deploy.restartPolicyType`, e la doc
+          # config-as-code fissa la priorita' — l'override per ambiente vince sulla
+          # base. Leggendo il solo `deploy` questo gate passava VERDE su un file che
+          # in produzione vale ON_FAILURE e per giunta dichiara un healthcheckPath:
+          # dimostrato eseguendolo, ed e' il gate nato rotto che questo repository
+          # teme piu' di un difetto.
+          deploy = dict(c.get("deploy") or {})
+          for ambiente, conf in (c.get("environments") or {}).items():
+              deploy.update((conf.get("deploy") or {}))
+          politica = deploy.get("restartPolicyType")
+          if politica != "ALWAYS":
+              print(f"::error::railway/loki/railway.json ha restartPolicyType={politica!r}: con qualunque valore diverso da ALWAYS, `GET /ingester/shutdown` (uscita con codice 0, nessuna credenziale) ferma il log store e nessuno lo riavvia — loki non ha healthcheckPath")
+              sys.exit(1)
+          # La seconda meta' dell'accoppiamento: se un giorno loki prendesse un
+          # healthcheckPath, questa riga andrebbe ridiscussa invece di restare vera
+          # per inerzia.
+          if "healthcheckPath" in deploy:
+              print("::error::loki ora dichiara healthcheckPath: la ragione di ALWAYS era proprio la sua assenza — si rilegge la decisione, non si lascia il valore per inerzia")
+              sys.exit(1)
+          print("ok: loki a ALWAYS, e senza healthcheckPath come la decisione presuppone")
           PY
 
       - name: il cap di retention e' lo stesso nei tre posti che lo dichiarano
