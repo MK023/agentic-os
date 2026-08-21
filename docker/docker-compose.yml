@@ -79,6 +79,13 @@ services:
       # alla produzione, che è il motivo per cui questo file esiste.
       - --storage.tsdb.retention.time=30d
       - --storage.tsdb.retention.size=3GB
+      # Anche questi due, per la stessa ragione: il Dockerfile li ha dal 20/08 e il
+      # compose no, e il gate "retention uguale nei tre posti" leggeva solo i due
+      # flag di retention. Da oggi confronta l'INSIEME dei flag `--web.*` e
+      # `--storage.tsdb.*`: il prossimo aggiunto "solo per debug locale" e' rosso.
+      # `^$` = nessuna origine CORS ammessa; il ragionamento sta nel Dockerfile.
+      - --web.cors.origin=^$
+      - --storage.tsdb.path=/prometheus
 
   grafana:
     image: grafana/grafana:13.1.4@sha256:9be3a3ccdb06bcbb127f888b0c4c1d151837443e478887897a63a27d7b348043
@@ -94,7 +101,21 @@ services:
       # stanno in docker/grafana/grafana.ini, una copia sola per i due ambienti, come
       # ogni altra configurazione di questo progetto.
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      # Vuota e' ammessa: e' l'entrypoint a mettere il segnaposto. Senza passarla,
+      # `$SLACK_WEBHOOK_URL` in notifiche.yaml resta vuoto e Grafana non parte.
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    # Lo STESSO entrypoint dell'immagine Railway, montato e non copiato. Fino al
+    # 21/08/2026 il compose avviava l'immagine del fornitore senza guardia, e con
+    # `.env` copiato da `.env.example` Grafana moriva in loop di riavvio:
+    #   "failed to validate integration slack: recipient must be specified when
+    #    using the Slack chat API"
+    # — misurato, la stessa riga che DECISIONS.md aveva gia' misurato sull'immagine
+    # spedita. "Una copia di ogni configurazione" valeva per i file e non per il
+    # runtime: l'unica guardia che rende avviabile il provisioning stava solo in
+    # produzione, e la guardia sulla password non girava mai in locale.
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
     volumes:
+      - ./grafana/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
