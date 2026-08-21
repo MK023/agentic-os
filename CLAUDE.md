@@ -81,7 +81,10 @@ To validate the Collector config without a Docker daemon, download the real
   Marco's, always. Writing and validating the code for them is not.
 - Vendor behaviour is read from the vendor's docs before it is written down here.
   Twelve bugs in the original plan survived an execute-everything pass and died to a
-  read-the-docs pass; that is the house lesson.
+  read-the-docs pass; that is the house lesson. **It holds for a value that is already
+  written, too**, which is the half that gets skipped: Sonnet 5's price was wrong by
+  50% because the comment beside it said "expires 31/08" and the vendor had cancelled
+  the increase. No test here can notice that somebody else's price list changed.
 - **MUST: deploys on this project queue and take
   time** — and since 2026-08-19 the plan is Hobby, billed on usage, not the free
   credits this line used to name. Never merge a run of PRs back to back and call it done. A push that arrives
@@ -93,6 +96,24 @@ To validate the Collector config without a Docker daemon, download the real
   running commit of each affected service** (`list-deployments` → the newest `SUCCESS`
   and its `commitHash`), not just that the deploys are green. `SKIPPED` and `REMOVED`
   are the two statuses that mean "did not ship".
+- **Read the service's own logs on the first real traffic, before calling anything
+  working.** Not the exit code and not the green checks. On 2026-08-21
+  `set(log.trace_id.string, "")` failed on **every record** — and the failure is at
+  **execution** time, once per record (`failed to execute statement` /
+  `trace ids must be 32 hex characters`, because the setter goes through
+  `ParseTraceID`). That is exactly why nothing static could see it: the config parses,
+  so `validate` exits 0 and the Collector starts. The twelve blocking gates
+  (`CONTRIBUTING.md`) were green, a hand review missed it, and so did a proof that
+  *executes* — the Collector's own log line was the only witness. **What to look for:
+  `failed to execute statement` in the Collector's log while a real payload flows.**
+- **Measure log volume on the image that ships, and remember the platform has limits
+  the laptop does not.** Two numbers from 2026-08-21, and they come from **two
+  different measurements** — do not read one as a subset of the other: Grafana emitted
+  **1823 lines in 35 seconds**, measured locally on the shipped image; and separately,
+  in production, Railway reported **676 messages dropped** in a two-second window,
+  because it discards above **500 lines/second per replica**. Neither number was
+  guessable, and the local run could not have produced the second one — that ceiling
+  does not exist on a laptop.
 
 ## Conventions
 
