@@ -476,7 +476,7 @@
     {
       "id": 201,
       "title": "Tool falliti, per tool e tipo d'errore (5m)",
-      "description": "Quale tool si rompe e come. E' la domanda per cui Loki e' stato aggiunto: la metrica `claude_code_code_edit_tool_decision` conta le decisioni, non gli esiti. `success` e `error_type` sono structured metadata, non label di indice — l'unica label e' `service_name`, di proposito (una label per sessione o per tool sarebbe il primo anti-pattern di cardinalita' che la doc di Loki nomina).",
+      "description": "Quale tool si rompe e come. E' la domanda per cui Loki e' stato aggiunto: delle metriche Claude Code il Collector ne lascia passare TRE, e nessuna delle tre porta l'esito di una tool call — questa risposta esiste solo nei log. `success` e `error_type` sono structured metadata, non label di indice: l'unica label e' `service_name`, di proposito (una label per sessione o per tool sarebbe il primo anti-pattern di cardinalita' che la doc di Loki nomina).",
       "type": "timeseries",
       "datasource": {
         "type": "loki",

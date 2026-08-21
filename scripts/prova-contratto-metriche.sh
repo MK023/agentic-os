@@ -92,9 +92,19 @@ if not famiglie:
 
 # (2) cio' che i due consumatori cercano
 codice = pathlib.Path("services/public-status-api/main.py").read_text()
-pannello = pathlib.Path("docker/grafana/dashboards/claude-code.json").read_text()
 cerca_codice = set(re.findall(r"claude_code_[a-z_]+", codice))
-cerca_pannello = set(re.findall(r"claude_code_[a-z_]+", pannello))
+
+# SOLO le espressioni dei target, non il testo del file. Cercare la sottostringa
+# nel JSON intero prende anche le DESCRIZIONI dei pannelli, e una descrizione che
+# nomina una metrica per dire "questa NON la usiamo" faceva fallire il gate con un
+# messaggio che accusava una query inesistente. Misurato il 2026-08-21 su un
+# pannello nuovo. E' la terza volta in questo repository che un gate legge prosa
+# come se fosse codice: era gia' successo due volte in images.yml, con i commenti.
+dashboard = json.loads(pathlib.Path("docker/grafana/dashboards/claude-code.json").read_text())
+espressioni = " ".join(t.get("expr", "")
+                       for p in dashboard.get("panels", [])
+                       for t in (p.get("targets") or []))
+cerca_pannello = set(re.findall(r"claude_code_[a-z_]+", espressioni))
 
 for nome, cercati in (("services/public-status-api/main.py", cerca_codice),
                       ("docker/grafana/dashboards/claude-code.json", cerca_pannello)):
