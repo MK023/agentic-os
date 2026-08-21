@@ -886,6 +886,63 @@ also if `loki` ever gains a `healthcheckPath`, because that is the premise the d
 rests on. Verified red on both breakages and green on the real file, by running the
 script extracted from the workflow.
 
+**Alerting lives in Grafana, not in Alertmanager, and until 2026-08-21 it did not
+live anywhere.** There was no `rule_files` in Prometheus and no Alertmanager: every
+series this project collects was recorded and never evaluated, which makes it a
+recording rather than a witness. The only way to notice a fault was for somebody to go
+and read the logs — which worked on the night of 2026-08-20 because two of us were
+awake, and does not work three weeks later.
+
+Grafana rather than Alertmanager, for two measured reasons and not out of laziness:
+Alertmanager would be a **seventh service** on a usage-billed plan, and **a Prometheus
+rule cannot query Loki** — half of what is worth watching here is made of logs. Grafana
+provisions rules, contact points and notification policies from YAML files, the same
+mechanism already used for datasources and dashboards, so there is still exactly one
+copy of every configuration and it is in `docker/`.
+
+**Every metric in those rules was read off the running binary**, not recalled. That is
+how `loki_ingester_wal_disk_usage_percent` turned up — the vendor documents it as
+*"Current disk usage percentage (0.0 to 1.0) for the WAL directory"*, and the WAL
+directory sits under `path_prefix: /loki`, i.e. on the 5 GB volume. The plan had this
+signal written down as unavailable. A rule pointed at a metric that does not exist is
+not noisy, it is **mute**, and mute is indistinguishable from "all is well".
+
+**One rule was deliberately not written the way the plan asked.** The plan wanted "the
+Collector stopped receiving" — a flat `otelcol_receiver_accepted_*`. On this project
+that series is flat every night, because the producer is a person who sleeps: it would
+be an alarm that rings when nothing is happening, and an alarm like that gets silenced
+within a week. "Flat" stays the right question for *diagnosis* and is already a panel.
+The rule watches `otelcol_receiver_refused_*` instead, which is always a fault: the data
+arrived and the Collector did not take it.
+
+**Four things in that first draft were wrong, and all four were found by running it
+rather than reading it** — worth recording because three of them are invisible to any
+review of the YAML. (1) With `SLACK_WEBHOOK_URL` unset, Grafana **did not start at
+all**: an empty `url` makes it treat the receiver as the Slack chat API, validation
+fails, and the provisioning module brings the server down with it — the opposite of the
+degradation this file claimed. (2) `sum(A) + sum(B)` returns an **empty** vector when
+either family is absent, and `otelcol_receiver_refused_log_records` does not exist until
+the first log is exported: with `noDataState: OK` that rule was **mute**, which looks
+exactly like "all is well". (3) `slack.default.title` / `slack.default.text` are
+*Alertmanager* template names; inside Grafana an unknown name renders the empty string
+in silence, so every notification arrived with an empty body — none of the descriptions
+written into the rules reached anybody. (4) The threshold on Prometheus' TSDB was
+calibrated to fire **in the normal regime**: `retention.size` is a ceiling the system is
+designed to hit, so the blocks settle just under it and stay permanently above 80% with
+nothing wrong; measured growth of ~88 MB/day put the first false alarm around day 26.
+The rule now counts `prometheus_tsdb_size_retentions_total`, which increments exactly
+when the size cap starts biting and never before.
+
+`scripts/prova-allarmi.sh` runs the shipped Grafana and Prometheus images, makes
+`up{job="loki"} == 0` true by leaving Loki off the network, and requires four things a
+YAML review cannot establish: the rules are all loaded (Grafana logs a provisioning
+error and carries on, so a bad rule simply does not exist), every rule names a
+datasource that exists, the right rule fires while another stays inactive, and **the
+notification is delivered**. That last one replaced an assertion that could never pass:
+Grafana returns a contact point's URL as `[REDACTED]`, because it is a credential, so
+comparing the string was impossible — the proof points `$SLACK_WEBHOOK_URL` at a local
+receiver and waits for the POST instead. Measured: fires after 18s, notification lands
+39s later, and the receiver sees the rule's name.
 ## Observability of this project itself
 
 **Sentry yes, from the start** — zero-dependency envelope client in the status API,

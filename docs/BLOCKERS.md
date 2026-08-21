@@ -185,6 +185,28 @@ as a task instead of trusted to a check.
 
 ## Still Marco's call
 
+- **`SLACK_WEBHOOK_URL` on the `grafana` Railway service.** One variable, and it is the
+  only thing left between "the alerts exist" and "the alerts reach somebody". Since
+  2026-08-21 the rules, the contact point and the notification policy are provisioned
+  from `docker/grafana/provisioning/alerting/`, and `scripts/prova-allarmi.sh` proves
+  the whole chain by making a rule fire on a broken reality and requiring the
+  notification to be **delivered** to a local receiver — so what is unproven is not the
+  wiring, it is only that Slack's endpoint accepts it.
+  **What happens meanwhile is declared — and it took a measurement to make the
+  declaration true.** As first written, this paragraph said Grafana would provision fine
+  and only the send would fail. **That was false, and dangerously so**: with the variable
+  unset, `url` is empty, Grafana falls back to the Slack *chat API*, the contact point
+  fails validation, and the `provisioning` module takes the **whole server** down — exit
+  1, no `/api/health`, no dashboards. On Railway that is a crash loop on a service with
+  no `healthcheckPath`, so nothing would have said so. Merging that would have taken
+  Grafana off the air to add alerting to it.
+  Since 2026-08-21 `docker/grafana/entrypoint.sh` substitutes a placeholder URL when the
+  variable is absent and prints why. So the sentence is now true as written: rules
+  evaluate, alerts show in the UI behind Access, and the send fails at send time, in
+  Grafana's own logs. The system degrades to "the alarms exist and nobody carries them
+  to you". `scripts/prova-allarmi.sh` starts a container with the **shipped** provisioning
+  and **no** variable, and fails if it does not come up — a declared degradation with
+  nothing watching it is how this one got written wrong the first time.
 - ~~Whether to add `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` /
   `STATUS_API_TOKEN` as GitHub secrets.~~ **Decided 2026-08-20: yes**, together with a
   Railway and a Sentry token. `sorveglianza.yml` is the workflow that uses the first

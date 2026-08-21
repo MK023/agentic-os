@@ -664,6 +664,13 @@ jobs:
       - name: la rotta di cancellazione e' chiusa e la ritenzione gira ancora (prova eseguita)
         run: bash scripts/prova-ritenzione-loki.sh
 
+      # Un errore nel provisioning delle regole NON impedisce a Grafana di partire:
+      # logga e prosegue. Quindi una regola scritta male semplicemente non esiste, e
+      # da fuori e' identica a una regola che sta zitta perche' va tutto bene. Qui
+      # Grafana e Prometheus veri girano davvero, una regola viene fatta scattare
+      # rompendo la realta' (Loki assente dalla rete) e la notifica deve ARRIVARE.
+      - name: le regole d'allarme esistono, scattano e notificano (prova eseguita)
+        run: bash scripts/prova-allarmi.sh
       # Il gate "la finestra sta nelle query" e quello sulle tariffe confrontano TESTO
       # fra i file accoppiati. Il testo puo' essere identico in tutti e tre e sbagliato
       # in tutti e tre insieme, perche' il nome vero delle metriche lo decide

@@ -58,7 +58,7 @@ docker build -f railway/prometheus/Dockerfile -t p .   # same for the other four
 docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars only silence warnings; it exits 0 without them
 bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker only
 bash scripts/prova-ritenzione-loki.sh                          # gate: delete route closed AND retention still running, ~60s, Docker only
-cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
+bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker onlycd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
 checkov --config-file .checkov.yml -d .
