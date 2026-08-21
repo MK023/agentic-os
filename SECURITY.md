@@ -90,10 +90,10 @@ question a perimeter never answers.
 | Route | Measured | What it does | Closable here |
 |---|---|---|---|
 | `GET /ingester/shutdown` | `204`, then **exit code 0** | Stops the log store. See below — this one changed a deploy setting | **no** |
-| `POST /loki/api/v1/delete` | `403` since 2026-08-21 | Destroyed logs without recording who | **yes — closed**, `deletion_mode: disabled` |
+| `POST /loki/api/v1/delete` | `204` on this branch; `403` once `deletion_mode: disabled` lands | Destroys logs without recording who — **present tense until that merge** | **yes**, and the change is in a separate PR: this row is the one place in the table that describes a control shipping elsewhere, so it says so |
 | `POST /log_level?log_level=debug` | `200`, level changes | Floods the 5 GB volume and the R2 bill; or `error` to go quiet | **no** |
 | `GET /flush` | `204` | Forces a flush: many small chunks, R2 writes are billed per request | **no** |
-| `GET /config` | `200` | Prints `access_key_id` **in cleartext**. `secret_access_key` is masked `********` | **no** |
+| `GET /config` | `200` | Prints `endpoint`, `bucket_name` and `access_key_id` **in cleartext**; `secret_access_key` is masked | **not tried** — see below; a candidate exists (`native_aws_auth_enabled`) and declaring it closed or impossible without running it would be the same mistake this section exists to avoid |
 | `GET /debug/pprof/heap` | `200` | Heap dump — log records in flight | **no**, see below |
 | `POST /ingester/prepare_shutdown` | `204`, state `set` | Arms the shutdown path; `DELETE` disarms it | **no** |
 | `POST /loki/api/v1/push` | `204` | **Bypasses both allow-lists** — see below | bounded, not closed |
@@ -109,6 +109,25 @@ declares `ALWAYS`, which turns a permanent stop into a restart. It is not a fix 
 route — the route cannot be turned off — it is the difference between an outage that
 ends by itself and one that waits for somebody to look.
 
+**What `ALWAYS` costs, stated because half a trade-off is not a trade-off.** It does not
+shrink the attack surface: the route stays open and unauthenticated, so one GET becomes
+a restart and a *loop* of GETs becomes repeated restarts. Every start does I/O against
+R2 — Loki reads the delete-request store during `init compactor`, measured — and the
+plan is billed on usage while the row below still reads "R2 spend: **nobody**". The
+second cost is the failure *mode*: `ALWAYS` converts a stop into **flapping**, and
+flapping on a service with no `healthcheckPath` is exactly as quiet as the stop was.
+That half only closes when a rule watches `up{job="loki"}` — which is a separate PR, not
+a property of this one.
+
+**One thing is deliberately not answered here, because reading the docs did not settle
+it.** The vendor's restart-policy page says the default `On Failure` comes "with a
+maximum of 10 restarts" and that paid plans "can set any restart policy with any number
+of restarts"; it does not say what bound `ALWAYS` carries when
+`restartPolicyMaxRetries` is left unset, and the schema makes that key optional. So
+either the cap does not apply — and the paragraph above is the whole story — or it does,
+and the permanent stop returns at the eleventh request. Unmeasured, and written down as
+unmeasured rather than assumed either way.
+
 **The native push API is not governed by the two allow-lists.** Measured: a push to
 `/loki/api/v1/push` carrying `etichetta_arbitraria` and `user_email` produced an index
 label *and* queryable structured metadata with both values intact. `otlp_config` in
@@ -117,9 +136,16 @@ at all. The privacy guarantee therefore reads: *the Collector cannot leak identi
 Loki*, not *nothing can*. What bounds the damage is `max_global_streams_per_user: 200`
 and the fact that reaching this endpoint already means being inside the private network.
 
-**`/config` leaking `access_key_id` is why the R2 token is least-privilege**, and that
-scoping was verified rather than assumed: `403` on any other bucket and on the account.
-The value that matters, `secret_access_key`, is masked.
+**What `/config` leaks is not mainly the key id.** `secret_access_key` comes back
+masked (`********`) — a vendor default, not a control here, and nothing re-reads it. The
+key id alone is not a credential: on its own it opens nothing, so calling
+least-privilege its "mitigation" describes the wrong thing. What the same block does
+expose in cleartext is `endpoint` and `bucket_name`, and in production the endpoint is
+`<ACCOUNT_ID>.r2.cloudflarestorage.com` — **the Cloudflare account id and the bucket
+name**, which are worth more to somebody mapping this setup than the key id is. The R2
+token being least-privilege (`403` on any other bucket and on the account, verified once
+on 2026-08-21) bounds what a leaked *secret* could do; it bounds nothing about log
+destruction, because that goes through Loki, which holds the token.
 
 **pprof stays open, deliberately, and the alternative was measured rather than
 assumed.** The flag's own help text says `-server.register-instrumentation` registers

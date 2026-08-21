@@ -870,6 +870,15 @@ Two things were checked before writing the value rather than after: `ALWAYS` is 
 CLI menu is not the platform — and the vendor's plan limits put `ALWAYS` behind a paid
 plan, which this project is on.
 
+**Two limits of that gate, written here because a gate whose reach is overestimated is
+worse than none.** It reads the repository, not the platform: the value that actually
+runs lives in the Railway workspace, nothing re-reads it, and no row was added to the
+"controls that live outside git" table in `SECURITY.md` for it — that is a declared gap,
+not an oversight. And the vendor's own config-as-code page carries a deprecation banner:
+existing files keep working for legacy services **until 2026-12-01**. After that date the
+gate can stay green while the file stops being applied and the policy falls back to the
+dashboard default, which is `ON_FAILURE` — the exact value it exists to prevent.
+
 The reason cannot live next to the value, because `railway.json` is JSON and takes no
 comments — so a future "let's align every service to ON_FAILURE" would read as tidying.
 That is why there is a gate: `images.yml` fails if the policy moves off `ALWAYS`, and

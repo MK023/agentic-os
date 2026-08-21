@@ -81,8 +81,9 @@ To validate the Collector config without a Docker daemon, download the real
 - Vendor behaviour is read from the vendor's docs before it is written down here.
   Twelve bugs in the original plan survived an execute-everything pass and died to a
   read-the-docs pass; that is the house lesson.
-- **MUST: this project runs on Railway's free credits, so deploys queue and take
-  time.** Never merge a run of PRs back to back and call it done. A push that arrives
+- **MUST: deploys on this project queue and take
+  time** — and since 2026-08-19 the plan is Hobby, billed on usage, not the free
+  credits this line used to name. Never merge a run of PRs back to back and call it done. A push that arrives
   while a build is still in flight **cancels** that build, and the replacement deploy
   is `SKIPPED` if its own commit misses that service's `watchPatterns` — so the change
   lands on `main` and never reaches production, green everywhere, silently. That
@@ -143,7 +144,10 @@ those files are correct in both places. Never fork a config to "fix it for local
   cumulative per process, so without it concurrent sessions collapse into one series
   and the last export wins — two sessions read as one.
 - **Never reduce the log path to one barrier, and never move the catch-all.** Two
-  allow-lists on purpose: `transform/log-allowlist` in the Collector — **three**
+  allow-lists on purpose — **and both govern the OTLP path only**: measured 2026-08-21,
+  Loki's native `POST /loki/api/v1/push` walks past both with arbitrary labels, so the
+  claim is "the Collector cannot leak identity", not "nothing can" (`SECURITY.md` has
+  the measurement). `transform/log-allowlist` in the Collector — **three**
   statements, `resource`, `scope` *and* `log`, all `keep_keys` — and `otlp_config` in
   `docker/loki.yaml` with `ignore_defaults: true` plus a `drop` catch-all **last** in all
   three sections. The `scope` statement is the one that looks droppable and is not:

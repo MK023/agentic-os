@@ -950,7 +950,16 @@ jobs:
           python3 - <<'PY'
           import json, sys
           c = json.load(open("railway/loki/railway.json"))
-          deploy = c.get("deploy", {}) or {}
+          # `deploy` UNITO agli override per ambiente, e non e' zelo: lo schema
+          # pubblicato ha `environments.<nome>.deploy.restartPolicyType`, e la doc
+          # config-as-code fissa la priorita' — l'override per ambiente vince sulla
+          # base. Leggendo il solo `deploy` questo gate passava VERDE su un file che
+          # in produzione vale ON_FAILURE e per giunta dichiara un healthcheckPath:
+          # dimostrato eseguendolo, ed e' il gate nato rotto che questo repository
+          # teme piu' di un difetto.
+          deploy = dict(c.get("deploy") or {})
+          for ambiente, conf in (c.get("environments") or {}).items():
+              deploy.update((conf.get("deploy") or {}))
           politica = deploy.get("restartPolicyType")
           if politica != "ALWAYS":
               print(f"::error::railway/loki/railway.json ha restartPolicyType={politica!r}: con qualunque valore diverso da ALWAYS, `GET /ingester/shutdown` (uscita con codice 0, nessuna credenziale) ferma il log store e nessuno lo riavvia — loki non ha healthcheckPath")
