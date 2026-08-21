@@ -66,8 +66,36 @@ risposta=$(curl -s -w '\n%{http_code}' ${intestazioni_access[@]+"${intestazioni_
 codice=$(echo "$risposta" | tail -1)
 corpo=$(echo "$risposta" | sed '$d')
 
-if [ "$codice" = "200" ] && echo "$corpo" | grep -q 'sessions_today'; then
-  echo "ok: status API risponde con i campi attesi — ${corpo}"
+# La FORMA dei tre campi, non la presenza di una sottostringa. Fino al 21/08/2026
+# qui c'era `grep -q 'sessions_today'`: passava un corpo con `null` al posto del
+# numero, passava se due campi su tre sparivano in un refactor, e passava anche un
+# messaggio d'errore che per caso nominasse il campo. E' la stessa famiglia di
+# guasto che smoke.yml prende sul serio dall'altro lato del Worker.
+# Si asserisce la forma e NON "diverso da zero": il cron e' alle 05:23 UTC e tre
+# zeri a quell'ora sono spesso la risposta giusta — un gate che diventa rosso su un
+# hub sano e' il modo piu' rapido di insegnare a ignorarlo.
+# NIENTE apostrofi dentro il blocco qui sotto: e' racchiuso in virgolette singole.
+problema=$(printf '%s' "$corpo" | python3 -c '
+import json, sys
+
+try:
+    d = json.load(sys.stdin)
+except Exception as e:  # noqa: BLE001 — qualunque corpo non-JSON e un guasto
+    print("il corpo non e JSON: " + str(e))
+    sys.exit(0)
+attesi = ("sessions_today", "tokens_today", "cost_usd_today")
+# bool e sottoclasse di int: un true passerebbe per numero.
+rotti = [k for k in attesi if not isinstance(d.get(k), (int, float)) or isinstance(d.get(k), bool)]
+if rotti:
+    print("campi assenti o non numerici: " + ", ".join(rotti))
+' 2>&1)
+
+if [ "$codice" = "200" ] && [ -z "$problema" ]; then
+  echo "ok: status API risponde con i tre numeri — ${corpo}"
+elif [ "$codice" = "200" ]; then
+  echo "FAIL: status API risponde 200 ma il corpo non regge — ${problema}" >&2
+  echo "      corpo: ${corpo}" >&2
+  fallimenti=1
 elif [ "$codice" = "502" ]; then
   echo "FAIL: status API viva ma Prometheus non risponde (502 controllato)" >&2
   fallimenti=1

@@ -88,6 +88,32 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+
+          # IL PAVIMENTO, prima dello scan vero. Tutto il potere di questo gate sta
+          # in `useDefault = true` dentro .gitleaks.toml: portarla a false — un
+          # refactor, un tentativo di zittire un falso positivo — lascerebbe gitleaks
+          # con zero regole. Scansionerebbe tutta la storia, non troverebbe niente
+          # perche non ha niente da cercare, e uscirebbe 0: verde e cieco, esattamente
+          # il run di mutmut morto che mutation.yml ha gia chiuso con un pavimento.
+          # Non si asserisce la riga di config — si pianta un segreto e si pretende
+          # che il binario CON QUESTA CONFIG lo trovi. Un oracolo che vive fuori dal
+          # file sotto esame.
+          # Le due meta della finta credenziale stanno separate nel printf apposta:
+          # assemblate fanno scattare la regola, scritte qui non matchano niente, e
+          # lo scan della storia qui sotto passa su questo stesso file.
+          canarino="$RUNNER_TEMP/canarino"
+          mkdir -p "$canarino"
+          printf 'aws_access_key_id = AKIA%s\naws_secret_access_key = %s\n' \
+            "QYLPT5PBRDGZ3W6E" "wJalrXUtnFEMI7K7MDENGbPxRfiCYFAKEKEY1234" \
+            > "$canarino/finta-credenziale.txt"
+          if "$RUNNER_TEMP/gitleaks" dir --config .gitleaks.toml --redact=100 \
+               --exit-code 1 --no-banner "$canarino" >/dev/null 2>&1; then
+            echo "::error::gitleaks NON ha trovato una credenziale piantata apposta: con questa config gira senza regole, e il verde qui sotto non significherebbe niente"
+            exit 1
+          fi
+          echo "pavimento ok: il binario con questa config trova una credenziale piantata"
+          rm -rf "$canarino"
+
           "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact=100 --exit-code 1 --no-banner .
 
   # Infrastructure static analysis: the Dockerfiles and these workflows, which is all
@@ -106,6 +132,36 @@ jobs:
           # Nessun push dalla CI: lasciare il token in .git/config allarga
           # solo il raggio di un eventuale compromesso di uno step successivo.
           persist-credentials: false
+      # Il pavimento, e questo era l'unico gate del repo a non averne uno. Checkov
+      # esce 0 anche avendo scansionato ZERO file: basta che `framework:` nomini
+      # qualcosa che qui non esiste (c'era Terraform fino al 19/08 e non c'e' piu'),
+      # o che uno `skip-path` copra le cartelle giuste — e con `quiet: true` e
+      # `compact: true` non lo direbbe nemmeno ad alta voce. Si asserisce l'INGRESSO,
+      # che e' cio' che si puo' affermare senza leggere l'output dello strumento:
+      # i due framework dichiarati e i file che devono trovarsi sotto di essi.
+      - name: checkov ha davvero qualcosa da guardare
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, yaml
+
+          cfg = yaml.safe_load(open(".checkov.yml")) or {}
+          attesi = {"dockerfile", "github_actions"}
+          dichiarati = set(cfg.get("framework") or [])
+          if dichiarati != attesi:
+              sys.exit(f"::error::.checkov.yml dichiara framework {sorted(dichiarati)} invece di {sorted(attesi)}: "
+                       "un framework che qui non esiste fa uscire checkov 0 avendo guardato zero file")
+          if cfg.get("skip-path"):
+              sys.exit(f"::error::.checkov.yml ha uno skip-path ({cfg['skip-path']}): i salti vanno INLINE nel file che li "
+                       "chiede, con la ragione accanto, se no silenziano anche le immagini che devono restare controllate")
+
+          dockerfile = glob.glob("railway/*/Dockerfile") + glob.glob("services/*/Dockerfile")
+          workflow = glob.glob(".github/workflows/*.yml")
+          if len(dockerfile) < 6 or len(workflow) < 10:
+              sys.exit(f"::error::checkov troverebbe {len(dockerfile)} Dockerfile e {len(workflow)} workflow: "
+                       "meno di quanti ne ha questo repo, quindi lo scan sta guardando altrove")
+          print(f"pavimento ok: {len(dockerfile)} Dockerfile e {len(workflow)} workflow sotto i framework dichiarati")
+          PY
       - uses: bridgecrewio/checkov-action@1246d92f57abae29d5db5f9aeeed2a9813e52d7d # v12.3117.0
         with:
           directory: .
