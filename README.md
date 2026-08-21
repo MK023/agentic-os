@@ -7,12 +7,13 @@ private hub: OTel Collector → Prometheus → Grafana plus a small FastAPI stat
 API, running on **Railway** behind a **Cloudflare Tunnel**, with a
 sanitized public widget on [marcobellingeri.dev](https://marcobellingeri.dev).
 
-**Phase 1.5, written and gated, not deployed**: a private **Loki** log store as a sixth
+**Phase 1.5, live since 2026-08-21**: a private **Loki** log store as a sixth
 service, fed by a *separate* `logs` pipeline in the same Collector, with chunks and index
 on **Cloudflare R2** so the Railway volume holds only the active index and the shipper
 cache. It answers "which tool call failed in that session", which no metric here can. It
-gets no Tunnel route and the public surface does not change. It does not run until an R2
-bucket and a Railway service exist, and those are not code.
+gets no Tunnel route and the public surface does not change. Until 2026-08-21 this
+paragraph said "written and gated, not deployed", and it stayed wrong for a day after the
+R2 bucket, the service, the four variables and the volume all existed.
 
 [![tests](https://github.com/MK023/agentic-os/actions/workflows/tests.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/tests.yml)
 [![lint](https://github.com/MK023/agentic-os/actions/workflows/lint.yml/badge.svg)](https://github.com/MK023/agentic-os/actions/workflows/lint.yml)
@@ -53,9 +54,9 @@ The public surface of the whole system is exactly three aggregate numbers.
 ```
 
 
-The diagram is Phase 1, which is what runs. Phase 1.5 adds one branch and changes
-nothing else on it: a second pipeline out of the same Collector, `logs` into `loki`, with
-no hostname, no Tunnel route and no path to the public widget.
+The diagram is Phase 1. Phase 1.5 adds one branch and changes nothing else on it: a
+second pipeline out of the same Collector, `logs` into `loki`, with no hostname, no
+Tunnel route and no path to the public widget.
 
 The three numbers are **indicative, not accounting**. Prometheus's own docs rule
 it out for billing-grade accuracy; that is the tool's stated scope, not a defect.
@@ -89,7 +90,8 @@ bash scripts/check-image-users.sh
 bash scripts/prova-privacy-log.sh                            # ~90s, Docker only
 bash scripts/prova-contratto-metriche.sh                       # ~40s, Docker only
 bash scripts/prova-ritenzione-loki.sh                          # ~60s, Docker only
-bash scripts/prova-allarmi.sh                                  # ~2m, Docker only```
+bash scripts/prova-allarmi.sh                                  # ~2m, Docker only
+```
 
 ## Security
 
@@ -119,8 +121,11 @@ The short version:
   a default rather than a control, and one missing statement had quietly made the two
   barriers dependent on each other. `scripts/prova-privacy-log.sh` is the proof, and it
   runs in CI.
-- **Every image runs non-root and pinned to a version**, with one documented
-  platform exception. Two different guards, because the sentence used to credit one
+- **Every image runs non-root and pinned to a version**, with two documented
+  platform exceptions: `prometheus` and, since Phase 1.5, `loki`. Both carry a volume,
+  and a Railway volume is root-owned, so both carry `RAILWAY_RUN_UID=0` (verified on the
+  services, 2026-08-21). This line said "one" until then, which is the kind of number
+  that stops matching the platform the day a sixth service arrives. Two different guards, because the sentence used to credit one
   guard with both jobs: `scripts/check-image-users.sh` reads `USER` and nothing else,
   Checkov's `CKV_DOCKER_7` covers pinning in the Dockerfiles, and a dedicated step in
   `images.yml` covers `docker/docker-compose.yml` — which until 2026-08-19 was
@@ -144,12 +149,14 @@ minimal per-job `permissions:`, gitleaks at zero tolerance, zizmor on the
 workflows themselves, Checkov for IaC, two dependency gates (whole pinned set +
 per-PR diff), SonarCloud as quality gate.
 
-**CodeQL runs too, and it is not in this repository.** It is enabled as GitHub's
-*default setup* (`python` and `actions`, weekly plus per-PR), the same way the
-site repo has it — which means there is no workflow file to read, no action SHA
-to pin, and nothing to maintain. It is written here because a gate that exists
-only as a repository setting is invisible to anyone reading the code, and an
-invisible gate is one nobody thinks to check. It complements ruff and bandit
+**CodeQL runs too, from `.github/workflows/codeql.yml`** (`python` and `actions`,
+weekly plus per-PR), with both `codeql-action` steps pinned to a SHA like every other
+action here. Until 2026-08-21 this paragraph said the opposite: that CodeQL was GitHub's
+*default setup*, with "no workflow file to read, no action SHA to pin, and nothing to
+maintain". The workflow had been in the repository since 2026-08-20. The correction is
+worth more than the two SHAs it names: someone reading that sentence and switching the
+default setup back on would have silently disabled the workflow that actually runs.
+It complements ruff and bandit
 rather than repeating them: those are linters with security rules, matching
 patterns in a file; CodeQL follows a value from source to sink across files. It
 reports rather than blocks — it is not one of the twelve required contexts.
@@ -185,15 +192,24 @@ loop had only warned about in prose. The fourth executes instead of reading:
 network, pushes an OTLP payload carrying identity, content and a key nobody has ever
 seen, and then queries Loki back.
 
-**That last one is the only check here that verifies a security property rather than a
-shape**, and how it can fail is the interesting part. It asserts three things: the index
+**That one verifies a security property rather than a shape**, which was unusual when it
+was written and is not any more: `scripts/prova-ritenzione-loki.sh` proves the delete
+route answers `403` while retention still runs, and `scripts/prova-allarmi.sh` makes a
+rule fire on a broken reality and requires the notification to be delivered. How this one
+can fail is still the interesting part. It asserts three things: the index
 is clean, nothing forbidden is queryable *in any form* — label, structured metadata or
 line — and `session.id`, `tool_name` and `error_type` **are** present, because an
 allow-list that dropped everything would pass the first two and read as a success. Two
 limits are declared rather than glossed: the payload is **synthetic**, so it proves the
 allow-lists discard what is put in front of them and not that the client sends only that;
-and the storage is MinIO rather than R2 — a single key differs, `insecure`, and the
-script checks that `limits_config` is identical to the file that ships. The recipe is
+and the storage is MinIO rather than R2, so a single key differs, `insecure`. The script
+does **not** compare `limits_config` against the shipped file, and this document claimed
+it did until 2026-08-21. That comparison existed, and it was a tautology: it parsed
+`docker/loki.yaml` twice and asserted the two results matched, so it passed even after
+`user.email` was added to the allow-list. Measured. What runs now is a hard-coded list of
+the 22 expected keys inside the script itself, which has to be edited by hand, in the
+same commit, by whoever touches the allow-list. An oracle that lives inside the file
+under test is not an oracle. The recipe is
 `docs/LOCAL_DRY_RUN.md` §4-bis.
 
 **The allow-list gate was born broken**, which is why it is described in this much
@@ -271,7 +287,7 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
    (Collector ↔ Loki: it pushes identity and content and queries them back).
 
 2. **Coverage on new code**: 100% on the status API, **enforced** by
-   `--cov-fail-under=100` in CI (met: 55 tests, 100% on `main.py` and
+   `--cov-fail-under=100` in CI (met: 62 tests collected, 100% on `main.py` and
    `sentry.py`). No repo-wide threshold — line coverage on Dockerfiles and YAML
    means nothing. Until 2026-08-13 this number was measured and *not* enforced:
    a contract written in a README that no gate checks is a wish, and it is the
@@ -304,12 +320,12 @@ Grafana/Prometheus is what the repo builds and how it is observed.
 
 **Live.**
 
-Tagged **v1.0.0** on 2026-08-13. The five services run, the Tunnel serves its
-three hostnames, and the public endpoint answers with real numbers. Loki is **not** among
-them: Phase 1.5 is written, gated and proven locally, and it starts running the day the
-R2 bucket and the Railway service exist. `smoke.yml`
-watches it from outside on a schedule; `scripts/verify-hub.sh` is the fuller
-post-deploy check and stays manual.
+Last tag **v1.1.0**, 2026-08-16, and `main` is ahead of it. The six services run, `loki`
+since 2026-08-21, the Tunnel serves its three hostnames, and the public endpoint answers
+with real numbers. `smoke.yml` watches it from outside on a schedule. `scripts/verify-hub.sh`
+is the fuller check, and since 2026-08-20 it is not only manual: `sorveglianza.yml` runs
+it every day at 05:23 UTC with the Access service token and the status API bearer. Run it
+by hand after a deploy when you do not want to wait for the cron.
 
 What is still open is tracked in `docs/BLOCKERS.md`, and it is short: no
 engineering task blocks anything, only judgement calls and one upstream CVE

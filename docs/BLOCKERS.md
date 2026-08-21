@@ -10,9 +10,10 @@ in front of it, not only on the public endpoint. Everything settled lives in
 file is only what is still open.
 
 **No engineering task blocks anything.** What follows is two things to watch, one
-thing nobody downstream can fix, and a handful of judgement calls — plus, since
-2026-08-20, three pieces of infrastructure that only Marco can create before Phase 1.5
-runs at all.
+thing nobody downstream can fix, and a handful of judgement calls. The infrastructure
+this preamble used to list as blocking Phase 1.5 was all created on 2026-08-21: the R2
+bucket and its credentials, the `loki` service, the four `LOKI_R2_*` variables and the
+volume. `SLACK_WEBHOOK_URL` followed the same day.
 
 ## 1. Claude Code's metric names, against a future version
 
@@ -71,9 +72,9 @@ the set had moved and the old numbers described an image nobody was running:
   *down* from the 2026-08-14 triage, whose worst was 0.0078: this is the ordinary
   background of open-source CVEs, not a signal.
 - **Reachability: the two `tempo` CVEs have no configured code path here.**
-  Re-checked 2026-08-20: the only provisioned datasource is still Prometheus
-  (`docker/grafana/provisioning/datasources/prometheus.yml`), there is no Tempo
-  datasource, and the only match for "tempo" under `docker/grafana/` is the Italian
+  Re-checked 2026-08-21: the provisioned datasources are Prometheus and, since Phase 1.5,
+  Loki (`docker/grafana/provisioning/datasources/`). Neither is Tempo, which is what this
+  paragraph needs, and the only match for "tempo" under `docker/grafana/` is the Italian
   word inside a dashboard comment. No S3 at all. They ship inside the binary as
   vendored modules and nothing calls them.
 - **`13.1.3` was the newest release** (checked against the upstream release list on
@@ -185,13 +186,16 @@ as a task instead of trusted to a check.
 
 ## Still Marco's call
 
-- **`SLACK_WEBHOOK_URL` on the `grafana` Railway service.** One variable, and it is the
-  only thing left between "the alerts exist" and "the alerts reach somebody". Since
+- ~~**`SLACK_WEBHOOK_URL` on the `grafana` Railway service.**~~ **Set on 2026-08-21**,
+  verified on the service itself rather than assumed. The chain from a firing rule to
+  Slack's endpoint is closed; what no check here can see is whether Slack accepts a given
+  message, because that lives on somebody else's server. The reasoning below is kept
+  because the *degradation* it describes is still what happens on any environment where
+  the variable is missing, starting with a laptop. Since
   2026-08-21 the rules, the contact point and the notification policy are provisioned
   from `docker/grafana/provisioning/alerting/`, and `scripts/prova-allarmi.sh` proves
   the whole chain by making a rule fire on a broken reality and requiring the
-  notification to be **delivered** to a local receiver — so what is unproven is not the
-  wiring, it is only that Slack's endpoint accepts it.
+  notification to be **delivered** to a local receiver.
   **What happens meanwhile is declared — and it took a measurement to make the
   declaration true.** As first written, this paragraph said Grafana would provision fine
   and only the send would fail. **That was false, and dangerously so**: with the variable
@@ -252,13 +256,19 @@ as a task instead of trusted to a check.
   its S3 credentials, the `loki` service, the four `LOKI_R2_*` variables and the volume
   on `/loki`. What is left is one thing the platform cannot do for us: see below.
 
-- **Nothing has been written to the log store yet, and that is the correct state.**
-  `OTEL_LOGS_EXPORTER=otlp` is the switch on the *client*, not on the hub
-  (`docs/CLAUDE_CODE_TELEMETRY.md`), and until an operator exports it Loki holds one
-  object on R2 — `loki_cluster_seed.json`, written at startup — and no log records.
-  Worth writing down because the empty store looks identical to a broken one: an
-  operator who reads "Loki is up, R2 is empty" will go looking at the storage
-  configuration, which is the half that has already been proven.
+- ~~**Nothing has been written to the log store yet.**~~ **It has been, since
+  2026-08-21**, once sessions were relaunched with `OTEL_LOGS_EXPORTER=otlp`
+  (`docs/CLAUDE_CODE_TELEMETRY.md` has the measurement, and the dashboard grew four Loki
+  panels because there was something to draw). The paragraph is kept because the
+  reasoning outlives the state: `OTEL_LOGS_EXPORTER` is a switch on the *client*, not on
+  the hub, so on any machine that has not set it the store stays empty, and **an empty
+  store looks exactly like a broken one**. An operator who reads "Loki is up, R2 is
+  empty" will go digging in the storage configuration, which is the half that was proven
+  first.
+  One consequence of a later change belongs here: `loki_cluster_seed.json`, cited below
+  as the object that proved the R2 credentials, is written by Loki's usage-reporting
+  module. With reporting off it is not written any more, and the witness becomes the
+  first object under `index/` or `chunks/` after a flush.
 
   Measured at the deploy rather than assumed: Loki reached `"Loki started"` in 957 ms
   with WAL recovery clean, wrote the cluster seed to R2 — so the credentials, the
@@ -293,7 +303,7 @@ as a task instead of trusted to a check.
   only, never the value. It is **defence in depth and not the authentication**: that
   stays `bearertokenauth` inside the Collector, and `smoke.yml` proves it with a
   *wrong* token, the only shape the edge still lets through (PRs #99, #100, #101). The
-  rule lives in the Cloudflare dashboard, outside git — the six assertions in
+  rule lives in the Cloudflare dashboard, outside git, and the seven assertions in
   `smoke.yml` are the only thing that notices if it is switched off. **Since 2026-08-20
   it passes two paths, not one**: `POST /v1/logs` as well, for the Phase 1.5 log
   ingest — see §4 above, and note that only the *opposite* mistake is caught by a

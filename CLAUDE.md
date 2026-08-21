@@ -14,12 +14,12 @@ log store whose chunks and index live on **Cloudflare R2**, so a full Railway vo
 cannot take them with it; the local disk holds only the active index and the
 `tsdb_shipper` cache. **Live since 2026-08-21**: six in `docker/` and `railway/` is now
 also six on the platform. What that deploy proved, rather than assumed: Loki wrote
-`loki_cluster_seed.json` to R2 on startup, so the credentials, the schemeless endpoint
+an object to R2 on startup, so the credentials, the schemeless endpoint
 and `use_thanos_objstore: true` all work in production — and the 5 GB volume mounted
-without the `permission denied` that `RAILWAY_RUN_UID=0` exists to prevent. What it did
-**not** prove is the log path end to end: nothing reaches Loki until a client exports
-with `OTEL_LOGS_EXPORTER=otlp`, and until then an empty log store is the correct state,
-not a fault.
+without the `permission denied` that `RAILWAY_RUN_UID=0` exists to prevent. The log path proved itself
+later the same day, once sessions were relaunched with `OTEL_LOGS_EXPORTER=otlp`: that
+switch is on the **client**, so on a machine without it the store stays empty, and an
+empty store looks exactly like a broken one.
 The priority here is **the public/private boundary**:
 three aggregate numbers are public, everything else stays inside the project.
 
@@ -32,14 +32,18 @@ three aggregate numbers are public, everything else stays inside the project.
 - `services/public-status-api/` — the only application code (and the only place
   coverage/mutation thresholds apply).
 - `scripts/` — `verify-hub.sh`, the fuller post-deploy check (Grafana behind
-  Access + the status API's bearer). Manual: its credentials are not GitHub
-  secrets. `.github/workflows/smoke.yml` is the automatic half — public endpoint
-  only, no secrets, and it fails on `null` *and* on `stale`, never on the HTTP
+  Access + the status API's bearer). Run it by hand after a deploy, and know that
+  `sorveglianza.yml` also runs it daily at 05:23 UTC: the three secrets it needs exist
+  since 2026-08-20, so "manual" stopped meaning "nothing else runs it".
+  `.github/workflows/smoke.yml` is the other automatic half, and it is no longer public
+  endpoint only: seven assertions against the OTLP ingest (three requiring `401` from
+  the Collector on a bad bearer, four requiring `403` from the WAF rule in front of it)
+  plus the public endpoint, which fails on `null` *and* on `stale`, never on the HTTP
   status alone. Railway ignores the Dockerfile `HEALTHCHECK`; it uses its own
   `healthcheckPath`, declared since 2026-08-20 on status-api (`/healthz`) and
   cloudflared (`/ready`) and **requiring a `PORT` service variable to work at all**.
-  On the other four — `loki` included since Phase 1.5, same reason written in
-  `railway/loki/Dockerfile` — `SUCCESS` still only means "the container started", **and that is
+  On the other four (`loki` included since Phase 1.5, same reason written in
+  `railway/loki/Dockerfile`), `SUCCESS` still only means "the container started", **and that is
   a closed decision, not a gap**: their health routes would be unauthenticated, and a
   Prometheus `up` scrape watches every one of them every 15s for as long as they live,
   which is more than a healthcheck does — Railway stops probing once the deploy is live.
@@ -54,15 +58,16 @@ three aggregate numbers are public, everything else stays inside the project.
 ## Commands
 
 ```bash
-docker build -f railway/prometheus/Dockerfile -t p .   # same for the other four
+docker build -f railway/prometheus/Dockerfile -t p .   # same for the other five
 docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars only silence warnings; it exits 0 without them
 bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker only
 bash scripts/prova-ritenzione-loki.sh                          # gate: delete route closed AND retention still running, ~60s, Docker only
-bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker onlycd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
+bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker only
+cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
 checkov --config-file .checkov.yml -d .
-cd services/public-status-api && mutmut run && mutmut results  # 0 survivors in require_valid_token
+cd services/public-status-api && mutmut run && mutmut results  # 0 survivors in the 12 blocking functions (mutation.yml names them)
 ```
 
 Dependencies are hash-locked: edit `requirements.in`, then
@@ -188,7 +193,10 @@ those files are correct in both places. Never fork a config to "fix it for local
 - **Never guess Claude Code metric names.** The exporter's suffix behaviour is pinned
   precisely so they stop depending on unit metadata.
 - **Never let a gate skip because its credential is missing** (the `sonar` job stays
-  red instead) — that is `continue-on-error` with extra steps.
+  red instead): that is `continue-on-error` with extra steps. The one exception is
+  written down rather than implied: `sonar.yml` skips on fork and Dependabot PRs, which
+  cannot read the token at all, and the README says what compensates. An exception that
+  is argued is not the thing this rule forbids; an exception that is silent is.
 - No app-level rate limiter in the status API — that part stands. **What this line used
   to claim, "Cloudflare does it at the edge", was false**: measured 2026-08-16, 60
   requests in ~20s returned zero `429`, and the zone has no rate limiting rule at all.

@@ -22,10 +22,11 @@ no second door.
 
 | Service | Reached at | Public? |
 |---|---|---|
-| `otel-collector` | `otel-collector.railway.internal:8889` (metrics), `:4318` (OTLP) | via tunnel only |
-| `prometheus` | `prometheus.railway.internal:9090` | never — no auth of its own |
+| `otel-collector` | `otel-collector.railway.internal:8889` (metrics), `:4318` (OTLP over HTTP), `:4317` (OTLP over gRPC, bound on all interfaces and authenticated the same way) | via tunnel only |
+| `prometheus` | `prometheus.railway.internal:9090` | never: it could authenticate (`--web.config.file`) and is not configured to, so no route is the control |
 | `grafana` | `grafana.railway.internal:3000` | via tunnel + Cloudflare Access |
 | `status-api` | `status-api.railway.internal:8000` | via tunnel + Access service token |
+| `loki` | `loki.railway.internal:3100` | never: no Tunnel route, and `auth_enabled: false` is about multi-tenancy, not access |
 | `cloudflared` | — | outbound only |
 
 Private DNS is `SERVICE_NAME.railway.internal`. Environments created after October
@@ -44,10 +45,11 @@ repository root.
 | `otel-collector` | *(empty — repo root)* | `/railway/otel-collector/railway.json` | none |
 | `prometheus` | *(empty)* | `/railway/prometheus/railway.json` | **5 GB** at `/prometheus` |
 | `grafana` | *(empty)* | `/railway/grafana/railway.json` | none |
+| `loki` | *(empty)* | `/railway/loki/railway.json` | **5 GB** at `/loki` |
 | `cloudflared` | *(empty)* | `/railway/cloudflared/railway.json` | none |
 | `status-api` | `services/public-status-api` | `/railway/status-api/railway.json` | none |
 
-Root Directory is also the build context. Four of the five leave it empty on purpose:
+Root Directory is also the build context. Five of the six leave it empty on purpose:
 their Dockerfiles copy configuration out of `docker/`, so they need the whole repo.
 The status API is the exception — its Dockerfile uses paths relative to its own
 directory.
@@ -67,11 +69,21 @@ the Railway UI.
 
 ### Restart policy
 
-`ON_FAILURE` on every service, for two reasons that agree. The Trial plan does not
-offer `ALWAYS` at all — the dashboard says so plainly — and `ALWAYS` is the wrong
-semantics here anyway: these are daemons, so a clean exit is not a normal event. If
-one of them ever exits zero, the honest response is to notice it, not to restart it
-forever and never find out.
+`ON_FAILURE` on five services, `ALWAYS` on `loki`. The general rule and its exception
+both come from the same reasoning, so read them together.
+
+`ON_FAILURE` is the default here because these are daemons: a clean exit is not a normal
+event, and the honest response to one is to notice it rather than restart forever and
+never find out. (This section also used to say the Trial plan does not offer `ALWAYS`.
+The project moved to Hobby on 2026-08-19, so that constraint is gone.)
+
+`loki` is the exception, and copying the general rule onto it would undo a fix. Loki
+serves `GET /ingester/shutdown` on its private port with no authentication, and it exits
+with code **0**, which `ON_FAILURE` reads as a deliberate stop. Measured: one
+unauthenticated GET stopped the log store and nothing brought it back. `ALWAYS` turns a
+permanent stop into a restart. It does not close the route, which cannot be closed, and
+`docs/DECISIONS.md` has what that trade costs. A step in `images.yml` fails if this value
+changes.
 
 ### Starting on the Trial plan
 
@@ -90,11 +102,11 @@ Neither blocks a first deploy. They decide when the Hobby plan stops being optio
 
 | Service | Variables |
 |---|---|
-| `cloudflared` | `TUNNEL_TOKEN` |
+| `cloudflared` | `TUNNEL_TOKEN`, `PORT=2000` (same reason as `status-api`: it has a `healthcheckPath` on `/ready`) |
 | `otel-collector` | `OTLP_INGEST_TOKEN` |
 | `prometheus` | `RAILWAY_RUN_UID=0` (see "volume ownership" below — not a secret, and not optional) |
-| `grafana` | `GF_SECURITY_ADMIN_PASSWORD`, `GF_AUTH_ANONYMOUS_ENABLED=false` |
-| `status-api` | `PROMETHEUS_URL=http://prometheus.railway.internal:9090`, `STATUS_API_TOKEN`, `SENTRY_DSN` (optional) |
+| `grafana` | `GF_SECURITY_ADMIN_PASSWORD`, `SLACK_WEBHOOK_URL` (set 2026-08-21; without it the entrypoint substitutes a placeholder and alerts evaluate but never send). `GF_AUTH_ANONYMOUS_ENABLED=false` was listed here and has been removed: it repeated the vendor default and read as hardening without changing anything. The settings that do change something live in `docker/grafana/grafana.ini` |
+| `status-api` | `PROMETHEUS_URL=http://prometheus.railway.internal:9090`, `STATUS_API_TOKEN`, `SENTRY_DSN` (optional), `PORT=8000` (Railway probes the port this names; declaring `healthcheckPath` without it fails every deploy) |
 | `loki` | the four `LOKI_R2_*`, plus `RAILWAY_RUN_UID=0` (same reason as `prometheus`). `LOKI_R2_ENDPOINT` goes in **without** a scheme — `-verify-config` accepts the `https://` form and Loki dies at startup on it |
 
 Generate the two tokens once, with `openssl rand -hex 32`. `OTLP_INGEST_TOKEN` also
@@ -165,7 +177,9 @@ discovering them from an empty dashboard.
    For them a deploy still counts as successful when the container starts, not when it
    serves. And Railway "does not monitor the healthcheck endpoint after the deployment
    has gone live" — it is a deploy gate, never monitoring. `scripts/verify-hub.sh` is
-   what actually confirms the hub works, and it stays a manual step after deploying.
+   what actually confirms the hub works. Since 2026-08-20 `sorveglianza.yml` also runs it
+   every day at 05:23 UTC, so "manual" now means "run it yourself after a deploy instead
+   of waiting for the cron", not "nothing runs it".
 
 ## Symptom to cause
 
