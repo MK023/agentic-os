@@ -60,13 +60,34 @@ for (sezione, chiave), valore in atteso.items():
     if reale != valore:
         sys.exit(f"FALLITO: docker/loki.yaml ha {sezione}.{chiave} = {reale!r}, atteso {valore!r}")
 
-# LE UNICHE DUE DIFFERENZE rispetto al file spedito, entrambe necessarie e nessuna
-# nella parte sotto esame:
+# LA CHIAVE CHE QUESTA PROVA SOVRASCRIVE VA PINNATA PIU' DELLE ALTRE, non meno.
+# `apply_retention_interval` vale 0 per default, e il binario lo documenta come "0
+# means run at same interval as compaction": quindi in produzione la cadenza della
+# RITENZIONE e' `compaction_interval`, cioe' esattamente cio' che qui sotto viene
+# accorciato a 10s. Senza questa riga, un `compaction_interval: 24h` aggiunto al
+# file SPEDITO lascerebbe questa prova verde su tutte e tre le asserzioni mentre in
+# produzione la ritenzione girerebbe una volta al giorno — dimostrato eseguendo, ed
+# e' la forma di guasto che l'intestazione di questo script dice di prevenire.
+if "compaction_interval" in (c.get("compactor") or {}):
+    sys.exit("FALLITO: docker/loki.yaml dichiara compactor.compaction_interval. "
+             "Questa prova lo sovrascrive per non durare venti minuti, quindi non "
+             "potrebbe piu' vedere una regressione su quella chiave — che, con "
+             "apply_retention_interval a 0, E' la cadenza della ritenzione. "
+             "Se il valore serve davvero, va deciso qui dentro e non solo la'.")
+
+# LE DUE DIFFERENZE DI VALORE rispetto al file spedito:
 #  - `insecure`: qui lo storage e' MinIO in HTTP, non R2 in HTTPS.
-#  - `compaction_interval`: il default e' 10m, e la prova (b) deve vedere DUE giri
-#    del ciclo di ritenzione. Con il default questa prova durerebbe venti minuti.
-#    Cambia la CADENZA del ciclo, non il fatto che giri: e' il fatto che giri a
-#    essere sotto esame.
+#  - `compaction_interval`: il default e' 10m e la prova (c) deve vedere DUE giri del
+#    ciclo. Con il default durerebbe venti minuti. NON e' fuori dalla parte sotto
+#    esame — e' la cadenza della ritenzione — e proprio per questo la guardia qui
+#    sopra pretende che il file spedito non la dichiari.
+#
+# E c'e' una TERZA differenza, di forma, che vale per ogni prova di questo repository
+# e va nominata invece di lasciare la parola "uniche" a coprirla: il file che Loki
+# esegue qui e' una RI-SERIALIZZAZIONE di PyYAML, non i byte spediti. Commenti persi,
+# chiavi riordinate. Un difetto che PyYAML tollera e il parser Go rifiuta — chiavi
+# duplicate, per dire — passerebbe verde qui e ucciderebbe la produzione all'avvio.
+# Cio' che copre quel caso e' il `-verify-config` sull'immagine vera, altrove.
 c["storage_config"]["object_store"]["s3"]["insecure"] = True
 c["compactor"]["compaction_interval"] = "10s"
 yaml.safe_dump(c, open(sys.argv[1], "w"))
@@ -136,9 +157,13 @@ PUSH=$(curl -s -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:319
   -H 'Content-Type: application/json' \
   -d "{\"streams\":[{\"stream\":{\"service_name\":\"claude-code\"},\"values\":[[\"$((ORA * 1000000000))\",\"riga-di-prova\"]]}]}")
 echo "push -> $PUSH"
-# Senza questa asserzione, un `deletion_mode` scritto male che facesse rifiutare
-# l'ingestione passerebbe (a) — la rotta di cancellazione sarebbe chiusa perche' e'
-# chiuso tutto.
+# Perche' (b) esiste, corretto dopo averlo MISURATO: la motivazione scritta qui
+# prima diceva "un deletion_mode scritto male che facesse rifiutare l'ingestione
+# passerebbe (a)". E' uno scenario impossibile — `deletion_mode: bananas` fa
+# rifiutare l'AVVIO ("unknown deletion mode: must be one of
+# disabled|filter-only|filter-and-delete"), quindi lo script morirebbe prima, su
+# "attendo Loki". Resta un sanity check che costa nulla e distingue "la rotta e'
+# chiusa" da "e' chiuso tutto"; non resta la ragione inventata che ci stava sopra.
 [ "$PUSH" = "204" ] || { echo "FALLITO: (b) il push risponde $PUSH, atteso 204"; cat "$TMP/push.txt"; fallimenti=1; }
 
 echo "--- (c) il ciclo di ritenzione gira ancora, e riesce"
@@ -164,9 +189,13 @@ done
   fallimenti=1
 }
 fallite=$(leggi failure); fallite=${fallite:-0}
-# Un ciclo che gira e fallisce a ogni giro conta come "gira" per il contatore
-# success solo se success avanza — ma se avanzano entrambi, qualcosa non va e va
-# detto qui invece che nei log di qualcun altro.
+# META' ASSERZIONE, e va detto: in un run sano la serie con `status="failure"` NON
+# ESISTE (misurato sul /metrics di un Loki vero), quindi `leggi` torna vuoto e il
+# `:-0` lo rende 0. Questo controllo quindi FALLISCE APERTO — se un bump di Loki
+# rinominasse la metrica o le aggiungesse una label, la meta' `success` diventerebbe
+# rossa (fallisce chiuso, bene) e questa resterebbe muta. Vale come segnale in piu'
+# quando la serie c'e', non come garanzia; il ramo rosso non e' provato perche' non
+# si sa provocare un giro di ritenzione fallito senza rompere lo storage.
 python3 -c "import sys; sys.exit(0 if float('$fallite') == 0 else 1)" || {
   echo "FALLITO: (c) ci sono ${fallite} giri di ritenzione FALLITI"; fallimenti=1; }
 
