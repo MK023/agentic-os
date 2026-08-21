@@ -29,6 +29,29 @@ Three of these are easy to get subtly wrong:
   operator which variables to export, so a stale line here is not a documentation
   bug, it is the outage.
 
+  **Setting it in a profile is not the same as the running client having it**, and the
+  difference is invisible from the hub. `claude` inherits its environment from the
+  process that launched it: a terminal window opened *before* you edited the profile
+  keeps the old environment, and every session started in that window exports metrics
+  and no logs — which is the exact picture of "Loki is broken". Measured on
+  2026-08-21, twenty minutes after the first empty query: the profile was correct, a
+  fresh login shell had the variable, and none of the seven running Claude Code
+  processes did.
+
+  So check the **process**, not the file, and do it without printing the token that
+  lives next to it in `OTEL_EXPORTER_OTLP_HEADERS`:
+
+  ```bash
+  # presence only, never values — the headers variable holds the ingest bearer
+  for p in $(pgrep -f claude); do
+    printf '%s %s\n' "$p" "$(ps eww -o command= -p $p | grep -c OTEL_LOGS_EXPORTER=otlp)"
+  done
+  ```
+
+  A `0` means that session is not exporting logs, whatever the profile says. Open a new
+  terminal **window**, confirm `echo $OTEL_LOGS_EXPORTER` there, and start `claude` from
+  it.
+
   What reaches Loki is **not** what the client sends: two allow-lists strip it down to
   22 attributes plus the event name. Identity — `user.email`, `user.id`,
   `organization.id`, `user.account_id`, `user.account_uuid` — rides on **every** log
