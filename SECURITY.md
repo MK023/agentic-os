@@ -87,6 +87,17 @@ container** on the shipped config, because that is the method that found those d
 anything *already inside* the private network can do without a credential — which is the
 question a perimeter never answers.
 
+The sweep missed one direction, and it is the one a route table cannot show: **what the
+service sends out on its own**. Loki's default `analytics.reporting_enabled` is `true`,
+so every few hours it posted version, host, memory, ingestion and query counters and a
+cluster id to `stats.grafana.org`. No log content, and still an undeclared third party
+receiving an activity profile from the service whose written posture is "no route, no
+egress beyond R2". It is off since 2026-08-22, the same setting `grafana.ini` turns off
+for Grafana, and both states were read back from the shipped binary rather than assumed.
+One consequence is worth knowing before somebody reads the bucket: `loki_cluster_seed.json`
+is written by that module, not by ingestion, so it stops appearing. The R2 witness is now
+the first object under `index/` or `chunks/`.
+
 | Route | Measured | What it does | Closable here |
 |---|---|---|---|
 | `GET /ingester/shutdown` | `204`, then **exit code 0** | Stops the log store. See below — this one changed a deploy setting | **no** |
