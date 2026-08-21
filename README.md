@@ -67,7 +67,7 @@ it out for billing-grade accuracy; that is the tool's stated scope, not a defect
 | `railway/` | Production: one Dockerfile + one config-as-code file per service, and the deployment guide (`railway/README.md`). **Start here** for infra. |
 | `docker/` | The local environment **and the single copy of every configuration file**. Railway images copy them at build time; Compose mounts them. |
 | `services/public-status-api/` | FastAPI service exposing the three whitelisted numbers. The only application code. |
-| `scripts/` | `verify-hub.sh`, the post-deploy smoke test; `prova-privacy-log.sh`, the executed proof that identity and content do not reach the log store. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
+| `scripts/` | `verify-hub.sh`, the post-deploy smoke test; `prova-privacy-log.sh`, the executed proof that identity and content do not reach the log store; `prova-ritenzione-loki.sh`, which checks that closing Loki's delete route did not also stop automatic retention. Railway ignores the Dockerfile `HEALTHCHECK`; its own `healthcheckPath` gates the deploy on two services and never runs after. |
 | `docs/` | Decisions, deployment, telemetry setup, local dry run. Index at the bottom. |
 
 ## Running it
@@ -88,6 +88,7 @@ checkov --config-file .checkov.yml -d .
 bash scripts/check-image-users.sh
 bash scripts/prova-privacy-log.sh                            # ~90s, Docker only
 bash scripts/prova-contratto-metriche.sh                       # ~40s, Docker only
+bash scripts/prova-ritenzione-loki.sh                          # ~60s, Docker only
 ```
 
 ## Security

@@ -195,6 +195,31 @@ limits_config:
         regex: .*
   retention_period: 720h
 
+  # Loki NON ha autenticazione, e i due buchi che ne derivano non pesano uguale —
+  # ma NON nel modo scritto qui fino al 2026-08-21.
+  # `GET /ingester/shutdown` spegne il processo e non e' disattivabile da
+  # configurazione. La riga diceva "Railway riavvia, quindi e' un disservizio":
+  # FALSO, e misurato subito dopo averlo scritto. Loki esce con codice **0**
+  # (`docker wait` su container vero), e la doc di Railway dice che `On Failure`
+  # riavvia solo su codice NON zero. Con la policy di railway/loki/railway.json quel
+  # GET ferma il log store e nessuno lo rialza: nessun healthcheck su questo
+  # servizio, e `up{job="loki"}` non ha ancora una regola d'allarme.
+  # `POST /loki/api/v1/delete` invece DISTRUGGE, senza registrare chi, ed e' l'unico
+  # dei due che si chiude da qui. Questa riga lo chiude: la rotta risponde 403
+  # (misurato: rispondeva 204, e la richiesta veniva accettata e registrata).
+  #
+  # Ammessi: disabled | filter-only | filter-and-delete. Il default e'
+  # `filter-and-delete`, cioe' aperto.
+  #
+  # NON spegne la ritenzione automatica, che resta guidata da
+  # `compactor.retention_enabled` — ma le due cose si toccano davvero (la doc dice
+  # che le rotte di cancellazione esistono solo con `retention_enabled: true`),
+  # quindi la separazione e' PROVATA e non letta: scripts/prova-ritenzione-loki.sh
+  # pretende un giro di ritenzione riuscito dopo il cambiamento. Se la ritenzione si
+  # fermasse, i 720h qui sopra diventerebbero "per sempre" e il conto R2 crescerebbe
+  # in silenzio, con Loki `up=1` e ogni gate verde.
+  deletion_mode: disabled
+
 compactor:
   working_directory: /loki/compactor
   # Senza questa chiave Loki RIFIUTA di partire quando retention_enabled e' true.
