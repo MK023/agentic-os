@@ -60,7 +60,11 @@ done
 [ -n "$pronto" ] || { echo "FALLITO: non e' partito"; docker logs "$NOME" 2>&1 | tail -20; exit 1; }
 
 # Tre metriche attese, una inventata (deve sparire), identita' fra gli attributi
-# (deve sparire), e una label ammessa (deve restare).
+# (deve sparire), e una label ammessa (deve restare). L'identita' viaggia su TRE
+# livelli — risorsa, scope e data point — perche' fino al 21/08/2026 solo il terzo
+# passava da keep_keys: un attributo di SCOPE usciva su :8889 come label
+# `otel_scope_<chiave>`, intatto, e nessuna prova lo mandava. E `service.name` lo
+# sceglie il client: senza il `set` nel Collector diventa il valore di `exported_job`.
 ORA=$(python3 -c "import time;print(int(time.time()*1e9))")
 punto() { # $1 nome, $2 valore, $3 attributi json
   printf '{"name":"%s","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"asDouble":%s,"timeUnixNano":"%s","attributes":[%s]}]}}' "$1" "$2" "$ORA" "$3"
@@ -68,8 +72,8 @@ punto() { # $1 nome, $2 valore, $3 attributi json
 IDENT='{"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE@example.com"}},{"key":"organization.id","value":{"stringValue":"NON-DEVE-ARRIVARE-org"}}'
 CODICE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://localhost:34318/v1/metrics" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"resourceMetrics":[{
-   "resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},
-   "scopeMetrics":[{"metrics":['"$(punto claude_code.session.count 1 '{"key":"session.id","value":{"stringValue":"contratto"}},'"$IDENT")"',
+   "resource":{"attributes":[{"key":"service.name","value":{"stringValue":"SCELTO-DAL-CLIENT"}},{"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE-risorsa@example.com"}}]},
+   "scopeMetrics":[{"scope":{"name":"com.anthropic.claude_code","version":"0.0.0","attributes":[{"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE-scope@example.com"}}]},"metrics":['"$(punto claude_code.session.count 1 '{"key":"session.id","value":{"stringValue":"contratto"}},'"$IDENT")"',
      '"$(punto claude_code.token.usage 4242 '{"key":"type","value":{"stringValue":"input"}},{"key":"model","value":{"stringValue":"claude-haiku-4-5"}},'"$IDENT")"',
      '"$(punto claude_code.cost.usage 0.5 '{"key":"model","value":{"stringValue":"claude-haiku-4-5"}},'"$IDENT")"',
      '"$(punto claude_code.inventata.domani 99 '')"'
@@ -144,10 +148,20 @@ for atteso in ('session_id="contratto"', 'model="claude-haiku-4-5"', 'type="inpu
     if atteso not in esposto:
         fallimenti.append(f"manca {atteso}: l'allow-list scarta anche le label che il pannello usa per raggruppare")
 
+# (6) lo SCOPE non e' una label: `otel_scope_*` non passa da keep_keys, e fino al
+# 21/08/2026 un attributo di scope arrivava intatto. `without_scope_info` nell'exporter
+# e' la riga che lo chiude, e questa e' la riga che se ne accorge se sparisce.
+if "otel_scope_" in esposto:
+    fallimenti.append("label otel_scope_* esposte: `without_scope_info: true` e' saltato dall'exporter prometheus, e gli attributi di scope tornano label senza passare da nessun allow-list")
+
+# (7) il valore di `job` lo decide il Collector, non il client
+if 'job="claude-code"' not in esposto or "SCELTO-DAL-CLIENT" in esposto:
+    fallimenti.append("`job` porta il service.name scelto dal client: manca il `set(resource.attributes[\"service.name\"], \"claude-code\")` nel transform/label-allowlist")
+
 if fallimenti:
     for f in fallimenti:
         print(f"::error::{f}")
     sys.exit(1)
 print(f"ok: il Collector espone {sorted(famiglie)}; main.py e il pannello cercano esattamente quelli; "
-      "nome inventato filtrato, identita' assente, label del pannello presenti")
+      "nome inventato filtrato, identita' assente su risorsa/scope/data point, label del pannello presenti, job fissato")
 PY

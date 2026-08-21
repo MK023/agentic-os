@@ -20,9 +20,10 @@ scrape_configs:
     sample_limit: 5000
     # `label_limit` e `label_value_length_limit` mancavano proprio qui, cioe' sul job
     # che riceve i valori scelti dal client: `keep_keys` nel Collector governa le
-    # CHIAVI, non i valori, e `otel_scope_*` piu' `exported_job` non passano nemmeno
-    # da quello. Senza un tetto, un valore di label lungo un megabyte entra nel TSDB
-    # e ci resta per la retention.
+    # CHIAVI, non i valori — e fino al 21/08/2026 `otel_scope_*` non passava nemmeno
+    # da quello (oggi l'exporter non li emette piu', e `service.name` e' fissato).
+    # Senza un tetto, un valore di label lungo un megabyte entra nel TSDB e ci resta
+    # per la retention.
     # 30 e 256 sono margine, non stima: l'allow-list ne produce sei piu' i metadati,
     # e il valore piu' lungo che si e' visto e' un UUID di sessione (36 caratteri).
     # Gli altri due job — `otel-collector-interno` e `prometheus` — non li hanno di

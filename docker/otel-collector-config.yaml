@@ -76,6 +76,17 @@ processors:
   # per-run UUID, it never leaves the hub, and the public endpoint returns only sums.
   transform/label-allowlist:
     metric_statements:
+      # Anche la RISORSA, per la stessa ragione del percorso log: `service.name` e'
+      # l'unico attributo di risorsa che l'exporter trasforma in label (`job`, che
+      # Prometheus rinomina `exported_job`), e il suo VALORE lo sceglieva il client.
+      # `keep_keys` filtra le chiavi; il `set` chiude il valore, che qui e' uno solo.
+      # Misurato il 21/08/2026: gli altri attributi di risorsa non arrivano su :8889
+      # nemmeno senza questo statement (nessun `target_info` con questa config) —
+      # lo statement e' per il valore di `job`, non per una fuga di chiavi.
+      - context: resource
+        statements:
+          - keep_keys(resource.attributes, ["service.name"])
+          - set(resource.attributes["service.name"], "claude-code")
       - context: datapoint
         statements:
           # `datapoint.attributes`, not `attributes`: the Collector rewrites the bare
@@ -322,9 +333,18 @@ exporters:
     # depth, not the primary control: identity (user.email with a real address,
     # user.id, organization.id, ...) arrives as *data point* attributes — measured
     # against v2.1.220, see docs/CLAUDE_CODE_TELEMETRY.md — so what actually drops
-    # it is the allow-list above. Keeping the conversion off means resource
-    # attributes never become labels either. Per-datapoint attributes on the list
-    # (`type`, `model`) are still labels — those are what the dashboard groups by.
+    # it is the allow-list above. Per-datapoint attributes on the list (`type`,
+    # `model`) are still labels — those are what the dashboard groups by.
+    #
+    # Fino al 21/08/2026 qui c'era scritto che con la conversione spenta "gli
+    # attributi di risorsa non diventano mai label". Misurato: vero per la risorsa,
+    # FALSO per lo scope. Gli attributi di SCOPE uscivano come label
+    # `otel_scope_<chiave>` senza passare da nessun keep_keys — un canarino messo
+    # nello scope arrivava su :8889 intatto — e il percorso log aveva gia' chiuso
+    # lo stesso buco con uno statement `context: scope`. Qui la leva e' del
+    # fornitore ed e' una riga: senza nome, versione, schemaURL e attributi dello
+    # scope come label. Nessuna query, pannello o regola usa `otel_scope_*`.
+    without_scope_info: true
 
   # OTLP nativo verso Loki: `POST /otlp/v1/logs` e' l'endpoint documentato dal
   # fornitore. NON si usa il lokiexporter, deprecato a monte.
