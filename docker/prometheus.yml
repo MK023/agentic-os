@@ -18,6 +18,18 @@ scrape_configs:
     # 5000 e' molto sopra il consumo reale (poche decine di serie attive, con
     # metric_expiration a 5 minuti) e molto sotto il punto in cui il TSDB soffre.
     sample_limit: 5000
+    # `label_limit` e `label_value_length_limit` mancavano proprio qui, cioe' sul job
+    # che riceve i valori scelti dal client: `keep_keys` nel Collector governa le
+    # CHIAVI, non i valori, e `otel_scope_*` piu' `exported_job` non passano nemmeno
+    # da quello. Senza un tetto, un valore di label lungo un megabyte entra nel TSDB
+    # e ci resta per la retention.
+    # 30 e 256 sono margine, non stima: l'allow-list ne produce sei piu' i metadati,
+    # e il valore piu' lungo che si e' visto e' un UUID di sessione (36 caratteri).
+    # Gli altri due job — `otel-collector-interno` e `prometheus` — non li hanno di
+    # proposito: espongono la telemetria dei propri binari, con un insieme di label
+    # fissato dal codice e nessun valore che venga da fuori.
+    label_limit: 30
+    label_value_length_limit: 256
     static_configs:
       # Nome DNS interno di Railway. In locale il compose dà ai container lo stesso
       # alias di rete, così questo file è identico nei due ambienti invece di essere
@@ -39,11 +51,36 @@ scrape_configs:
   # Il connettore, per la stessa ragione degli altri due applicata all'unico ingresso.
   # Se cloudflared muore, tutto il sistema e' irraggiungibile dall'esterno mentre
   # dentro continua a funzionare benissimo: nessuna serie di Claude Code cambia,
-  # perche' e' il canale di INGRESSO a essere rotto, non la telemetria. Finora
-  # l'unica cosa che poteva accorgersene era una sonda in un altro repository.
+  # perche' e' il canale di INGRESSO a essere rotto, non la telemetria.
   # `cloudflared_tunnel_ha_connections` e `cloudflared_tunnel_request_errors` sono i
-  # due nomi che contano; `up` copre il caso in cui il processo non risponda affatto.
+  # nomi utili quando si va a guardare.
+  #
+  # E li' finisce, che e' meno di quanto questo commento prometteva prima. Nessuna di
+  # queste serie viene VALUTATA da qualcosa: il progetto non ha `rule_files`, non ha
+  # Alertmanager, e nessun pannello usa quei due nomi. L'unico consumatore e' il
+  # riquadro «Target su/giu'» (`expr: up`) del dashboard, che sta in Grafana — cioe'
+  # dietro il connettore di cui dovrebbe riportare la morte. Raccolto e non valutato
+  # e' una REGISTRAZIONE, buona per capire dopo cosa e' successo; non e' un
+  # testimone. I testimoni stanno fuori: `smoke.yml` ogni dieci minuti dall'esterno e
+  # `sorveglianza.yml` una volta al giorno.
+  #
+  # I tetti, per la stessa ragione scritta su otel-collector applicata a un target
+  # che per giunta non autentica nessuno: /metrics su :2000 e' aperto a chiunque stia
+  # nella rete privata, e lo scrape si fida di qualunque cosa risponda a quel nome.
+  # Il numero NON e' misurato — avviare il connettore non fa parte di questo
+  # cambiamento — quindi e' scelto per confronto e detto com'e': il 5000 di
+  # otel-collector serve un produttore a cardinalita' illimitata (`session.id` e' un
+  # UUID per esecuzione), qui il payload viene da un binario pinnato con un insieme
+  # fisso di famiglie e nessuna etichetta per-richiesta, cioe' un ordine di grandezza
+  # piu' in basso. 1000 lascia margine largo a un aggiornamento del connettore e
+  # ferma comunque una fuga; 30 etichette e 256 caratteri sono altrettanto larghi per
+  # cio' che il binario emette oggi, e servono contro cio' che emettera' domani.
+  # Se un tetto scatta fallisce l'INTERO scrape e `up` va a 0: rumoroso, che e' la
+  # stessa scelta gia' motivata sul primo job.
   - job_name: cloudflared
+    sample_limit: 1000
+    label_limit: 30
+    label_value_length_limit: 256
     static_configs:
       - targets: ["cloudflared.railway.internal:2000"]
 
@@ -97,14 +134,14 @@ scrape_configs:
   # questa e' quattro righe e lascia il sistema con un testimone in piu'.
   # `/metrics` di Grafana non e' autenticato ma sta sulla rete privata, e non e'
   # dietro il Tunnel: nessuna rotta nuova verso l'esterno.
+  #
+  # I tetti non sono decorazione. Il `sample_limit` stava solo su otel-collector,
+  # con scritto accanto "e' qui che si paga": era vero con tre job. Misurato subito
+  # dopo aver aggiunto questo, sullo stack vero: 3186 campioni per scrape da Grafana
+  # contro i ~305 del Collector. Un Grafana compromesso poteva servire un /metrics da
+  # centomila serie e Prometheus le prendeva tutte. Superata la soglia fallisce
+  # l'INTERO scrape, ed e' la scelta rumorosa voluta.
   - job_name: grafana
-    # Il tetto stava solo su otel-collector, e la ragione scritta li' era "e' qui che
-    # si paga". Era vera con tre job. Misurato il 2026-08-20 subito dopo aver aggiunto
-    # questi due: 3186 campioni per scrape da grafana, contro i ~305 del Collector —
-    # cioe' l'87% dell'ingestione entrava dalle due porte senza serratura. Un grafana
-    # compromesso poteva servire un /metrics da centomila serie e Prometheus le
-    # prendeva tutte. Superata la soglia fallisce l'INTERO scrape, ed e' la scelta
-    # rumorosa voluta: meglio un target rosso che un TSDB gonfio in silenzio.
     sample_limit: 6000
     label_limit: 30
     label_value_length_limit: 128

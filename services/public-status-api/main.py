@@ -7,12 +7,13 @@ no free-form query parameter, no pass-through to PromQL, no session content.
 
 import asyncio
 import os
+import re
 import secrets
 import time
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from sentry import capture_exception, verifica_dsn
 
 # Nessuna rotta oltre a /status. FastAPI monta /docs, /redoc e /openapi.json da
@@ -22,7 +23,19 @@ from sentry import capture_exception, verifica_dsn
 # hostname non è un controllo d'accesso — è la stessa ragione per cui l'ingest OTLP
 # autentica dentro il Collector invece di fidarsi del tunnel. Lo schema OpenAPI
 # descriverebbe per giunta proprio l'autenticazione che protegge.
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+#
+# `redirect_slashes=False` per la stessa famiglia di ragioni. Col default acceso,
+# `/status/` rispondeva 307 PRIMA che l'autenticazione venisse valutata, con una
+# `Location` assoluta costruita sull'header `Host` del chiamante e in schema `http`
+# (uvicorn gira senza `--forwarded-allow-ips`, quindi ignora `X-Forwarded-Proto`).
+# Non era una falla aperta — h11 rifiuta CRLF negli header, quindi niente response
+# splitting — ma era un valore controllato da fuori riflesso senza credenziali, e chi
+# avesse seguito quel redirect avrebbe rispedito il bearer in chiaro verso un host
+# scelto da altri. Che in produzione Access risponda 401 prima non conta: sarebbe il
+# controllo di qualcun altro a salvarci. Nessun consumatore usa la barra finale (il
+# Worker del sito interroga `.../status`, verify-hub.sh pure), quindi la rotta non ha
+# varianti da servire e `/status/` e' semplicemente un 404.
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
 
 PROMETHEUS_URL = os.environ["PROMETHEUS_URL"]
 
@@ -91,6 +104,9 @@ REQUEST_TIMEOUT = httpx.Timeout(10.0)
 # on its record (the volume filled on 2026-08-13). Lose it and these three read ~0 for
 # the rest of the day with nothing to recover from, answering 200 — indistinguishable
 # from a quiet morning. Accepted, because the alternative is the double count above.
+# Accepted *silently* until 2026-08-20, which was the actual defect: nothing said the
+# zeros out loud, and `_check_persistence` cannot — an emptied but healthy TSDB fails
+# no compaction. `_check_zero_volume` below is the half that was missing.
 #
 # So "today" here means "the last 25 hours of activity", not a calendar day. Honest,
 # and stable when nothing is running.
@@ -208,17 +224,39 @@ class UnknownPricingKey(Exception):
     """A model or token type with no list price. Reported, never raised."""
 
 
+# Un'etichetta che finisce in un evento Sentry non e' un testo nostro. `model` e
+# `type` arrivano dalla serie Prometheus, cioe' da chiunque possieda
+# OTLP_INGEST_TOKEN: finivano verbatim nel corpo dell'evento, e MAX_PRICING_GAPS
+# limitava il NUMERO di eventi, non il contenuto di ciascuno. La conoscenza utile e'
+# "esiste un modello sconosciuto" e quale — non i suoi duecento caratteri di
+# qualunque cosa. Sessantaquattro perche' il nome piu' lungo che la produzione ha
+# davvero emesso ("claude-haiku-4-5-20251001") ne ha venticinque: c'e' spazio per un
+# modello futuro con due suffissi, non per un payload.
+#
+# Allow-list, non delete-list, per la stessa ragione per cui le label del Collector lo
+# sono: una lista di caratteri da togliere fallisce aperta su ogni carattere che a
+# qualcuno verra' in mente domani. `str()` invece di un ramo per `None`: l'etichetta
+# assente diventa "None", che attraversa l'allow-list intatta e resta distinguibile
+# da una vuota.
+MAX_LABEL_CHARS = 64
+_CARATTERE_NON_AMMESSO = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _etichetta_sicura(valore: object) -> str:
+    return _CARATTERE_NON_AMMESSO.sub("", str(valore))[:MAX_LABEL_CHARS]
+
+
 async def _rate_usd_per_mtok(model: str | None, tipo: str | None) -> float:
     # `None` reaches here when the label itself is missing from a series, which is
     # the same situation as an unrecognised value: unknown, so priced high and said
     # out loud rather than assumed to be free.
     prezzi = PRICES_USD_PER_MTOK.get(model)
     if prezzi is None:
-        await _report_pricing_gap(f"model {model!r}")
+        await _report_pricing_gap(f"model {_etichetta_sicura(model)!r}")
         prezzi = _FALLBACK_RATES
     rate = prezzi.get(tipo)
     if rate is None:
-        await _report_pricing_gap(f"token type {tipo!r}")
+        await _report_pricing_gap(f"token type {_etichetta_sicura(tipo)!r}")
         rate = _DEAREST_RATE
     return rate
 
@@ -344,7 +382,26 @@ class PrometheusWatchdogBlind(Exception):
     """The watchdog's own input is missing. Reported, never raised."""
 
 
-async def _report_infra_throttled(key: str, exc: Exception) -> None:
+class PublicNumbersAllZero(Exception):
+    """The three numbers have read zero for an hour of polling. Reported, never raised."""
+
+
+def _valore_pubblico(exc: Exception) -> str:
+    """Cosa raccontiamo di un guasto a monte, senza raccontare dove sta.
+
+    `str(httpx.HTTPStatusError)` contiene l'URL intero della richiesta: DNS interno di
+    Railway e PromQL completa, cioe' le due cose che SECURITY.md dichiara private.
+    Verso il chiamante non usciva niente (502 generico), ma verso Sentry si', e Sentry
+    e' un terzo. Il messaggio di un'eccezione che non abbiamo scritto noi non e' un
+    testo di cui conosciamo il contenuto, quindi non ne esce nessuno: il tipo lo porta
+    gia' l'evento, e lo stato HTTP e' l'unica altra meta' che serve a capire.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"upstream query failed: HTTP {exc.response.status_code}"
+    return "upstream query failed"
+
+
+async def _report_infra_throttled(key: str, exc: Exception, *, value: str | None = None) -> None:
     last_sent = _INFRA_ALERTS_SENT.get(key)
     now = time.monotonic()
     if last_sent is not None and now - last_sent < INFRA_ALERT_INTERVAL_S:
@@ -355,7 +412,7 @@ async def _report_infra_throttled(key: str, exc: Exception) -> None:
     # tentativi su ogni richiesta pubblica. Si preferisce perdere un evento che
     # amplificare un guasto altrui; è la stessa scelta fail-open di sentry.py.
     _INFRA_ALERTS_SENT[key] = now
-    await capture_exception(exc, tags={"endpoint": "status"})
+    await capture_exception(exc, tags={"endpoint": "status"}, value=value)
 
 
 async def _check_persistence(client: httpx.AsyncClient) -> None:
@@ -419,6 +476,60 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
     )
 
 
+# Quante passate consecutive a zero prima di dirlo. Una passata e' una finestra di
+# cache (STATUS_CACHE_TTL_S), quindi sessanta sono circa un'ora di polling continuo —
+# e "circa" e' onesto: le passate le compra il traffico, non un orologio, quindi
+# un'ora di silenzio totale non conta nulla e non fa scattare niente.
+#
+# Sessanta e non tre perche' i tre numeri guardano indietro 25h: fra due sessioni ci
+# sono normalmente ore di zeri veri, e un allarme che grida a ogni mattina tranquilla
+# e' un allarme che qualcuno silenzia — la fine di ogni sonda. E non seicento perche'
+# INFRA_ALERT_INTERVAL_S ripete comunque al massimo una volta all'ora: una soglia piu'
+# alta non renderebbe l'evento piu' vero, solo piu' tardo.
+#
+# Cio' che questo evento NON sa fare, detto qui perche' chi lo riceve lo sappia
+# subito: distinguere "non ha girato niente" da "il volume e' vuoto". Dai tre numeri
+# non e' distinguibile, e fingere il contrario sarebbe il solito controllo affermato
+# che non esiste. Percio' l'evento chiede di guardare il volume invece di dichiarare
+# un guasto: zero e' un'affermazione, e va detta a voce alta anche quando e' innocua.
+ZERO_PASSES_BEFORE_ALERT = 60
+_ZERO_PASSES = 0
+
+
+async def _check_zero_volume(values: dict) -> None:
+    """Report three zeros that last, instead of serving them with a 200 and no comment.
+
+    `_parse_value` risponde 0.0 su result vuoto — scelta dichiarata: un volume perso fa
+    leggere ~0 con un 200. Cio' che mancava e' che nessuno lo dicesse: `_check_persistence`
+    guarda i fallimenti di compaction, e un TSDB svuotato ma perfettamente sano non ne
+    ha nessuno. Trova la serie, legge zero, tace — verde ovunque, dati spariti.
+
+    Gira sulla stessa passata della sonda di persistenza, quindi non aggiunge una
+    cadenza ne' una query: sono i tre numeri che abbiamo gia' in mano.
+    """
+    global _ZERO_PASSES
+    if any(values.values()):
+        _ZERO_PASSES = 0
+        # Dimenticare qui rende accurata la "prima comparsa" del prossimo periodo di
+        # zeri, invece di lasciarla scivolare fino a un'ora dopo. Stessa ragione per
+        # cui `_check_persistence` dimentica sul ramo sano.
+        _INFRA_ALERTS_SENT.pop("zero-volume", None)
+        return
+
+    _ZERO_PASSES += 1
+    if _ZERO_PASSES < ZERO_PASSES_BEFORE_ALERT:
+        return
+    await _report_infra_throttled(
+        "zero-volume",
+        PublicNumbersAllZero(
+            f"the three public numbers have read zero for {ZERO_PASSES_BEFORE_ALERT} "
+            "consecutive passes (~1h of polling) while Prometheus answered 200 — "
+            "either nothing has run since yesterday, or the data is gone; check the "
+            "prometheus-data volume before assuming the first"
+        ),
+    )
+
+
 @app.get("/healthz")
 async def healthz() -> dict:
     """Sonda per la piattaforma: senza token, senza chiamate a monte, costante.
@@ -460,7 +571,26 @@ async def healthz() -> dict:
         502: {"description": "Prometheus unreachable or answering an unexpected shape"},
     },
 )
-async def status(_: RequireToken) -> dict:
+async def status(_: RequireToken, response: Response) -> dict:
+    # Cosa e' questa risposta, detto a chi la riceve. Fino al 20/08/2026 gli unici
+    # header erano `date`, `server`, `content-length` e `content-type`: una risposta
+    # autenticata, vecchia fino a STATUS_CACHE_TTL_S, che non dichiarava ne' l'una ne'
+    # l'altra cosa.
+    #
+    # `no-store` e non un `max-age`: la finestra di freschezza di questi tre numeri e'
+    # gia' quella della cache qui sotto, e una seconda cache a valle la SOMMEREBBE alla
+    # prima — fino a due minuti di eta' per un numero che ne dichiara uno. E' la stessa
+    # ragione per cui la sonda non ha un orologio suo: due orologi per la stessa cadenza
+    # si sfasano sempre. Il Worker del sito ragiona uguale e lo scrive ("messo in cache
+    # al bordo diventerebbe vecchio due volte"); la sua copia last-known-good e' una
+    # Response che costruisce lui, non questa, quindi `no-store` non gliela tocca.
+    #
+    # Prima del ramo che serve dalla cache, non dopo: in produzione e' da li' che esce
+    # quasi ogni risposta, e un header presente una volta su N e' un difetto
+    # intermittente invece che assente.
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
     # Una passata al minuto, qualunque sia il traffico. L'endpoint pubblico non e'
     # throttlato e dal 19/08/2026 il progetto si paga a consumo: senza questa finestra
     # ogni richiesta comprava tre query a Prometheus e tre connessioni TCP nuove, cioe'
@@ -507,11 +637,22 @@ async def status(_: RequireToken) -> dict:
             }
         except (httpx.HTTPError, KeyError, TypeError, ValueError, ArithmeticError) as exc:
             # Limitata, come ogni altra cattura di questo file. Era l'unica senza
-            # limitatore, ed era anche l'unica che un chiamante NON autenticato puo'
-            # far scattare a volonta': ogni 502 apriva un client nuovo verso
-            # sentry.io, handshake TLS compreso. Con Prometheus giu' e il widget che
-            # interroga ogni 20s sono ~4.300 eventi al giorno senza alcun attaccante,
-            # cioe' la quota Sentry che si esaurisce da sola proprio mentre serve.
+            # limitatore: ogni 502 apriva un client nuovo verso sentry.io, handshake
+            # TLS compreso. Con Prometheus giu' e il widget che interroga ogni 20s
+            # sono ~4.300 eventi al giorno senza alcun attaccante, cioe' la quota
+            # Sentry che si esaurisce da sola proprio mentre serve — e i 502 non
+            # entrano in cache (solo i successi), quindi la finestra di 60s non ne
+            # toglie nemmeno uno.
+            #
+            # Fino al 20/08/2026 qui c'era scritto anche che era "l'unica che un
+            # chiamante NON autenticato puo' far scattare a volonta'". Misurato: e'
+            # falso. Senza token la risposta e' 401 e verso Prometheus non parte
+            # niente — questo ramo sta dentro la rotta autenticata, dietro il bearer
+            # e dietro Access. Il limitatore resta giustificato dal volume qui sopra,
+            # non da un attaccante anonimo; un rischio affermato che non esiste manda
+            # a cercare nel posto sbagliato quanto uno taciuto. (Il commento gemello
+            # sul 500 da latin-1 dice invece il vero: quel guasto scattava DENTRO
+            # `require_valid_token`, prima di qualunque credenziale valida.)
             #
             # La chiave e' il TIPO dell'eccezione, non un valore fisso: un guasto
             # nuovo parla subito invece di restare zitto per un'ora dietro a uno
@@ -522,7 +663,7 @@ async def status(_: RequireToken) -> dict:
             # Prometheus faceva `int(float('inf'))` -> OverflowError, che non e' un
             # ValueError e diventava il 500 senza cattura che il commento qui sopra
             # dichiarava chiuso.
-            await _report_infra_throttled(f"upstream-{type(exc).__name__}", exc)
+            await _report_infra_throttled(f"upstream-{type(exc).__name__}", exc, value=_valore_pubblico(exc))
             raise HTTPException(status_code=502, detail="upstream unavailable") from exc
 
         _status_cache = (now, values)
@@ -531,5 +672,7 @@ async def status(_: RequireToken) -> dict:
         # watchdog must not share a failure path with the contract it guards. Same
         # client, so it costs one round trip on the private network, not a connection.
         await _check_persistence(client)
+        # Stessa passata, nessuna query in piu': i tre numeri sono gia' qui.
+        await _check_zero_volume(values)
 
     return values

@@ -246,10 +246,13 @@ authentication; the only safe exposure is the project's private network.
 in, so the platform's own hostnames stay unused rather than sitting unprotected
 beside the front door.
 
-**Every image runs as a non-root user, with one documented exception.** Three of the
-four base images already did, invisibly to a scanner reading a `FROM`; `cloudflared`
-did not, and now does — a connector making only outbound connections needs no
-privilege.
+**Every image runs as a non-root user, with one documented exception.** All four base
+images already did, invisibly to a scanner reading a `FROM` — including `cloudflared`,
+which this file and its Dockerfile both claimed ran as root until 2026-08-20.
+Measured with `docker image inspect` on the pinned digest and on the previous
+`2026.7.3`: both declare `USER 65532:65532`. The `USER` line in each Dockerfile is
+therefore not a fix but a **declaration** — it pins the identity here so a base-image
+bump cannot change it silently, and it is what the gate below can actually read.
 
 The exception is **Prometheus on Railway**, which carries `RAILWAY_RUN_UID=0`. Its
 attached volume is presented owned by root, so as `nobody` it cannot even create
@@ -264,6 +267,37 @@ parts inside the one service that has none today.
 A CI gate keeps that exception single: `scripts/check-image-users.sh` fails the build
 if any Dockerfile here lacks a `USER` or declares root. A written exception stays an
 exception; a copied one becomes the norm, and the copying is what the gate stops.
+
+**cloudflared's metrics port serves `net/http/pprof`, and that is a declared cost,
+not an absence.** `--metrics 0.0.0.0:2000` is the only listener the connector has, and
+its mux does more than `/metrics` and `/ready`: it mounts the whole
+`http.DefaultServeMux` under `/debug/`, where `net/http/pprof` registered itself.
+Measured on the binary extracted from the pinned digest — `docker cp`, then
+disassembling `metrics.newMetricsHandler` and reading the route strings out of
+`.rodata`, then confirmed against the vendor's source. The routes are `/metrics`,
+`/ready`, `/healthcheck`, `/quicktunnel`, `/config`,
+`/diag/{configuration,tunnel,system}` and `/debug/*`. Exactly one is blocked:
+`/debug/pprof/cmdline` answers `403 forbidden`, and the vendor's own comment says why
+— *"prevent leaking secret command-line arguments (e.g. tunnel tokens) that are
+exposed via os.Args"*.
+
+So Cloudflare shut the argv door and left the heap door open. `/debug/pprof/heap` is
+unauthenticated on the project's private network: anything that gets execution in one
+of the other four containers can reach `cloudflared.railway.internal:2000` with no
+credentials and pull the memory of the process holding the tunnel token — which here
+arrives through `TUNNEL_TOKEN`, i.e. through the door that stayed open. What that one
+token is worth is written further down: **one token yields three of the other five.**
+
+It stays as it is, and the reasons are the two that would change the answer if either
+stopped being true. **There is no flag that turns `/debug/` off** — the only
+parameters in the area are `--metrics`, `--metrics-update-freq` and
+`--management-diagnostics`, none of which touches the mux (read on the vendor's
+run-parameters page and extracted from the binary's own flag table). And **there is
+only one listener**: dropping it loses the Prometheus scrape *and*
+`healthcheckPath: /ready` together, putting the system's only ingress back to saying
+nothing about itself. The containment is that this port has no Tunnel hostname and is
+not published — reaching it means already being inside the private network. If
+cloudflared ever ships a way to serve metrics without `/debug/`, this reopens.
 
 ## Metrics semantics
 
@@ -364,6 +398,20 @@ numbers read ~0 for the rest of the day, `/status` answers 200, and that is
 indistinguishable from a morning when nobody worked. The trade is worth making because
 the other side of it is a silent double count, but it moves the single point of failure
 rather than removing it.
+
+**Since 2026-08-20 it is at least no longer silent.** The sentence above was accurate
+and it described a gap nobody watched: `_check_persistence` reads
+`prometheus_tsdb_compactions_failed_total`, so a TSDB that is *empty but perfectly
+healthy* returns the series, reports zero failures, and says nothing. A lost volume was
+green everywhere — the exact shape of failure this repository exists to avoid.
+`_check_zero_volume` now runs on the same pass, at no extra query: sixty consecutive
+passes of three zeros — roughly an hour of continuous polling — raise a Sentry event.
+Sixty, not three, because the three numbers look back 25h and hours of genuine zeros sit
+between two sessions; an alert that fires every quiet morning is an alert someone
+silences. **The event declares what it cannot tell apart**: "nobody worked" and "the
+volume is gone" produce the identical signal from these three numbers, so it asks the
+reader to look at the volume rather than announcing a fault. Removing that ambiguity
+needs a second source — `up` on the Collector — not a bigger N.
 
 **Both halves ship through three separate Railway services** — the Collector config, the
 status API and the Grafana dashboard live in three images with three `watchPatterns`.
@@ -597,6 +645,26 @@ on the **received** code. A swap between `401` and `403` is always "the reachabl
 moved"; only a `2xx` means neither control answered. Routing on the *path* had been wrong
 earlier the same day for the same reason — the explanation belongs to the outcome, not to
 the request.
+**`--web.cors.origin` passa da `.*` a `^$`, ed è l'unica famiglia di `--web.*` che il
+gate lascia entrare.** The default is not a vendor oversight: Prometheus expects to sit
+behind a proxy that decides origins for it. Nothing sits in front of this one. Measured
+2026-08-20 against the shipped image: `Origin: https://evil.example` comes back as
+`Access-Control-Allow-Origin: https://evil.example`, so any page open in a browser that
+can reach the port reads the whole TSDB in JavaScript — thirty days of a behavioural
+profile, which `SECURITY.md` names as the sensitive content of that volume. On Railway's
+private network the radius is small; locally, where the real data lives, the port is on
+the host.
+
+`^$` matches no origin: server-to-server queries keep working (Grafana and the status
+API send no `Origin` — verified, `200` either way), a third-party browser stops. The
+three write surfaces were re-verified the same day and were already off: `admin-api`,
+`lifecycle`, `remote-write-receiver` all `false`.
+
+The gate `prometheus non accende endpoint che non sa autenticare` rejected this flag,
+which is exactly what it is for. Rather than weakening it, it now carries a short
+allow-list of flags that **narrow** surface instead of adding it, and every future entry
+has to answer the same question here. A gate that blocks the fix for an open default is
+a gate that will be bypassed during an incident.
 
 ## Logs
 
@@ -976,6 +1044,19 @@ which is the same window the application throttles on — two clocks for one cad
 how they drift. Verified by reading the rule back: one rule, `frequencyMinutes: 60`,
 three conditions. Like the WAF rule and the spending limit, this lives outside git and
 no gate here can notice it changing.
+
+**A series that is collected and never evaluated is a record, not a witness.**
+`up{job="cloudflared"}` reads as monitoring and is not: this project has no
+`rule_files`, no Alertmanager, and no panel on `cloudflared_tunnel_ha_connections` or
+`cloudflared_tunnel_request_errors` — the two names `prometheus.yml` used to call "the
+ones that count". The only consumer of any of it is the dashboard's `Target su/giù`
+panel (`expr: up`), which lives in Grafana, i.e. **behind the very connector whose
+death it would report**. The scrape is worth keeping — after an outage it is the only
+thing that says when the tunnel went and how long it was gone — but the thing that
+*notices* is outside: `smoke.yml` every ten minutes from the public internet, and
+`sorveglianza.yml` once a day. Written down 2026-08-20 because the comment in
+`prometheus.yml` promised more than the repository contains, which is the same defect
+as an asserted control that does not exist, only quieter.
 
 **Langfuse no** — Phase 1 makes no model call of its own; there is nothing to trace.
 A standing decision for Phase 4 (session RAG), not a gap today.

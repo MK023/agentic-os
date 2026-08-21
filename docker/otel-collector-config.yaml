@@ -6,6 +6,12 @@
 # (ZimaOS). `bearertokenauth` closes it: only requests carrying the configured
 # token reach any pipeline.
 extensions:
+  # Misurato il 2026-08-20: con DUE header `Authorization` vince il PRIMO
+  # (`bearertokenauth.go:207`, `token := auth[0]`). Non e' un bypass — serve
+  # comunque il token valido — ma va saputo PRIMA di estendere la regola WAF al
+  # valore dell'header: bordo e Collector valuterebbero header diversi, e la
+  # divergenza sarebbe silenziosa. Il confronto e' a tempo costante
+  # (`subtle.ConstantTimeCompare`), verificato sul sorgente della v0.158.0.
   bearertokenauth:
     scheme: "Bearer"
     tokens:
@@ -78,11 +84,33 @@ processors:
           - keep_keys(datapoint.attributes, ["model", "type", "query_source", "start_type", "terminal_type", "session.id"])
 
   # I nomi delle ETICHETTE hanno un allow-list; i nomi delle METRICHE non ne avevano
-  # nessuno, e quella era la meta' scoperta. Chi tiene OTLP_INGEST_TOKEN poteva
-  # scrivere `claude_code.token.usage` con i valori che voleva: le tre cifre pubbliche
-  # sul sito diventano le sue. E non si annullano aspettando — le query usano
-  # `max_over_time(...[25h])` su un contatore, quindi un picco iniettato resta
-  # appiccicato per venticinque ore.
+  # nessuno, e questo processor ha chiuso quella meta'.
+  #
+  # LA META' CHE RESTA APERTA, e va detta invece di lasciar credere il contrario:
+  # **un allow-list di NOMI non limita i VALORI**. Chi tiene OTLP_INGEST_TOKEN puo'
+  # ancora scrivere `claude_code.token.usage` con dentro il numero che vuole, e le
+  # query pubbliche usano `max_over_time(...[25h])` su un contatore, quindi un picco
+  # iniettato resta appiccicato per venticinque ore — non si annulla aspettando ne'
+  # riavviando il client. Misurato il 2026-08-20: 1e12 token nella cifra pubblica di
+  # uno stack di prova.
+  #
+  # Non e' un buco che si chiude qui, ed e' importante capire perche': il token
+  # identifica il produttore FIDATO. Chi lo possiede e' Claude Code, cioe' la fonte
+  # stessa dei numeri; un filtro sui valori sarebbe un controllo di plausibilita' su
+  # un dato di cui non esiste una seconda fonte. Cio' che il progetto puo' fare, e ha
+  # fatto, e' impedire che il numero arrivi da QUALCUN ALTRO: le tre query pubbliche
+  # portano `{job="otel-collector"}`, cosi' un target scrapato diverso dal Collector
+  # non entra nella somma. Il resto e' la rotazione del token.
+  #
+  # Stessa forma per la CARDINALITA': `keep_keys` tiene la chiave `model`, non
+  # governa i suoi valori. Misurato: 300 valori distinti di `model` in una sola
+  # richiesta creano 300 serie, e sotto `max_request_body_size: 4194304` si arriva
+  # a ~31.000 serie per richiesta, ripetibile. La difesa e' a valle e va tenuta
+  # rumorosa: `sample_limit: 5000` sul job `otel-collector` in docker/prometheus.yml
+  # fa fallire l'INTERO scrape invece di ingoiare, che e' la direzione giusta.
+  # Sul lato LOG la stessa cosa e' chiusa alla radice (`set(resource.attributes
+  # ["service.name"], "claude-code")`), perche' li' il valore lecito e' uno solo.
+  # Qui `model` varia legittimamente, quindi non si puo' fissare.
   #
   # Il filter processor SCARTA quando la condizione e' vera ("If any condition is met,
   # the telemetry is dropped"), quindi un allow-list si scrive negato: si scarta tutto
@@ -306,7 +334,7 @@ service:
   # Railway — questa porta non ha, e non deve avere, un hostname del Tunnel.
   #
   # `readers` e non `service::telemetry::metrics::address`: dalla v0.123.0 quella
-  # chiave è IGNORATA (qui gira la 0.157.0), quindi scriverla lascerebbe la porta
+  # chiave è IGNORATA (qui gira la 0.158.0), quindi scriverla lascerebbe la porta
   # chiusa senza dire niente — un fallimento silenzioso al posto di una misura.
   telemetry:
     metrics:
