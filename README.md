@@ -108,7 +108,13 @@ The short version:
   there is no route, not because they cannot authenticate. Grafana and the status API sit
   behind Cloudflare Access (email policy / service token + own bearer, two layers).
 - **Log attributes pass two allow-lists**, one in the Collector and one in Loki, each
-  able to hold on its own. This is the half that had to be *run* rather than read:
+  able to hold on its own — **on the OTLP path, which is the one the Collector uses.**
+  That qualifier is not pedantry: measured 2026-08-21, a push straight to Loki's *native*
+  `POST /loki/api/v1/push` carries arbitrary labels and structured metadata past both
+  (`user_email` came back as an index label). So the guarantee reads *the Collector
+  cannot leak identity into Loki*, not *nothing can*; what bounds the rest is
+  `max_global_streams_per_user` and the fact that reaching that endpoint already means
+  being inside Railway's private network. This is the half that had to be *run* rather than read:
   identity is on the log records and the vendor sends it always, redaction of prompts is
   a default rather than a control, and one missing statement had quietly made the two
   barriers dependent on each other. `scripts/prova-privacy-log.sh` is the proof, and it
