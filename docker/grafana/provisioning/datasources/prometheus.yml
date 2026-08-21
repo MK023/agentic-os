@@ -3,6 +3,11 @@ apiVersion: 1
 datasources:
   - name: Prometheus
     type: prometheus
+    # UID FISSO. Le regole d'allarme provisionate da file NOMINANO il datasource per
+    # uid: senza, Grafana ne genera uno a caso al primo avvio e ogni regola punta a
+    # una fonte che non esiste. Una regola che non puo' interrogare niente non e' una
+    # regola rumorosa, e' una regola che non scatta mai.
+    uid: prometheus
     access: proxy
     # Stesso hostname in locale e su Railway (vedi gli alias di rete nel compose).
     url: http://prometheus.railway.internal:9090

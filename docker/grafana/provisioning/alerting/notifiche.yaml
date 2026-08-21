@@ -1,0 +1,42 @@
+# DOVE FINISCONO GLI ALLARMI.
+#
+# Il webhook Slack arriva da una variabile di servizio Railway, MAI dal file: un
+# incoming webhook e' una credenziale — chi lo ha puo' scrivere nel canale — e
+# questo file sta in git.
+#
+# COSA SUCCEDE FINCHE' LA VARIABILE NON ESISTE, dichiarato invece che scoperto:
+# Grafana provisiona lo stesso, le regole VALUTANO e gli allarmi si vedono nella
+# sua UI; l'invio a Slack fallisce e resta scritto nei log di Grafana. Cioe' il
+# sistema degrada a "gli allarmi ci sono ma nessuno te li porta". E' un'assenza
+# dichiarata, non un controllo affermato: si chiude impostando UNA variabile su
+# Railway, senza toccare il codice.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: slack
+    receivers:
+      - uid: slack-hub
+        type: slack
+        settings:
+          # Interpolazione di ambiente del provisioning di Grafana. Il valore non
+          # compare mai qui dentro ne' in nessun commit.
+          url: $SLACK_WEBHOOK_URL
+          title: '{{ template "slack.default.title" . }}'
+          text: '{{ template "slack.default.text" . }}'
+
+policies:
+  - orgId: 1
+    receiver: slack
+    # L'ALBERO INTERO E' UNA SOLA RISORSA: provisionarlo sovrascrive tutte le
+    # politiche esistenti. Scritto perche' e' l'unico file di questa cartella che
+    # non si somma a cio' che c'era — lo sostituisce.
+    group_by: [alertname, gravita]
+    # 30s prima di spedire il primo gruppo: gli allarmi di questo hub arrivano a
+    # grappoli (Loki giu' porta con se' lo scrape e la coda del Collector), e
+    # riceverne uno per notifica trasformerebbe un guasto in cinque messaggi.
+    group_wait: 30s
+    group_interval: 5m
+    # 4h e non 1h: un guasto qui si ripara a mano, e ripetere ogni ora una cosa
+    # che gia' si sa e' il modo piu' veloce per smettere di leggere le notifiche.
+    repeat_interval: 4h

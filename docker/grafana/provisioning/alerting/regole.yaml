@@ -1,0 +1,238 @@
+# LE REGOLE D'ALLARME. Fino al 2026-08-21 in questo progetto non ne esisteva
+# NESSUNA: nessun `rule_files` in Prometheus, nessun Alertmanager. Una serie
+# raccolta e mai valutata e' una registrazione, non un testimone — l'unico modo
+# di accorgersi di un guasto era che qualcuno andasse a leggere i log.
+#
+# PERCHE' GRAFANA E NON ALERTMANAGER, deciso dopo aver letto la doc:
+#  - Alertmanager sarebbe un SETTIMO servizio su un piano a consumo;
+#  - una regola Prometheus NON puo' interrogare Loki, e meta' di cio' che vale la
+#    pena sorvegliare qui e' fatto di log.
+#
+# OGNI METRICA QUI SOTTO E' STATA LETTA DAL BINARIO, non dalla memoria: una regola
+# su un nome che non esiste non e' rumorosa, e' muta — e ha lo stesso aspetto di
+# una regola che non scatta perche' va tutto bene. E' la forma esatta del difetto
+# che questo repository chiama "controllo affermato che non esiste".
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: hub
+    folder: Allarmi
+    # 1m: la scala dei guasti qui e' il minuto (scrape ogni 15s), e il costo di
+    # valutare cinque regole su un Prometheus con sei job e' trascurabile.
+    interval: 1m
+    rules:
+      # ------------------------------------------------------------------
+      - uid: loki-giu
+        title: Loki e' giu'
+        # `for` lungo di proposito: Loki NON ha healthcheckPath, quindi Railway
+        # non lo sonda, ma ogni deploy del servizio fa comunque cadere lo scrape
+        # per il tempo del riavvio. Con `for: 2m` ogni deploy sarebbe un allarme,
+        # e un allarme che suona sui deploy si zittisce entro una settimana.
+        for: 5m
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: up{job="loki"}
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: C
+        # NoData = Alerting, e non e' pignoleria: se la serie `up{job="loki"}`
+        # sparisse del tutto — job rimosso da prometheus.yml, Prometheus giu' —
+        # la regola non avrebbe dati e con `NoData` resterebbe silenziosa. Sarebbe
+        # il guasto peggiore travestito da quiete.
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {gravita: critica}
+        annotations:
+          summary: Loki non risponde allo scrape da 5 minuti
+          description: >-
+            Loki e' l'unico servizio senza healthcheckPath: questo scrape e' il suo
+            SOLO testimone. E dal 2026-08-21 si sa che `GET /ingester/shutdown` lo fa
+            uscire con codice 0 — non e' un crash, quindi il riavvio automatico
+            dipende da restartPolicyType ALWAYS. Se questo allarme resta acceso, il
+            log store e' fermo e nessun altro controllo se ne accorgera'.
+
+      # ------------------------------------------------------------------
+      - uid: loki-wal-disco-pieno
+        title: Loki non riesce a scrivere il WAL su disco
+        for: 5m
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              # `increase` e non il totale: il contatore e' cumulativo per processo,
+              # quindi un valore alto ereditato da ieri terrebbe l'allarme acceso
+              # per sempre e lo renderebbe invisibile.
+              expr: increase(loki_ingester_wal_disk_full_failures_total[15m])
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: C
+        # Qui NoData e' OK: il contatore non esiste finche' non fallisce niente, ed
+        # e' il caso normale. Trattarlo come allarme suonerebbe a vuoto per sempre.
+        noDataState: OK
+        execErrState: Alerting
+        labels: {gravita: critica}
+        annotations:
+          summary: Il WAL di Loki non entra piu' sul volume
+          description: >-
+            E' il modo in cui il volume da 5 GB si riempie DAVVERO: se R2 diventa
+            irraggiungibile i chunk si accumulano in locale. Da qui in poi ogni push
+            e' persa.
+
+      # ------------------------------------------------------------------
+      - uid: loki-volume-pieno
+        title: Il volume di Loki e' oltre l'80%
+        for: 15m
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              # Metrica TROVATA misurando, non ricordata: il piano dava per
+              # non sorvegliabile lo spazio del volume di Loki. Il fornitore
+              # dichiara `Current disk usage percentage (0.0 to 1.0) for the WAL
+              # directory` — e la WAL directory sta sotto `path_prefix: /loki`,
+              # cioe' sul volume da 5 GB.
+              expr: loki_ingester_wal_disk_usage_percent
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                # 0.8 e non 0.95: la ritenzione gira ogni 10 minuti e la compaction
+                # ha bisogno di spazio LIBERO per lavorare. Un allarme che scatta
+                # quando non c'e' piu' margine di manovra arriva a guasto avvenuto —
+                # e' quello che e' successo a Prometheus il 2026-08-13.
+                - evaluator: {type: gt, params: [0.8]}
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+        labels: {gravita: alta}
+        annotations:
+          summary: Il volume da 5 GB di Loki e' pieno all'80%
+          description: >-
+            Chunk e indice vivono su R2; sul disco restano indice attivo e cache del
+            tsdb_shipper. Se questo sale, o la ritenzione non sta cancellando o R2
+            non riceve.
+
+      # ------------------------------------------------------------------
+      - uid: prometheus-volume-pieno
+        title: I blocchi TSDB di Prometheus sono vicini al tetto
+        for: 15m
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: prometheus_tsdb_storage_blocks_bytes
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                # 2.4 GiB = 80% di 3 GiB, la STESSA soglia gialla del pannello
+                # "Blocchi TSDB su disco". Il pannello e questa regola guardano lo
+                # stesso numero: se una delle due cambia, cambiano entrambe.
+                #
+                # E il numero e' piu' BASSO di quello su cui scatta davvero la
+                # retention, che conta anche WAL e chunk m-mapped: quindi il tetto
+                # vero arriva PRIMA. La soglia e' prudente per quel motivo, non per
+                # abbondanza.
+                - evaluator: {type: gt, params: [2576980377]}
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+        labels: {gravita: alta}
+        annotations:
+          summary: Prometheus si sta avvicinando a --storage.tsdb.retention.size=3GB
+          description: >-
+            Il 2026-08-13 il volume si e' riempito e la compaction ha fallito per ore
+            mentre i tre numeri pubblici restavano giusti: e' il guasto che non si
+            vede da fuori.
+
+      # ------------------------------------------------------------------
+      - uid: collector-rifiuta
+        title: Il Collector sta RIFIUTANDO telemetria
+        for: 5m
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              # ATTENZIONE, e' una scelta e va letta: il piano diceva "il Collector
+              # ha smesso di RICEVERE", cioe' `otelcol_receiver_accepted_*` piatto.
+              # Su questo progetto quella serie e' piatta ogni notte, perche' il
+              # produttore e' una persona che dorme: sarebbe un allarme che suona
+              # quando non succede niente, e un allarme cosi' viene silenziato entro
+              # una settimana. "Piatto" resta la domanda giusta per DIAGNOSTICARE, ed
+              # e' gia' un pannello.
+              #
+              # `refused` invece e' sempre un guasto: il dato e' arrivato e il
+              # Collector non l'ha preso — coda piena, payload rifiutato, esportatore
+              # in errore. Non si confonde con l'ozio.
+              expr: >-
+                sum(increase(otelcol_receiver_refused_metric_points[15m]))
+                + sum(increase(otelcol_receiver_refused_log_records[15m]))
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: {type: reduce, expression: A, reducer: last, refId: B}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        labels: {gravita: alta}
+        annotations:
+          summary: Il Collector ha rifiutato telemetria negli ultimi 15 minuti
+          description: >-
+            Il dato e' arrivato fin qui e non e' entrato. E' l'unico punto della
+            catena in cui una perdita e' silenziosa da entrambi i lati: il client
+            considera spedito, e a valle semplicemente manca.
