@@ -181,6 +181,15 @@ done
 # scope (campi, non attributi: Loki li mette in structured metadata per costruzione),
 # log record attribute, e il BODY. Piu' una chiave che nessuna versione ha mai
 # mandato — il caso su cui una delete-list fallirebbe.
+# I CAMPI DEL RECORD nel payload qui sotto — traceId, spanId, severityText,
+# severityNumber, flags — non stanno in nessuna mappa di attributi, quindi non li
+# tocca ne' `keep_keys` (governa attributi) ne' `otlp_config` di Loki (tre sezioni,
+# tutte di attributi): la sola barriera sono i `set(...)` del Collector. Non erano
+# in questo payload, e il 2026-08-21 e' costato una difesa che falliva a OGNI
+# record senza che niente diventasse rosso — `set(log.trace_id.string, "")`, e il
+# parser di OTTL rifiuta la stringa vuota. I due id non possono portare la stringa
+# NON-DEVE-ARRIVARE (devono essere esadecimali), quindi per loro il marcatore e' il
+# VALORE: l'asserzione (b-bis) pretende che `deadbeef...` non torni.
 ORA=$(python3 -c "import time;print(int(time.time()*1e9))")
 CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:4398/v1/logs \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"resourceLogs":[{
@@ -195,6 +204,11 @@ CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:
       {"key":"scope.secret","value":{"stringValue":"NON-DEVE-ARRIVARE-scope"}}]},
     "logRecords":[{
       "timeUnixNano":"'"$ORA"'",
+      "traceId":"deadbeefdeadbeefdeadbeefdeadbeef",
+      "spanId":"deadbeefdeadbeef",
+      "severityText":"NON-DEVE-ARRIVARE-severity",
+      "severityNumber":17,
+      "flags":255,
       "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body prompt=segreto user.email=vittima@example.com"},
       "attributes":[
         {"key":"event.name","value":{"stringValue":"tool_result"}},
@@ -275,6 +289,15 @@ if "NON-DEVE-ARRIVARE" in query:
     # Se il marcatore e' nella risposta ma non in nessuno di questi posti, il
     # fallimento resta — con scritto che non si sa dire dove, invece di indovinare.
     fallimenti.append(f"(b) il payload proibito e' interrogabile — chiavi coinvolte: {sorted(posti) or 'in una forma che questo controllo non sa localizzare'}")
+
+# (b-bis) I CAMPI DI RECORD, che il marcatore NON-DEVE-ARRIVARE non puo' coprire:
+# un trace id deve essere esadecimale, quindi il segnale e' il VALORE. Se
+# `deadbeef...` torna interrogabile, gli statement che lo azzerano non si sono
+# eseguiti — che e' esattamente cio' che succedeva con la stringa vuota, in
+# silenzio, mentre il Collector scriveva un warning che nessuno leggeva.
+for campo in ("deadbeefdeadbeefdeadbeefdeadbeef", "deadbeefdeadbeef"):
+    if campo in query:
+        fallimenti.append(f"(b-bis) {campo} e' interrogabile: il campo di record non e' stato azzerato dal Collector")
 
 # (c) cio' che serve C'E'. Un allow-list che scarta tutto passerebbe (a) e (b) e
 #     sembrerebbe un successo: questo e' il controllo che lo smaschera.
