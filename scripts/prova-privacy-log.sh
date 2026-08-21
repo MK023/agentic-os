@@ -227,7 +227,26 @@ CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:
         {"key":"event.name","value":{"stringValue":"api_error"}},
         {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
         {"key":"status_code","value":{"stringValue":"500"}},
-        {"key":"attempt","value":{"stringValue":"1"}}]}]}]}]}')
+        {"key":"attempt","value":{"stringValue":"1"}}]},
+      {
+      "timeUnixNano":"'"$ORA"'",
+      "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body-3"},
+      "attributes":[
+        {"key":"event.name","value":{"stringValue":"mcp_server_connection"}},
+        {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
+        {"key":"status","value":{"stringValue":"failed"}},
+        {"key":"transport_type","value":{"stringValue":"stdio"}},
+        {"key":"server_scope","value":{"stringValue":"user"}}]},
+      {
+      "timeUnixNano":"'"$ORA"'",
+      "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body-4"},
+      "attributes":[
+        {"key":"event.name","value":{"stringValue":"mcp_server_connection"}},
+        {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
+        {"key":"status","value":{"stringValue":"disconnected"}},
+        {"key":"transport_type","value":{"stringValue":"sse"}},
+        {"key":"server_scope","value":{"stringValue":"project"}},
+        {"key":"error_code","value":{"stringValue":"DEVE-ARRIVARE-E42"}}]}]}]}]}')
 echo "push OTLP verso il Collector: HTTP $CODICE"
 [ "$CODICE" = "200" ] || { echo "FALLITO: il Collector ha rifiutato il payload"; cat "$TMP/push.txt"; exit 1; }
 
@@ -345,3 +364,126 @@ if fallimenti:
     sys.exit(1)
 print("ok: (a) indice pulito, (b) niente identita' ne' contenuto in nessuna forma, (c) il record utile c'e'")
 PY
+
+# --- (d) OGNI PANNELLO Loki DELLA DASHBOARD RESTITUISCE QUALCOSA
+# Il difetto che chiude: una query di pannello che non trova niente e un pannello
+# rotto hanno lo stesso aspetto — vuoto. E il modo di sbagliarla non e' esotico:
+# in Loki `session.id` diventa `session_id` e `event.name` diventa `event_name`,
+# quindi scrivere il nome col punto produce una query VALIDA che non torna mai
+# niente. Nessun controllo di forma puo' vederlo.
+#
+# L'oracolo non e' un elenco di query copiate qui dentro: sono le query CHE
+# VENGONO SPEDITE, lette dalla dashboard. Copiarle significherebbe provare la copia.
+echo "--- (d) i pannelli Loki della dashboard trovano davvero qualcosa"
+python3 - "$ORA" <<'PYD'
+import json, re, sys, urllib.error, urllib.parse, urllib.request
+
+ora = int(sys.argv[1])
+d = json.load(open("docker/grafana/dashboards/claude-code.json"))
+
+# I default delle variabili di dashboard. `$sessione` non lo risolve nessuno via
+# API, e senza sostituirlo la query tornerebbe vuota per un motivo che non
+# riguarda i dati — cioe' un rosso con la diagnosi sbagliata.
+variabili = {v["name"]: (v.get("current") or {}).get("value", "")
+             for v in (d.get("templating", {}) or {}).get("list", [])}
+
+# Lo uid ATTESO si legge dal file di provisioning, non si scrive qui: e'
+# l'accoppiamento fra due file, ed e' esattamente il guasto che lo uid fisso
+# esiste per chiudere. Senza questo controllo la prova interroga Loki DIRETTAMENTE
+# e scavalca la risoluzione del datasource, quindi uno uid sbagliato nei pannelli
+# la lascerebbe verde mentre Grafana mostra "Datasource ... was not found".
+uid_atteso = None
+for riga in open("docker/grafana/provisioning/datasources/loki.yml"):
+    spoglia = riga.strip()
+    if spoglia.startswith("uid:"):
+        uid_atteso = spoglia.split(":", 1)[1].strip()
+        break
+if not uid_atteso:
+    print("FALLITO: (d) il datasource Loki non dichiara nessun uid: Grafana ne genererebbe uno a caso e i pannelli punterebbero a una fonte inesistente")
+    sys.exit(1)
+
+bersagli = []
+fuori_posto = []
+for p in d["panels"]:
+    ds = p.get("datasource") or {}
+    tipo = ds.get("type") if isinstance(ds, dict) else ds
+    for t in (p.get("targets") or []):
+        espressione = t.get("expr", "")
+        # UNA QUERY LogQL SI RICONOSCE DA SOLA: comincia con un selettore di
+        # stream. E' cosi' che si smette di dipendere da come il pannello e'
+        # etichettato — togliere il blocco `datasource` da UN pannello lo faceva
+        # sparire dai bersagli e la prova restava verde, mentre in Grafana quella
+        # query finiva su Prometheus, che e' il datasource di default.
+        sembra_logql = espressione.lstrip().startswith("{") or "count_over_time({" in espressione
+        if tipo != "loki":
+            if sembra_logql:
+                fuori_posto.append((p.get("title"), tipo))
+            continue
+        if (ds.get("uid") if isinstance(ds, dict) else None) != uid_atteso:
+            fuori_posto.append((p.get("title"), f"uid={ds.get('uid')!r}, atteso {uid_atteso!r}"))
+            continue
+        for nome, valore in variabili.items():
+            espressione = espressione.replace("$" + nome, str(valore))
+        bersagli.append((p.get("title"), espressione))
+
+if fuori_posto:
+    for titolo, perche in fuori_posto:
+        print(f"FALLITO: (d) il pannello \"{titolo}\" porta una query LogQL ma non e' agganciato al datasource Loki ({perche}): in Grafana finisce sulla fonte di default, che e' Prometheus")
+    sys.exit(1)
+
+# Un'asserzione che non guarda niente passa sempre: e' il modo in cui questo gate
+# morirebbe in silenzio se qualcuno togliesse i pannelli o il riferimento al
+# datasource.
+if not bersagli:
+    print("FALLITO: (d) nessun pannello con datasource loki nella dashboard — questa asserzione non sta guardando niente")
+    sys.exit(1)
+
+fallimenti = []
+for titolo, espressione in bersagli:
+    parametri = urllib.parse.urlencode({
+        "query": espressione,
+        "start": ora - 300_000_000_000,
+        "end": ora + 300_000_000_000,
+        "step": "60",
+    })
+    # urlopen SOLLEVA su 4xx invece di restituire il corpo, e Loki risponde 400
+    # proprio nel caso piu' probabile: un nome di chiave scritto col punto
+    # (`event.name` invece di `event_name`). Senza questo `except` il gate diventava
+    # rosso con un traceback di urllib al posto della diagnosi — misurato provando
+    # i denti, che e' l'unico modo in cui si vede.
+    try:
+        with urllib.request.urlopen("http://localhost:3198/loki/api/v1/query_range?" + parametri) as r:
+            risposta = json.load(r)
+    except urllib.error.HTTPError as e:
+        corpo = e.read().decode("utf-8", "replace").strip()
+        fallimenti.append('(d) "%s": Loki ha RIFIUTATO la query (HTTP %s): %s | query: %s'
+                          % (titolo, e.code, corpo[:300], espressione))
+        continue
+    if risposta.get("status") != "success":
+        fallimenti.append('(d) "%s": Loki non ha risposto success -> %s' % (titolo, json.dumps(risposta)[:200]))
+        continue
+    risultato = risposta["data"]["result"]
+    if not risultato:
+        fallimenti.append('(d) "%s": zero serie. La query e\' valida e non trova niente — su un pannello si vede come "non e\' ancora successo nulla". Query: %s' % (titolo, espressione))
+        continue
+
+    # "ALMENO UNA SERIE" E' PIU' DEBOLE DI CIO' CHE IL PANNELLO PROMETTE.
+    # `sum by (transport_type, server_scope) (...)` su uno stream in cui quelle
+    # chiavi fossero cadute NON restituisce zero serie: ne restituisce UNA, con il
+    # label set vuoto. Il gate sarebbe verde e il pannello disegnerebbe una riga
+    # anonima. Quindi si pretende che ogni label del `by (...)` esista davvero, con
+    # un valore non vuoto, in almeno una serie: e' la differenza fra una query che
+    # si esegue e un campo che viene esercitato.
+    raggruppate = re.findall(r"by\s*\(([^)]*)\)", espressione)
+    attese = [l.strip() for gruppo in raggruppate for l in gruppo.split(",") if l.strip()]
+    for label in attese:
+        if not any((s.get("metric") or {}).get(label) for s in risultato):
+            fallimenti.append('(d) "%s": la label `%s` del raggruppamento non compare con un valore in nessuna serie: la query si esegue ma quel campo non e\' esercitato, e sul pannello sarebbe una riga anonima' % (titolo, label))
+    print("  ok: %s -> %d serie, label %s" % (titolo, len(risultato), attese or "nessuna"))
+
+if fallimenti:
+    for f in fallimenti:
+        print("FALLITO:", f)
+    sys.exit(1)
+print("ok: (d) tutti i %d pannelli Loki della dashboard trovano dati nella pipeline vera" % len(bersagli))
+PYD
