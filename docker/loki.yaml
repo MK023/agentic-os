@@ -227,3 +227,19 @@ compactor:
   # -verify-config. Che `s3` sia giusto lo si verifica a runtime.
   delete_request_store: s3
   retention_enabled: true
+
+# Il default e' `reporting_enabled: true` (letto dal binario spedito con
+# -print-config-stderr il 21/08/2026, non ricordato): ogni poche ore Loki manda
+# versione, sistema, memoria, contatori di ingestione e un id di cluster a
+# stats.grafana.org. Nessun contenuto di log, ma e' traffico in uscita non
+# dichiarato verso un terzo, da un servizio la cui postura scritta e' "nessuna
+# rotta, nessuna uscita oltre R2" — ed e' la stessa cosa che grafana.ini spegne
+# per Grafana, con la stessa ragione, dal 20/08.
+#
+# CONSEGUENZA DA SAPERE PRIMA, non da scoprire guardando il bucket: l'oggetto
+# `loki_cluster_seed.json` su R2 lo scrive QUESTO modulo, non l'ingestione. Era
+# citato come la prova che le credenziali R2 funzionano; da adesso non viene piu'
+# scritto, e il testimone diventa il primo oggetto sotto `index/` o `chunks/`
+# dopo il primo flush. Un bucket vuoto al prossimo deploy non e' un guasto.
+analytics:
+  reporting_enabled: false
