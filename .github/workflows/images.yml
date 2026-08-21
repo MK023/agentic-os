@@ -655,6 +655,15 @@ jobs:
       - name: identita' e contenuto non arrivano nel log store (prova eseguita)
         run: bash scripts/prova-privacy-log.sh
 
+      # `deletion_mode: disabled` chiude la sola rotta di Loki che DISTRUGGE senza
+      # registrare chi. Che la chiuda davvero, e che chiudendola non si sia spenta
+      # anche la ritenzione automatica, sono due cose che nessuna lettura della config
+      # decide: la doc del fornitore lega le rotte di cancellazione a
+      # `retention_enabled`, quindi la separazione fra le due va misurata. Se la
+      # ritenzione si fermasse, i 720h diventerebbero "per sempre" con Loki up=1.
+      - name: la rotta di cancellazione e' chiusa e la ritenzione gira ancora (prova eseguita)
+        run: bash scripts/prova-ritenzione-loki.sh
+
       # Il gate "la finestra sta nelle query" e quello sulle tariffe confrontano TESTO
       # fra i file accoppiati. Il testo puo' essere identico in tutti e tre e sbagliato
       # in tutti e tre insieme, perche' il nome vero delle metriche lo decide
