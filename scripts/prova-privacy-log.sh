@@ -227,7 +227,16 @@ CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:
         {"key":"event.name","value":{"stringValue":"api_error"}},
         {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
         {"key":"status_code","value":{"stringValue":"500"}},
-        {"key":"attempt","value":{"stringValue":"1"}}]}]}]}]}')
+        {"key":"attempt","value":{"stringValue":"1"}}]},
+      {
+      "timeUnixNano":"'"$ORA"'",
+      "body":{"stringValue":"NON-DEVE-ARRIVARE-nel-body-3"},
+      "attributes":[
+        {"key":"event.name","value":{"stringValue":"mcp_server_connection"}},
+        {"key":"session.id","value":{"stringValue":"DEVE-ARRIVARE-sessione"}},
+        {"key":"status","value":{"stringValue":"failed"}},
+        {"key":"transport_type","value":{"stringValue":"stdio"}},
+        {"key":"server_scope","value":{"stringValue":"user"}}]}]}]}]}')
 echo "push OTLP verso il Collector: HTTP $CODICE"
 [ "$CODICE" = "200" ] || { echo "FALLITO: il Collector ha rifiutato il payload"; cat "$TMP/push.txt"; exit 1; }
 
@@ -345,3 +354,79 @@ if fallimenti:
     sys.exit(1)
 print("ok: (a) indice pulito, (b) niente identita' ne' contenuto in nessuna forma, (c) il record utile c'e'")
 PY
+
+# --- (d) OGNI PANNELLO Loki DELLA DASHBOARD RESTITUISCE QUALCOSA
+# Il difetto che chiude: una query di pannello che non trova niente e un pannello
+# rotto hanno lo stesso aspetto — vuoto. E il modo di sbagliarla non e' esotico:
+# in Loki `session.id` diventa `session_id` e `event.name` diventa `event_name`,
+# quindi scrivere il nome col punto produce una query VALIDA che non torna mai
+# niente. Nessun controllo di forma puo' vederlo.
+#
+# L'oracolo non e' un elenco di query copiate qui dentro: sono le query CHE
+# VENGONO SPEDITE, lette dalla dashboard. Copiarle significherebbe provare la copia.
+echo "--- (d) i pannelli Loki della dashboard trovano davvero qualcosa"
+python3 - "$ORA" <<'PYD'
+import json, sys, urllib.error, urllib.parse, urllib.request
+
+ora = int(sys.argv[1])
+d = json.load(open("docker/grafana/dashboards/claude-code.json"))
+
+# I default delle variabili di dashboard. `$sessione` non lo risolve nessuno via
+# API, e senza sostituirlo la query tornerebbe vuota per un motivo che non
+# riguarda i dati — cioe' un rosso con la diagnosi sbagliata.
+variabili = {v["name"]: (v.get("current") or {}).get("value", "")
+             for v in (d.get("templating", {}) or {}).get("list", [])}
+
+bersagli = []
+for p in d["panels"]:
+    ds = p.get("datasource") or {}
+    if (ds.get("type") if isinstance(ds, dict) else ds) != "loki":
+        continue
+    for t in (p.get("targets") or []):
+        espressione = t.get("expr", "")
+        for nome, valore in variabili.items():
+            espressione = espressione.replace("$" + nome, str(valore))
+        bersagli.append((p.get("title"), espressione))
+
+# Un'asserzione che non guarda niente passa sempre: e' il modo in cui questo gate
+# morirebbe in silenzio se qualcuno togliesse i pannelli o il riferimento al
+# datasource.
+if not bersagli:
+    print("FALLITO: (d) nessun pannello con datasource loki nella dashboard — questa asserzione non sta guardando niente")
+    sys.exit(1)
+
+fallimenti = []
+for titolo, espressione in bersagli:
+    parametri = urllib.parse.urlencode({
+        "query": espressione,
+        "start": ora - 300_000_000_000,
+        "end": ora + 300_000_000_000,
+        "step": "60",
+    })
+    # urlopen SOLLEVA su 4xx invece di restituire il corpo, e Loki risponde 400
+    # proprio nel caso piu' probabile: un nome di chiave scritto col punto
+    # (`event.name` invece di `event_name`). Senza questo `except` il gate diventava
+    # rosso con un traceback di urllib al posto della diagnosi — misurato provando
+    # i denti, che e' l'unico modo in cui si vede.
+    try:
+        with urllib.request.urlopen("http://localhost:3198/loki/api/v1/query_range?" + parametri) as r:
+            risposta = json.load(r)
+    except urllib.error.HTTPError as e:
+        corpo = e.read().decode("utf-8", "replace").strip()
+        fallimenti.append('(d) "%s": Loki ha RIFIUTATO la query (HTTP %s): %s | query: %s'
+                          % (titolo, e.code, corpo[:300], espressione))
+        continue
+    if risposta.get("status") != "success":
+        fallimenti.append('(d) "%s": Loki non ha risposto success -> %s' % (titolo, json.dumps(risposta)[:200]))
+        continue
+    if not risposta["data"]["result"]:
+        fallimenti.append('(d) "%s": zero serie. La query e\' valida e non trova niente — su un pannello si vede come "non e\' ancora successo nulla". Query: %s' % (titolo, espressione))
+    else:
+        print("  ok: %s -> %d serie" % (titolo, len(risposta["data"]["result"])))
+
+if fallimenti:
+    for f in fallimenti:
+        print("FALLITO:", f)
+    sys.exit(1)
+print("ok: (d) tutti i %d pannelli Loki della dashboard trovano dati nella pipeline vera" % len(bersagli))
+PYD
