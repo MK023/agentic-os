@@ -244,10 +244,22 @@ def test_status_returns_zeros_when_no_data_yet():
     assert isinstance(response.json()["cost_usd_today"], float)
 
 
+def test_opus_4_8_ha_un_prezzo_suo_e_non_il_fallback():
+    # Regressione di AGENTI-OS-8, misurata in produzione il 2026-08-21: la produzione
+    # ha emesso `claude-opus-4-8`, la tabella non lo aveva, e ogni suo token e' stato
+    # prezzato alla tariffa piu' cara conosciuta. Un test sul solo nome, perche' e'
+    # il nome che mancava — il ciclo generico sopra passerebbe anche se la riga
+    # sparisse di nuovo, dato che itera la tabella e non un elenco atteso.
+    assert "claude-opus-4-8" in main.PRICES_USD_PER_MTOK
+    assert main.PRICES_USD_PER_MTOK["claude-opus-4-8"]["input"] < main._DEAREST_RATE
+
+
 @respx.mock
 def test_every_model_is_priced_from_its_own_row_not_the_fallback(monkeypatch):
     # One series per (model, type) in the table, one million tokens each: the
-    # expected total is simply the sum of all sixteen list rates. With several
+    # expected total is simply the sum of all twenty list rates (cinque modelli per
+    # quattro tipi — erano sedici finche' la tabella non ha conosciuto Opus 4.8).
+    # With several
     # models in the table the fallback rates no longer equal any single model's
     # rates, so this pins each row's numbers individually — a mutated price, a
     # misspelled model key or a silent fall-through changes the total or fires
@@ -269,7 +281,11 @@ def test_every_model_is_priced_from_its_own_row_not_the_fallback(monkeypatch):
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    assert response.json()["cost_usd_today"] == 153.90  # fable 81.00 + opus 40.50 + sonnet 24.30 + haiku 8.10
+    # fable 81.00 + opus-5 40.50 + opus-4-8 40.50 + sonnet-5 16.20 + haiku 8.10.
+    # Si aggiorna A MANO quando la tabella cambia, ed e' il gesto che si vuole
+    # rendere visibile: il 2026-08-21 questa riga e' diventata rossa da sola perche'
+    # sonnet-5 e' passato da 24.30 a 16.20, cioe' il repository sovrastimava del 50%.
+    assert response.json()["cost_usd_today"] == 186.30
     assert not sentry_call.called
 
 
