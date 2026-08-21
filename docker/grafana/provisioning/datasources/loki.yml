@@ -16,3 +16,25 @@ datasources:
     # datasource di default sbagliato fa aprire i pannelli nuovi sulla fonte
     # sbagliata senza dire niente.
     isDefault: false
+    jsonData:
+      # Grafana interroga i datasource per le regole "data-source managed" e le
+      # mostra nella pagina Alerting. Loki QUI non ha il ruler — lo dice lui stesso
+      # a ogni avvio, `RulerStorage is nil. Not starting the ruler.` — quindi quella
+      # chiamata falliva e la pagina degli allarmi mostrava un **Error permanente**
+      # accanto a Loki, sotto le cinque regole che invece funzionano.
+      #
+      # Non era un guasto: era rumore. Ed e' il tipo di rumore che costa piu' di
+      # quello che sembra, perche' una pagina che mostra sempre un errore insegna a
+      # non guardare gli errori — la stessa ragione per cui in questo progetto un
+      # allarme che suona a vuoto viene considerato peggio di nessun allarme.
+      #
+      # `manageAlerts: false` e' la casella "Manage alerts via Alerting UI" della UI,
+      # documentata dal fornitore. Verificato in locale sull'immagine spedita che
+      # venga accettata e memorizzata (`/api/datasources` la restituisce), non
+      # dedotto: una chiave di provisioning ignorata in silenzio sarebbe stata
+      # indistinguibile da una che funziona.
+      #
+      # NON si applica a Prometheus, che nella stessa pagina risponde "No rules
+      # found" senza errore: aggiungerla la' sarebbe configurazione che non cambia
+      # niente.
+      manageAlerts: false
