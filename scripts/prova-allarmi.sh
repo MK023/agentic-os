@@ -89,7 +89,13 @@ docker run -d --rm --name allarmi-prometheus --network "$RETE" \
   --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus >/dev/null
 
 mkdir -p "$TMP/ricevute"
+# `--user` con l'utente dell'HOST, e non e' un dettaglio: su Linux il container
+# girerebbe come root e il file di notifiche nascerebbe root:root dentro una
+# cartella dell'utente. La riscrittura dallo script fallirebbe con `Permission
+# denied` — misurato in CI, dove e' andata rossa mentre in locale su macOS passava,
+# perche' Docker Desktop rimappa la proprieta' e Linux no.
 docker run -d --rm --name allarmi-ricevitore --network "$RETE" \
+  --user "$(id -u):$(id -g)" \
   -v "$PWD/scripts/ricevitore-di-prova.py:/ricevitore.py:ro" \
   -v "$TMP/ricevute:/ricevute" \
   "$IMG_PY" python /ricevitore.py >/dev/null

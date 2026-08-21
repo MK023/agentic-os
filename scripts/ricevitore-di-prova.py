@@ -39,4 +39,8 @@ class Ricevitore(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    http.server.HTTPServer(("0.0.0.0", 8080), Ricevitore).serve_forever()
+    # noqa sull'ascolto su tutte le interfacce: questo processo vive dentro un
+    # container usa-e-getta su una rete Docker creata e distrutta dallo script, e
+    # deve essere raggiungibile da Grafana che sta in un altro container. Legarsi a
+    # 127.0.0.1 lo renderebbe irraggiungibile e la prova (c) fallirebbe sempre.
+    http.server.HTTPServer(("0.0.0.0", 8080), Ricevitore).serve_forever()  # noqa: S104
