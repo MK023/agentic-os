@@ -33,11 +33,14 @@ TOKEN=token-di-prova-non-un-segreto
 # verde. Un gate in images.yml adesso vieta il pin letterale.
 IMG_LOKI=$(python3 -c "import yaml;print(yaml.safe_load(open('docker/docker-compose.yml'))['services']['loki']['image'])")
 IMG_COLL=$(python3 -c "import yaml;print(yaml.safe_load(open('docker/docker-compose.yml'))['services']['otel-collector']['image'])")
+# MinIO resta pinnato QUI e non letto dal compose, di proposito: non e' un'immagine
+# spedita, e' impalcatura di prova che sta in piedi al posto di R2. Pinnata per digest
+# come ogni altra immagine del repository, perche' un tag si puo' ripuntare.
 IMG_MINIO=minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
 # Detto ad alta voce: una prova che non dice su cosa gira lascia il lettore a
 # fidarsi. Il 22/08/2026 due prove hanno girato per ore sull immagine sbagliata.
-echo "immagine sotto prova: $IMG_COLL"
-echo "immagine sotto prova: $IMG_LOKI"
+echo "immagini sotto prova: Loki $IMG_LOKI"
+echo "                    Collector $IMG_COLL"
 
 pulisci() {
   docker rm -f privacy-loki privacy-coll privacy-minio >/dev/null 2>&1 || true

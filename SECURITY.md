@@ -118,9 +118,13 @@ It is not closable in Loki 3.7.6, and that is measured rather than assumed. Two 
   lookup on purpose, so there is no configuration in which the frontend both starts and
   advertises an address the loopback listener would accept.
 
-What bounds it instead is what already bounded the native push: `max_global_streams_per_user`,
-the ingestion ceilings, and the fact that reaching the private network at all is the
-precondition. Written here because a declared surface is cheaper than a surprise, and
+What bounds it, and the two halves are not bounded the same way. **Writing** through it
+runs into what already bounded the native push: `max_global_streams_per_user: 200` and the
+1 MB/s ingestion ceiling. **Reading** through it runs into nothing on that list, because
+none of those limits apply to the Querier: the only thing between an attacker and thirty
+days of tool-call metadata is being on the private network in the first place. Saying
+otherwise would be listing two controls over a surface where one of them does nothing,
+which is the defect this file exists to avoid. Written here because a declared surface is cheaper than a surprise, and
 because the next person to read "gRPC is open" should know it was tried twice and why the
 attempt is worse than the gap.
 

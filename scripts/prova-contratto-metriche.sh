@@ -25,13 +25,10 @@ cd "$(dirname "$0")/.."
 PORTA=38889
 NOME=contratto-metriche
 TOKEN=token-di-prova-non-un-segreto
-# Lo STESSO digest della produzione (docker-compose.yml e railway/otel-collector/
-# Dockerfile), non il tag `-386`. Quel suffisso non e' un numero di build: e' la
-# piattaforma, ed e' il difetto che #126 ha tolto dalla produzione mentre questi due
-# script hanno continuato a pinnarlo — la prova eseguiva un binario a 32 bit per
-# convalidare una config che ne spedisce uno a 64. E' la stessa famiglia del dry run
-# senza alias di rete: misura una cosa diversa da quella che gira. Il digest e' un
-# manifest list (386, amd64, arm64, ...), quindi lo stesso valore vale in CI e qui.
+# Il tag `-386` non e' un numero di build: e' la piattaforma, ed e' il difetto che
+# #126 ha tolto dalla produzione mentre questi script hanno continuato a pinnarlo —
+# la prova eseguiva un binario a 32 bit per convalidare una config che ne spedisce
+# uno a 64. Leggere il pin dal compose chiude quella famiglia alla radice.
 # NON copiato: LETTO da docker/docker-compose.yml, che e' la copia unica di questo
 # pin. Copiarlo qui e' gia' andato storto una volta: il 22/08/2026 il Collector e'
 # passato a 0.159.0 nel compose e nel Dockerfile Railway, e questi script hanno
