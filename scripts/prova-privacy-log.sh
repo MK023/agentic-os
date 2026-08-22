@@ -24,20 +24,23 @@ cd "$(dirname "$0")/.."
 
 RETE=prova-privacy-log
 TOKEN=token-di-prova-non-un-segreto
-IMG_LOKI=grafana/loki:3.7.6@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
-# Lo STESSO digest della produzione (docker-compose.yml e railway/otel-collector/
-# Dockerfile), non il tag `-386`. Quel suffisso non e' un numero di build: e' la
-# piattaforma, ed e' il difetto che #126 ha tolto dalla produzione mentre questi due
-# script hanno continuato a pinnarlo — la prova eseguiva un binario a 32 bit per
-# convalidare una config che ne spedisce uno a 64. E' la stessa famiglia del dry run
-# senza alias di rete: misura una cosa diversa da quella che gira. Il digest e' un
-# manifest list (386, amd64, arm64, ...), quindi lo stesso valore vale in CI e qui.
-IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
-# Pinnata per digest come ogni altra immagine del repository: un tag e' un'etichetta
-# e si puo' ripuntare sotto lo stesso nome. Era l'unica immagine del ramo senza, e
-# gira in CI su un checkout — con `contents: read` e nessun segreto, ma pinnarla costa
-# una riga.
+# NON copiato: LETTO da docker/docker-compose.yml, che e' la copia unica di questo
+# pin. Copiarlo qui e' gia' andato storto una volta: il 22/08/2026 il Collector e'
+# passato a 0.159.0 nel compose e nel Dockerfile Railway, e questi script hanno
+# continuato a scaricare la 0.158.0 mentre il commento accanto dichiarava "lo STESSO
+# digest della produzione". Una prova che gira su un'immagine diversa da quella
+# spedita non e' una prova, ed e' il difetto peggiore possibile qui perche' resta
+# verde. Un gate in images.yml adesso vieta il pin letterale.
+IMG_LOKI=$(python3 -c "import yaml;print(yaml.safe_load(open('docker/docker-compose.yml'))['services']['loki']['image'])")
+IMG_COLL=$(python3 -c "import yaml;print(yaml.safe_load(open('docker/docker-compose.yml'))['services']['otel-collector']['image'])")
+# MinIO resta pinnato QUI e non letto dal compose, di proposito: non e' un'immagine
+# spedita, e' impalcatura di prova che sta in piedi al posto di R2. Pinnata per digest
+# come ogni altra immagine del repository, perche' un tag si puo' ripuntare.
 IMG_MINIO=minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+# Detto ad alta voce: una prova che non dice su cosa gira lascia il lettore a
+# fidarsi. Il 22/08/2026 due prove hanno girato per ore sull immagine sbagliata.
+echo "immagini sotto prova: Loki $IMG_LOKI"
+echo "                    Collector $IMG_COLL"
 
 pulisci() {
   docker rm -f privacy-loki privacy-coll privacy-minio >/dev/null 2>&1 || true

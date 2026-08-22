@@ -246,8 +246,10 @@ as a task instead of trusted to a check.
   `SECURITY.md`.
 - ~~Grafana Loki as a Phase 1.5.~~ **Closed 2026-08-20: the design pass happened and
   the code is written.** The trigger had fired on 2026-08-19 with the plan change, and
-  the pass produced `docs/superpowers/specs/2026-08-20-loki-fase-1.5-design.md` and
-  `docs/superpowers/plans/2026-08-20-loki-fase-1.5.md`; what changed about the design
+  the pass produced `docs/superpowers/specs/2026-08-20-loki-fase-1.5-design.md` (the
+  execution plan beside it was deleted on 2026-08-22, once every one of its eleven tasks
+  had shipped: it was a checklist with 62 unticked boxes describing work that was live in
+  production, which reads as 62 things pending. `git log` still has it); what changed about the design
   while it was being built, and what measuring overturned in it, is in the Logs section
   of `DECISIONS.md`. The caveat this entry had carried is untouched and stays closed:
   **nothing log-derived goes on the public site**, the public surface is still exactly

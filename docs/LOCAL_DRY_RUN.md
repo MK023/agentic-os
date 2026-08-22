@@ -176,7 +176,7 @@ one Docker network, pushes an OTLP payload carrying identity, session content an
 key no client has ever sent, and then queries Loki the way a person would.
 
 ```bash
-bash scripts/prova-privacy-log.sh   # ~90s, needs only Docker
+bash scripts/prova-privacy-log.sh   # ~90s, needs Docker and python3 with PyYAML
 ```
 
 It asserts three things, and the third is not decorative:

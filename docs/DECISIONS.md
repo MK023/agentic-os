@@ -676,6 +676,27 @@ allow-list of flags that **narrow** surface instead of adding it, and every futu
 has to answer the same question here. A gate that blocks the fix for an open default is
 a gate that will be bypassed during an incident.
 
+**Dependabot does not get `multi-ecosystem-groups`, decided 2026-08-22.** The problem is
+real: a docker bump arrives as two pull requests, one for `docker/docker-compose.yml` and
+one for `railway/<svc>/Dockerfile`, and since the divergence gate landed each half is red
+on its own. `multi-ecosystem-groups` is the one feature that would merge them, the
+SchemaStore schema accepts it, and GitHub validates `dependabot.yml` on every pull
+request, so a *syntactically* wrong config would be caught.
+
+That is the half that can be verified, and the other half is the one that matters. The
+vendor's page documents `patterns` as required per ecosystem and says nothing about how
+the key interacts with `ignore` (this repo pins `grafana/grafana` away from 13.2.0 in two
+places) or with `directory`. A config that is valid and subtly wrong does not fail: it
+opens fewer pull requests, or none, and the way anybody finds out is an image quietly
+going months stale. There is no way to force a Dependabot run and watch, so the change
+cannot be verified in the direction where it can hurt.
+
+So the two-PR shape stays, and the procedure is written where it is needed rather than
+remembered: `.github/dependabot.yml` says to take one of the two, bring the other half
+into the same branch by hand, and close the other. Done four times on 2026-08-22 (#153,
+#154), it costs about two minutes. Reopen this if the vendor documents the interaction,
+or if a way to trigger a run on demand appears.
+
 ## Logs
 
 **No logs pipeline today** — true until 2026-08-20, and kept because the reason
@@ -756,6 +777,16 @@ be public without becoming content?"*. That question is answerable — counts an
 aggregates the same way sessions and tokens are — but it needs its own pass, and the
 answer is not "publish what Loki has". Whatever it turns out to be, it goes through the
 same allow-list discipline as the labels: default deny, added deliberately.
+
+**Loki's gRPC listener cannot be closed on 3.7.6, and it was tried twice.** The `:9095`
+listener carries Pusher, Ingester and Querier with no credential, so the private network
+has a second path beside `:3100`. Binding it to loopback makes every query fail, because
+the query-frontend advertises its container address to the scheduler; forcing the
+frontend onto `lo` stops the service from starting at all, because dskit filters loopback
+out of that lookup. Both measured 2026-08-22, both worse than the gap. `SECURITY.md` has
+the error strings and the row in the route table. What bounds it is what bounds the
+native HTTP push: the ingestion ceilings and the fact that being on the private network
+is the precondition.
 
 **Phase 1.5 was implemented on 2026-08-20 and went live on 2026-08-21.** This heading
 said "on a branch, not in production" for a day after the six services were running.

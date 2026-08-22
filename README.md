@@ -87,10 +87,10 @@ pip-audit -r services/public-status-api/requirements.txt
 zizmor --min-severity=high .github/workflows/
 checkov --config-file .checkov.yml -d .
 bash scripts/check-image-users.sh
-bash scripts/prova-privacy-log.sh                            # ~90s, Docker only
-bash scripts/prova-contratto-metriche.sh                       # ~40s, Docker only
-bash scripts/prova-ritenzione-loki.sh                          # ~60s, Docker only
-bash scripts/prova-allarmi.sh                                  # ~2m, Docker only
+bash scripts/prova-privacy-log.sh                            # ~90s, Docker + python3 con PyYAML
+bash scripts/prova-contratto-metriche.sh                       # ~40s, Docker + python3 con PyYAML
+bash scripts/prova-ritenzione-loki.sh                          # ~60s, Docker + python3 con PyYAML
+bash scripts/prova-allarmi.sh                                  # ~2m, Docker + python3 con PyYAML
 ```
 
 ## Security
