@@ -98,6 +98,32 @@ One consequence is worth knowing before somebody reads the bucket: `loki_cluster
 is written by that module, not by ingestion, so it stops appearing. The R2 witness is now
 the first object under `index/` or `chunks/`.
 
+**A second surface the route table cannot show, and this one stays open: the gRPC
+listener.** Loki's dskit server opens `:9095` on every interface by default, and in
+single binary the distributor, ingester and querier all register there with no
+credential. So the private network has a second write-and-read path beside `:3100`, and
+`otlp_config` does not govern it any more than it governs the native HTTP push.
+
+It is not closable in Loki 3.7.6, and that is measured rather than assumed. Two attempts,
+2026-08-22:
+
+- `server.grpc_listen_address: 127.0.0.1` alone. Loki starts and ingestion still answers
+  `204`, but **every query fails**: the query-frontend advertises its container address to
+  the scheduler, the querier dials it and gets `connection refused` on
+  `172.18.0.3:9095`. A push that works and a query that does not is worse than the open
+  port, and no gate would have caught it because both halves answer HTTP `200`.
+- adding `frontend.instance_interface_names: ["lo"]` to make the frontend advertise
+  loopback. **The service does not start at all**: `no useable address found for
+  interfaces [lo]`, from `InitFrontend`. dskit filters loopback interfaces out of that
+  lookup on purpose, so there is no configuration in which the frontend both starts and
+  advertises an address the loopback listener would accept.
+
+What bounds it instead is what already bounded the native push: `max_global_streams_per_user`,
+the ingestion ceilings, and the fact that reaching the private network at all is the
+precondition. Written here because a declared surface is cheaper than a surprise, and
+because the next person to read "gRPC is open" should know it was tried twice and why the
+attempt is worse than the gap.
+
 | Route | Measured | What it does | Closable here |
 |---|---|---|---|
 | `GET /ingester/shutdown` | `204`, then **exit code 0** | Stops the log store. See below — this one changed a deploy setting | **no** |
@@ -108,6 +134,7 @@ the first object under `index/` or `chunks/`.
 | `GET /debug/pprof/heap` | `200` | Heap dump — log records in flight | **no**, see below |
 | `POST /ingester/prepare_shutdown` | `204`, state `set` | Arms the shutdown path; `DELETE` disarms it | **no** |
 | `POST /loki/api/v1/push` | `204` | **Bypasses both allow-lists** — see below | bounded, not closed |
+| gRPC `:9095` (Pusher, Ingester, Querier) | listens on every interface | Second write-and-read path, no credential, outside `otlp_config` | **no**, and measured twice — see below |
 
 **The shutdown route was worse than this file used to imply, and the difference is a
 measurement.** Loki exits with code **0** (`docker wait`, on a real container).

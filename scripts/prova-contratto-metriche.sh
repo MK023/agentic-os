@@ -32,7 +32,17 @@ TOKEN=token-di-prova-non-un-segreto
 # convalidare una config che ne spedisce uno a 64. E' la stessa famiglia del dry run
 # senza alias di rete: misura una cosa diversa da quella che gira. Il digest e' un
 # manifest list (386, amd64, arm64, ...), quindi lo stesso valore vale in CI e qui.
-IMG_COLL=otel/opentelemetry-collector-contrib:0.158.0@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+# NON copiato: LETTO da docker/docker-compose.yml, che e' la copia unica di questo
+# pin. Copiarlo qui e' gia' andato storto una volta: il 22/08/2026 il Collector e'
+# passato a 0.159.0 nel compose e nel Dockerfile Railway, e questi script hanno
+# continuato a scaricare la 0.158.0 mentre il commento accanto dichiarava "lo STESSO
+# digest della produzione". Una prova che gira su un'immagine diversa da quella
+# spedita non e' una prova, ed e' il difetto peggiore possibile qui perche' resta
+# verde. Un gate in images.yml adesso vieta il pin letterale.
+IMG_COLL=$(python3 -c "import yaml;print(yaml.safe_load(open('docker/docker-compose.yml'))['services']['otel-collector']['image'])")
+# Detto ad alta voce: una prova che non dice su cosa gira lascia il lettore a
+# fidarsi. Il 22/08/2026 due prove hanno girato per ore sull immagine sbagliata.
+echo "immagine sotto prova: $IMG_COLL"
 
 pulisci() { docker rm -f "$NOME" >/dev/null 2>&1 || true; }
 trap pulisci EXIT

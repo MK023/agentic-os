@@ -652,6 +652,56 @@ jobs:
       # diventa rosso e nomina le chiavi trapelate; togliendone una sola resta verde,
       # che e' la definizione di "due barriere indipendenti" e va riverificata quando
       # una delle due cambia.
+      # Le prove devono girare sulle immagini SPEDITE, e "devono" non basta: il
+      # 22/08/2026 il Collector e' passato a 0.159.0 nel compose e nel Dockerfile
+      # Railway mentre due prove hanno continuato a scaricare la 0.158.0 pinnata
+      # dentro lo script — con accanto un commento che dichiarava "lo STESSO digest
+      # della produzione". Le prove restavano VERDI, sull'immagine sbagliata: il
+      # guasto silenzioso applicato allo strumento che esiste per non averne.
+      # Adesso i pin si LEGGONO dal compose e questo gate vieta di ricopiarli.
+      - name: le prove leggono le immagini dal compose invece di ricopiarle
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+
+          compose = yaml.safe_load(open("docker/docker-compose.yml"))
+          spedite = {s["image"].split("@")[0].split(":")[0]
+                     for s in compose["services"].values() if "image" in s}
+          if len(spedite) < 5:
+              sys.exit(f"::error::solo {len(spedite)} immagini nel compose: questo gate non sta guardando niente")
+
+          prove = sorted(glob.glob("scripts/prova-*.sh"))
+          if len(prove) < 4:
+              sys.exit(f"::error::trovate {len(prove)} prove: il pavimento e' 4, il glob non sta guardando dove crede")
+
+          fallimenti = []
+          for percorso in prove:
+              for numero, riga in enumerate(open(percorso), 1):
+                  # Solo le righe che ASSEGNANO: un commento che nomina l'immagine e'
+                  # prosa, e un gate che legge prosa lo passa la prosa. Stessa lezione
+                  # gia' imparata due volte in questo file.
+                  if riga.lstrip().startswith("#") or "=" not in riga:
+                      continue
+                  for pin in re.findall(r"([a-z0-9][a-z0-9./-]*)(?::[\w.-]+)?@sha256:[0-9a-f]{64}", riga):
+                      if pin in spedite:
+                          fallimenti.append(f"{percorso}:{numero} pinna `{pin}` alla lettera: "
+                                            "leggilo da docker/docker-compose.yml, se no la prova gira "
+                                            "su un'immagine che la produzione non ha piu'")
+          if fallimenti:
+              for f in fallimenti:
+                  print(f"::error::{f}")
+              sys.exit(1)
+
+          # Il pavimento dall'altro lato: almeno una prova DEVE leggere dal compose,
+          # se no il controllo qui sopra passerebbe su quattro script che non nominano
+          # nessuna immagine perche' qualcuno le ha spostate altrove.
+          lettori = sum(1 for p in prove if "docker-compose.yml" in open(p).read())
+          if lettori < 3:
+              sys.exit(f"::error::solo {lettori} prove leggono il pin dal compose: erano 3, qualcuno ha ricopiato")
+          print(f"ok: {len(prove)} prove, nessun pin letterale delle {len(spedite)} immagini spedite, {lettori} leggono dal compose")
+          PY
+
       - name: identita' e contenuto non arrivano nel log store (prova eseguita)
         run: bash scripts/prova-privacy-log.sh
 
