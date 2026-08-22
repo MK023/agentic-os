@@ -186,10 +186,16 @@ as a task instead of trusted to a check.
 
 ## Still Marco's call
 
-- ~~**`SLACK_WEBHOOK_URL` on the `grafana` Railway service.**~~ **Set on 2026-08-21**,
-  verified on the service itself rather than assumed. The chain from a firing rule to
-  Slack's endpoint is closed; what no check here can see is whether Slack accepts a given
-  message, because that lives on somebody else's server. The reasoning below is kept
+- ~~**`SLACK_WEBHOOK_URL` on the `grafana` Railway service.**~~ **Set on 2026-08-21, and
+  the alerts were confirmed arriving in Slack on 2026-08-22.** The variable was verified
+  on the service itself rather than assumed; the delivery was confirmed by the operator
+  looking at Slack, which is the only witness that exists for that last inch. Nothing in
+  this repository can assert it: `prova-allarmi.sh` delivers to a local receiver and
+  proves the chain is whole up to the send, but whether Slack accepts a given message
+  lives on somebody else's server.
+
+  **So the structural gap this project carried for weeks is closed**: noticing a fault no
+  longer depends on somebody deciding to read the logs. The reasoning below is kept
   because the *degradation* it describes is still what happens on any environment where
   the variable is missing, starting with a laptop. Since
   2026-08-21 the rules, the contact point and the notification policy are provisioned

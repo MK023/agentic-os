@@ -986,6 +986,23 @@ receiver and waits for the POST instead. Measured: fires after 18s, notification
 39s later, and the receiver sees the rule's name.
 ## Observability of this project itself
 
+**The alerting chain is closed end to end, confirmed 2026-08-22.** Five rules in
+`docker/grafana/provisioning/alerting/regole.yaml`, a Slack contact point and a
+notification policy, all provisioned from files. `scripts/prova-allarmi.sh` makes
+`up{job="loki"} == 0` fire by removing Loki from the network and requires the
+notification to be **delivered**, with a second rule staying `inactive` as the negative
+control. What that proof cannot reach is Slack itself: it delivers to a local receiver,
+so the last inch was confirmed by the operator reading Slack. Written down because the
+division of labour is the point — the repository proves everything up to the send, and a
+person proves the one hop that lives on somebody else's server.
+
+Two things had to be fixed before that sentence was true. With `SLACK_WEBHOOK_URL`
+unset, an empty `url` makes Grafana fall back to the Slack chat API, the contact point
+fails validation, and the provisioning module takes the **whole server** down: adding
+alerting would have taken Grafana off the air. And without `[server] root_url`, every
+link inside the notification pointed at `http://localhost:3000` — the proof could not
+see it, because a local receiver does not open links.
+
 **Sentry yes, from the start** — zero-dependency envelope client in the status API,
 same fail-open contract as the one already running on marcobellingeri.dev: no DSN is
 a no-op, a failed delivery never changes the response.
