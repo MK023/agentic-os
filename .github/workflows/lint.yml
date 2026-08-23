@@ -137,3 +137,136 @@ jobs:
           print("nessuno step duplicato")
           PY
 
+
+      # La lista dentro notifica.yml e' una SECONDA lista accanto ai file dei
+      # workflow, e `workflow_run` non accetta jolly: o le due coincidono, o esiste
+      # un gate che quando fallisce di notte non lo dice a nessuno — cioe' il
+      # silenzio che notifica.yml e' nato per rompere, riaperto dal file che qualcuno
+      # aggiungera' fra sei mesi. Questo repository ha gia' pagato due volte per una
+      # seconda lista divergente (`source_paths` in mutation.yml, il pin del
+      # Collector copiato dentro le prove): la terza la vede un gate.
+      #
+      # Con due pavimenti, perche' un confronto fra insiemi vuoti e' verde: se il
+      # glob non trova niente o notifica.yml sparisce, questo step deve gridare, non
+      # passare.
+      - name: notifica.yml sorveglia tutti i workflow
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, pathlib, sys, yaml
+
+          NOTIFICATORE = ".github/workflows/notifica.yml"
+          if not pathlib.Path(NOTIFICATORE).exists():
+              print(f"::error::{NOTIFICATORE} non esiste: nessun cron rosso viene notificato.")
+              sys.exit(1)
+
+          # `on:` in YAML si legge come il booleano True, non come la stringa "on".
+          notificatore = yaml.safe_load(open(NOTIFICATORE))
+          trigger = notificatore.get(True, notificatore.get("on"))
+          sorvegliati = set(trigger["workflow_run"]["workflows"])
+
+          # `.yaml` oltre a `.yml`: GitHub accetta entrambe le estensioni, e un
+          # workflow chiamato `.yaml` attraversava questo gate senza essere
+          # sorvegliato da nessuno — misurato il 23/08/2026 creandone uno e
+          # vedendolo passare verde.
+          dichiarati = {}
+          for percorso in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
+              if percorso == NOTIFICATORE:
+                  continue
+              nome = yaml.safe_load(open(percorso)).get("name")
+              if not nome:
+                  print(f"::error::{percorso} non dichiara `name:`, quindi notifica.yml non puo\' nominarlo.")
+                  sys.exit(1)
+              dichiarati[nome] = percorso
+
+          if len(dichiarati) < 5:
+              print(f"::error::trovati solo {len(dichiarati)} workflow: questo confronto non ha girato davvero.")
+              sys.exit(1)
+
+          scoperti = sorted(set(dichiarati) - sorvegliati)
+          fantasmi = sorted(sorvegliati - set(dichiarati))
+          if scoperti or fantasmi:
+              for nome in scoperti:
+                  print(f"::error::'{nome}' ({dichiarati[nome]}) non e\' in notifica.yml: se fallisce di notte, nessuno lo sa.")
+              for nome in fantasmi:
+                  print(f"::error::notifica.yml sorveglia '{nome}', che non esiste piu\': la riga non fa niente e sembra copertura.")
+              sys.exit(1)
+          print(f"notifica.yml sorveglia tutti i {len(dichiarati)} workflow")
+          PY
+
+      - name: notifica.yml resta la forma sicura di workflow_run
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+
+          # L'oracolo vive QUI, non nel file sotto esame: la condizione attesa e'
+          # scritta per intero in questo gate, non dedotta da quella trovata. La prima
+          # stesura cercava la sottostringa "pull_request" dentro l'`if` e accettava
+          # verde la condizione INVERTITA — notificare SOLO le PR e mai un cron
+          # notturno, l'esatto contrario del motivo per cui notifica.yml esiste.
+          # Trovata da una revisione avversaria il 23/08/2026 e riprodotta prima di
+          # correggerla.
+          ATTESA = (
+              "contains(fromJSON('[\"failure\",\"timed_out\",\"startup_failure\"]'), "
+              "github.event.workflow_run.conclusion) && "
+              "contains(fromJSON('[\"schedule\",\"push\",\"workflow_dispatch\"]'), "
+              "github.event.workflow_run.event)"
+          )
+
+          NOTIFICATORE = ".github/workflows/notifica.yml"
+          workflow = yaml.safe_load(open(NOTIFICATORE))
+          trigger = workflow.get(True, workflow.get("on"))
+          problemi = []
+
+          # Se un giorno non fosse piu' workflow_run, l'ignore di zizmor non servirebbe
+          # piu' e nemmeno questo gate: che sia ancora quello e' la premessa di tutto.
+          if "workflow_run" not in trigger:
+              problemi.append("non e' piu' un workflow_run: togli anche l'ignore di zizmor e questo gate.")
+
+          if workflow.get("permissions") != {}:
+              problemi.append("`permissions` di workflow non e' piu' la mappa vuota.")
+
+          jobs = workflow.get("jobs") or {}
+          # Un job solo, e si chiama slack. Non e' rigidita' fine a se stessa: ogni job
+          # in piu' qui dentro gira sul ramo di default con i segreti del repository.
+          if set(jobs) != {"slack"}:
+              problemi.append(f"i job non sono piu' esattamente {{'slack'}} ma {sorted(jobs)}.")
+
+          for nome_job, job in jobs.items():
+              if job.get("permissions") != {}:
+                  problemi.append(f"il job '{nome_job}' non ha piu' `permissions: {{}}`.")
+
+              # Il cuore dell'argomento: senza codice di terzi non c'e' niente da
+              # eseguire con i nostri segreti. TRE modi di introdurne, non uno: uno
+              # step con `uses:`, il JOB con `uses:` (una reusable workflow, che con
+              # `secrets: inherit` riceve ogni segreto e non ha `steps` da ispezionare)
+              # e `container:`/`services:`, che avviano un'immagine di qualcun altro con
+              # l'ambiente del job dentro. La prima stesura guardava solo il primo,
+              # mentre il suo messaggio d'errore dichiarava di guardarli tutti: un
+              # controllo affermato che non esiste, dentro il gate scritto per impedire
+              # esattamente quello.
+              if "uses" in job:
+                  problemi.append(f"il job '{nome_job}' E' una reusable workflow (`{job['uses']}`): con `secrets: inherit` riceve tutti i segreti.")
+              for chiave in ("container", "services"):
+                  if chiave in job:
+                      problemi.append(f"il job '{nome_job}' dichiara `{chiave}:`: e' un'immagine di terzi con l'ambiente del job dentro.")
+              for passo in job.get("steps", []):
+                  if "uses" in passo:
+                      problemi.append(f"il job '{nome_job}' usa `{passo['uses']}`: qui dentro non gira codice di nessun altro.")
+
+              condizione = " ".join(str(job.get("if", "")).split())
+              if condizione != ATTESA:
+                  problemi.append(f"la condizione del job '{nome_job}' non e' piu' quella attesa.")
+                  problemi.append(f"  attesa:  {ATTESA}")
+                  problemi.append(f"  trovata: {condizione or '(nessuna)'}")
+
+          if problemi:
+              print("::error::notifica.yml non e' piu' la forma sicura di workflow_run, ma "
+                    "l'audit di zizmor e' ancora zittito dal suo `ignore`.")
+              for problema in problemi:
+                  print(f"::error::{problema}")
+              sys.exit(1)
+          print("notifica.yml: un job solo, nessun codice di terzi (uses/container/services), "
+                "permessi vuoti sopra e sul job, condizione identica a quella attesa")
+          PY

@@ -1,0 +1,178 @@
+name: notifica
+
+# Quando un gate di questo repository diventa rosso senza che nessuno stia
+# guardando, lo dice su Slack — lo stesso canale degli allarmi di produzione.
+#
+# Perche' esiste: il 20, il 22 e il 23/08/2026 il workflow `mutation` e' fallito
+# di notte, tre volte, e l'unico rilevatore e' stata una persona che il 23
+# mattina e' andata a guardare. Gli allarmi della produzione arrivano su Slack dal
+# 22/08 e il repository ha dichiarato "chiuso il buco strutturale: accorgersi di
+# un guasto non dipende piu' dal fatto che qualcuno decida di andare a leggere".
+# Era vero per la produzione e falso per i gate che la sorvegliano — cioe' il
+# guasto silenzioso spostato di un piano.
+#
+# UN SOLO file invece di uno step `if: failure()` in ognuno dei dieci: dieci copie
+# della stessa logica divergono, ed e' esattamente il difetto che questo
+# repository si e' gia' fatto due volte (la seconda lista accanto a
+# `source_paths`, il pin copiato dentro le prove). `workflow_run` guarda gli altri
+# da fuori e non chiede niente a loro.
+#
+# COME SI PROVA, visto che `workflow_run` scatta solo se questo file sta gia' sul
+# ramo di default e quindi sulla PR non c'e' nessun segnale: si rompe la realta' su
+# un ramo usa-e-getta — una funzione di `FUNZIONI_BLOCCANTI` rinominata fa uscire
+# `mutation` 1 in mezzo minuto — e lo si lancia con `gh workflow run mutation.yml
+# --ref <ramo>`. L'evento e' `workflow_dispatch`, quindi passa il filtro, e `main`
+# non diventa mai rosso. Dispatchare un workflow che PASSA non prova niente — il
+# job non scatterebbe — ed e' cio' che una prima stesura di questo commento
+# affermava.
+#
+# La lista dei workflow e' esplicita perche' `workflow_run` non accetta jolly, ed
+# e' per costruzione una SECONDA lista accanto ai dieci file. Quindi un gate in
+# lint.yml (`workflow-lint`) pretende che le due coincidano: un workflow nuovo che
+# non finisce qui dentro fa rosso subito, invece di tacere la notte che serve.
+#
+# Cosa NON copre, dichiarato invece che scoperto — tre cose, e in questo
+# repository un'assenza taciuta conta come un controllo affermato che non esiste:
+#
+# 1. Un cron che non parte affatto. `workflow_run` scatta quando un run FINISCE,
+#    quindi uno schedule morto — GitHub che disabilita i cron su un repository
+#    fermo da 60 giorni, un file che smette di stare sul ramo di default — resta
+#    invisibile. Serve un dead man's switch, che e' un'altra cosa e va decisa a
+#    parte. Vale gia' oggi: `codeql` e `telemetry-baseline` sono nati giovedi'
+#    20/08 e al 23/08 non hanno ancora incontrato un lunedi', quindi non sono MAI
+#    partiti.
+#
+# 2. Chi notifica il notificatore. `notifica` non e' nella propria lista, e
+#    metterlo non servirebbe: i suoi due modi di fallire sono "il segreto non c'e'
+#    piu'" e "il webhook risponde 403", cioe' le condizioni in cui il secondo
+#    tentativo fallisce identico. Un notificatore non puo' notificare la propria
+#    morte; solo qualcosa FUORI da qui puo', ed e' di nuovo il dead man's switch
+#    del punto 1. Nel frattempo resta la mail di GitHub, cioe' il canale gia'
+#    dimostrato insufficiente — tre notti di `mutation` rosso e nessuno se n'e'
+#    accorto. E' il buco piu' scomodo di questo file, e sta scritto qui invece che
+#    da nessuna parte.
+#
+# 3. Il rumore. `workflow_run` scatta su OGNI run completato dei dieci, verdi e
+#    PR compresi: nella tab Actions compaiono run di `notifica` con il job
+#    saltato, fino a dieci per PR. E' il prezzo di guardare da fuori invece che da
+#    dentro, ed e' preferito a dieci copie di uno step `if: failure()`.
+#
+# zizmor marca `workflow_run` HIGH (`dangerous-triggers`), e va argomentato invece
+# che spento: un'eccezione silenziosa e' `continue-on-error` con altre parole.
+# Cio' che rende `workflow_run` la trappola che zizmor descrive e' la COMBINAZIONE
+# — gira sul ramo di default, con i segreti, svegliato da codice che puo' venire da
+# un fork — con un `actions/checkout` del commit di quel fork e un token che sa
+# scrivere. Allora il codice di chiunque gira con le nostre credenziali.
+# Qui mancano entrambe le meta': nessun checkout, nessun artefatto scaricato,
+# `permissions: {}` in cima E sul job, e l'unico dato che arriva da fuori (il nome
+# del ramo) entra da `env` e passa a `jq --arg`, quindi resta un dato — provato in
+# locale con un ramo chiamato `main"; rm -rf /  $(id)`, che e' arrivato su Slack
+# come testo e non come comando.
+# La riga sotto spegne l'audit; il gate `notifica.yml resta la forma sicura di
+# workflow_run` in lint.yml pretende che quelle proprieta' siano ancora vere. Una
+# promessa scritta e una sorvegliata sembrano uguali sulla pagina.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows:
+      - codeql
+      - immagini
+      - lint
+      - mutation
+      - sicurezza
+      - smoke
+      - sonar
+      - sorveglianza
+      - telemetry-baseline
+      - test
+    types: [completed]
+
+# Deny by default. Questo job non tocca il repository: non fa checkout, non legge
+# codice, manda un POST. Il token che riceve non gli serve per niente, e con la
+# mappa vuota non ne ha nemmeno uno utile — cosa che conta piu' del solito qui,
+# perche' `workflow_run` gira sul ramo di default CON i segreti anche quando il
+# run che lo ha svegliato veniva da una PR di un fork.
+permissions: {}
+
+jobs:
+  slack:
+    # DUE allow-list, non due delete-list, e non e' pignoleria: `!=
+    # 'pull_request'` era la prima stesura, e il CLAUDE.md di questo repository
+    # vieta per iscritto di trasformare un'allow-list in una delete-list, perche'
+    # fallisce aperta su tutto cio' che qualcuno inventera' dopo. Qui il "dopo"
+    # ha un nome: `pull_request_target` e la merge queue portano dentro
+    # contenuto che controlla chi apre la PR da un fork.
+    #
+    # EVENTI. `schedule` e' il caso per cui il file esiste (nessuno guarda).
+    # `push` su main e' il rosso gia' spedito. `workflow_dispatch` serve a
+    # PROVARE la catena senza aspettare un guasto vero. Fuori restano le PR: quel
+    # rosso e' gia' in faccia a chi l'ha aperta, e un canale che si impara a
+    # ignorare e' peggio di nessun canale.
+    #
+    # CONCLUSIONI. `failure` da sola lasciava muti due guasti che questo
+    # repository ha gia' in casa, trovati da una revisione avversaria il
+    # 23/08/2026: nessun workflow ha `timeout-minutes` e i tre `curl` di
+    # `verify-hub.sh` non hanno `--max-time`, quindi un Tunnel che ingoia i SYN
+    # appende la sonda fino al limite di sei ore di GitHub e la conclusione e'
+    # `timed_out`; e uno YAML rotto sul ramo di default da' `startup_failure`,
+    # cioe' il gate che non parte affatto.
+    #
+    # `cancelled` NON e' qui, ed e' una scelta dichiarata invece che un buco:
+    # con `cancel-in-progress: true` su quasi tutti i workflow, un secondo push
+    # su main cancella il run del primo, ed e' il funzionamento normale. Il
+    # prezzo scritto: se qualcuno cancella a mano il cron notturno di `mutation`
+    # — o se un `workflow_dispatch` su main lo cancella, perche' condividono il
+    # gruppo `mutation-${{ github.ref }}` — quel silenzio resta.
+    if: >-
+      contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) &&
+      contains(fromJSON('["schedule","push","workflow_dispatch"]'), github.event.workflow_run.event)
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: dillo su Slack
+        env:
+          # Nessuna espressione ${{ }} dentro `run:`, come in ogni altro workflow
+          # qui: i valori entrano da `env`, quindi un nome di ramo con dentro dei
+          # metacaratteri resta un dato e non diventa codice.
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NOME: ${{ github.event.workflow_run.name }}
+          EVENTO: ${{ github.event.workflow_run.event }}
+          RAMO: ${{ github.event.workflow_run.head_branch }}
+          URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+          # Rosso e non `skip` se manca il segreto: in questo repository un gate
+          # senza credenziale resta rosso, perche' uno saltato si legge verde. E
+          # qui il costo di leggerlo verde e' il silenzio che questo file esiste
+          # per rompere.
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "FAIL: manca il secret SLACK_WEBHOOK_URL." >&2
+            echo "Senza, questo workflow non notifica NIENTE e ogni cron rosso torna silenzioso." >&2
+            exit 1
+          fi
+
+          testo="🔴 ${NOME} è rosso (${EVENTO} su ${RAMO}) — ${URL}"
+          # jq costruisce il JSON: il testo contiene un URL e un nome di ramo, e
+          # un `printf` con le virgolette a mano si rompe sul primo carattere da
+          # sfuggire, mandando un 400 che sembra un webhook scaduto.
+          corpo=$(jq -n --arg t "${testo}" '{text: $t}')
+
+          # `|| ...` esplicito: senza, un host irraggiungibile usciva con il solo
+          # stderr di curl e un codice numerico (6, 28) che chi legge alle 3 di
+          # notte deve andare a cercare. I tre percorsi rossi dicono tutti perche'.
+          if ! codice=$(curl -sS --max-time 20 -o /tmp/risposta -w '%{http_code}' \
+            -X POST -H 'Content-type: application/json' \
+            --data "${corpo}" "${WEBHOOK}"); then
+            echo "FAIL: non ho raggiunto l'endpoint del webhook (DNS, rete o timeout)." >&2
+            exit 1
+          fi
+          echo "Slack ha risposto ${codice}: $(cat /tmp/risposta)"
+          if [ "${codice}" != "200" ]; then
+            echo "FAIL: il webhook ha risposto ${codice} invece di 200." >&2
+            echo "Un incoming webhook revocato o scaduto risponde cosi', e da qui in poi ogni cron rosso torna silenzioso." >&2
+            exit 1
+          fi
+
+          # L'esito del POST e' l'unica meta' che questo job puo' provare da solo.
+          # Che poi il messaggio compaia nel canale vive sul server di Slack, ed e'
+          # la stessa divisione del lavoro gia' scritta in DECISIONS.md per gli
+          # allarmi di Grafana.
