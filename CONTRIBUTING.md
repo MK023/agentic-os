@@ -25,12 +25,20 @@ gate that was meant to enforce it. Rename one only together with the ruleset, an
 check the result with `gh api repos/MK023/agentic-os/rules/branches/main`.
 
 Nothing runs with `continue-on-error` — a gate either blocks or is removed on
-purpose. Five more workflows are not gates and do not block a merge, and two of them do
-produce a check on the PR, which is why the count matters: `mutation.yml` (nightly),
-`smoke.yml` (asks for every 10 minutes and gets whatever GitHub gives it, against
-production), `sorveglianza.yml` (daily, `verify-hub.sh` with the Access and bearer
-credentials), `telemetry-baseline.yml` (weekly, plus on PRs that touch two paths) and
-`codeql.yml` (per-PR, push and weekly, reporting rather than blocking).
+purpose. Six more workflows are not gates and do not block a merge, and three of them
+do produce a check on the PR, which is why the count matters: `mutation.yml` (nightly
+**and on every PR** since 2026-08-23 — it used to be nightly-only, and the three
+survivors it found on 2026-08-21 reached `main` before it spoke), `smoke.yml` (asks for
+every 10 minutes and gets whatever GitHub gives it — 15 to 92 minutes, measured on
+2026-08-23 — against production), `sorveglianza.yml` (daily, `verify-hub.sh` with the
+Access and bearer credentials), `telemetry-baseline.yml` (weekly, plus on PRs that touch
+two paths), `codeql.yml` (per-PR, push and weekly, reporting rather than blocking) and
+`notifica.yml` (no schedule of its own: it watches the other ten finish and posts a
+failing one to Slack).
+
+This count was "five" until 2026-08-23, one workflow after it stopped being true — the
+same divergence the `notifica.yml` gate in `lint.yml` exists to prevent one list away.
+Nothing watches *this* sentence, which is why it is worth suspecting.
 
 A failing gate is never re-run until green. Either it found something, or it is
 flaky and gets fixed (see the flaky policy in the README).

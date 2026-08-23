@@ -1243,16 +1243,25 @@ Doppler is the source of truth. Railway service variables are the runtime copy. 
 laptop keeps exactly one, because a shell reads it on every terminal and a network
 call there fails offline.
 
-| Secret | Doppler | Railway | Laptop | Cloudflare Worker |
-|---|---|---|---|---|
-| `OTLP_INGEST_TOKEN` | yes | `otel-collector` | Keychain (`agentic-os-otlp-ingest`) | — |
-| `STATUS_API_TOKEN` | yes | `status-api` | — | as `AGENTIC_OS_STATUS_TOKEN` |
-| `TUNNEL_TOKEN` | yes | `cloudflared` | — | — |
-| `GF_SECURITY_ADMIN_PASSWORD` | yes | `grafana` | — | — |
-| `SENTRY_DSN` | yes | `status-api` | — | — |
-| Access service token (ID + secret) | yes | **never** | for `verify-hub.sh` | `AGENTIC_OS_ACCESS_CLIENT_*` |
-| the four `LOKI_R2_*` (bucket, endpoint, key id, secret) | yes | `loki` | — | — |
-| `SLACK_WEBHOOK_URL` | yes | `grafana` | — | — |
+| Secret | Doppler | Railway | Laptop | Cloudflare Worker | GitHub |
+|---|---|---|---|---|---|
+| `OTLP_INGEST_TOKEN` | yes | `otel-collector` | Keychain (`agentic-os-otlp-ingest`) | — | — |
+| `STATUS_API_TOKEN` | yes | `status-api` | — | as `AGENTIC_OS_STATUS_TOKEN` | yes (`sorveglianza.yml`) |
+| `TUNNEL_TOKEN` | yes | `cloudflared` | — | — | — |
+| `GF_SECURITY_ADMIN_PASSWORD` | yes | `grafana` | — | — | — |
+| `SENTRY_DSN` | yes | `status-api` | — | — | — |
+| Access service token (ID + secret) | yes | **never** | for `verify-hub.sh` | `AGENTIC_OS_ACCESS_CLIENT_*` | yes (`CF_ACCESS_CLIENT_*`) |
+| the four `LOKI_R2_*` (bucket, endpoint, key id, secret) | yes | `loki` | — | — | — |
+| `SLACK_WEBHOOK_URL` | yes | `grafana` | — | — | yes (`notifica.yml`, since 2026-08-23) |
+
+The **GitHub column did not exist until 2026-08-23**, and it was wrong by omission for
+three days before that: `STATUS_API_TOKEN` and the Access pair had been repo secrets
+since 2026-08-20 for `sorveglianza.yml`. A table titled "where each secret lives" that
+is missing a home is the same defect as a control asserted and absent — it just fails in
+the direction of *under*-counting the rotation. Three further secrets exist only in
+GitHub and never touch a service (`RAILWAY_TOKEN`, `SENTRY_AUTH_TOKEN`, `SONAR_TOKEN`);
+whether they are also mastered in Doppler is not recorded here, and this table will not
+guess.
 
 The Access credentials never touch Railway on purpose: it is Cloudflare that verifies
 them, at the edge. The hub does not even see them as something to check.
@@ -1262,7 +1271,11 @@ the Collector, and the shell. Change two of the three and telemetry stops **in
 silence**: Claude Code keeps exporting with the old value and the Collector answers
 401, which nothing surfaces. Same shape for `STATUS_API_TOKEN`, which must match
 between the Railway service and the Worker secret **whose name is different**
-(`AGENTIC_OS_STATUS_TOKEN`).
+(`AGENTIC_OS_STATUS_TOKEN`). And since 2026-08-23 `SLACK_WEBHOOK_URL` has the same
+shape: rotating the Slack incoming webhook now breaks *two* consumers, Grafana's contact
+point and `notifica.yml`. Change one and the other keeps posting to a dead URL — the
+alerting half fails loudly (Grafana surfaces the delivery error), the CI half fails as a
+red job that, by construction, has nobody left to announce it.
 
 A Doppler → Railway sync was evaluated on 2026-07-29 and not adopted: the services hold
 different secrets, so respecting least privilege would mean one Doppler config per
