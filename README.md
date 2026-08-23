@@ -293,9 +293,22 @@ The reasoning behind each CI decision is in `docs/DECISIONS.md`.
    a contract written in a README that no gate checks is a wish, and it is the
    same defect as a gate nobody wrote a policy for, seen from the other side.
 
-3. **Blocking mutation score (nightly)**: any non-killed mutant in
-   `require_valid_token`, the only authorization comparison in the project,
-   fails `.github/workflows/mutation.yml`. Survivors elsewhere are non-blocking.
+3. **Blocking mutation score (nightly)**: any non-killed mutant in a blocking
+   function fails `.github/workflows/mutation.yml`. The list is `FUNZIONI_BLOCCANTI`
+   in that file and it is **twelve** functions, not one — authorization
+   (`require_valid_token`), the whole cost path, the two watchdogs, the sanitisers
+   and the two startup guards. This line said "`require_valid_token`, the only
+   authorization comparison in the project" until 2026-08-23, four commits after the
+   list had grown: a gate declared narrower than it is sends the reader looking for a
+   control that is already there. Survivors elsewhere — `sentry.py`'s envelope — stay
+   deliberately non-blocking.
+
+   **An equivalent mutant is not a test gap**, and it is not killed by asserting a
+   string: it is removed by deleting the literal nobody observes. Twice now — the
+   `latin-1` codec names in `require_valid_token`, and the `ValueError` message in
+   `_cost_usd` (three survivors, red for two nights from 2026-08-22). Both messages
+   were unreachable from outside the process, so a test asserting them would only
+   ever break on a rename.
 
 4. **Security taxonomy**: OWASP API Top 10 for the status API, MITRE ATT&CK for
    the infra surface. Not OWASP LLM / ATLAS: Phase 1 observes a model's usage; it never calls one.

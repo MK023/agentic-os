@@ -326,7 +326,16 @@ async def _cost_usd(payload: dict) -> float:
     # 21/08/2026). ValueError e non una classe nuova: e' gia' nella tupla del try
     # chiamante, quindi diventa il 502 controllato come ogni altro guasto a monte.
     if not math.isfinite(cost):
-        raise ValueError("non-finite cost: an upstream value we cannot price")
+        # Senza messaggio, e non per pigrizia: nessuno lo legge mai. `status()`
+        # cattura ValueError e manda a Sentry `_valore_pubblico(exc)`, che
+        # SOSTITUISCE str(exc); verso il chiamante esce un 502 generico. Un
+        # letterale che nessun osservatore vede genera mutanti EQUIVALENTI —
+        # `ValueError(None)`, la versione maiuscola, "XX...XX" — uccidibili solo
+        # congelando in un test una stringa che non prova niente. Quei tre hanno
+        # tenuto rosso il gate mutation due notti (22 e 23/08/2026). E' la stessa
+        # lezione del commento su latin-1 qui sotto: meno letterali, meno
+        # superficie, stessa proprieta'.
+        raise ValueError
     return cost
 
 
