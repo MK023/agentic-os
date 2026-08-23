@@ -1,10 +1,30 @@
 name: mutation
 
-# Nightly, not per-PR: a full mutation run takes minutes, and what it guards (the
-# only authorization comparison in the project) changes rarely.
+# Sulle PR **e** di notte. Fino al 23-08-2026 qui c'era scritto "nightly, not
+# per-PR: a full mutation run takes minutes, and what it guards (the only
+# authorization comparison in the project) changes rarely", e misurando sono
+# decadute tutte e due le meta': il run intero e' 2m35s, e le funzioni sorvegliate
+# sono passate da una a dodici in tre giorni. Il prezzo di quella riga si e' visto
+# il 21-08: la #142 ha aggiunto una guardia dentro `_cost_usd` con tre mutanti
+# sopravvissuti, tutti i check della PR erano verdi, e il rosso e' arrivato la notte
+# dopo — su `main`, dove un gate non blocca piu' niente. Un gate che scopre dopo il
+# merge e' un rapporto, non un cancello.
+#
+# Il notturno RESTA, e non per abitudine: e' l'unico che si accorge di cio' che
+# cambia senza che nessuno apra una PR — una dipendenza risolta diversamente, il
+# prezzario che invecchia.
+#
+# Nessun filtro `paths`, come in test.yml e sonar.yml e per la stessa ragione
+# scritta li': un check obbligatorio che non parte per un filtro lascia la PR
+# appesa per sempre invece di passare. Oggi questo non e' fra i check obbligatori
+# del ruleset, quindi il filtro sarebbe innocuo — e sarebbe la mina che scoppia il
+# giorno che qualcuno ce lo aggiunge. Due minuti e mezzo di runner gratuito costano
+# meno del job "skip" che servirebbe a disinnescarla.
+#
 # No ${{ }} expression is interpolated into any `run:` step here — no
 # template-injection surface.
 on:
+  pull_request:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch: {}
@@ -17,6 +37,13 @@ on:
 # tenerlo giusto adesso e' una riga; il costo di accorgersene al secondo job e'
 # un job con permessi che nessuno gli ha dato apposta.
 permissions: {}
+
+concurrency:
+  # Un gruppo PER FILE, come negli altri workflow: con un gruppo condiviso un push
+  # cancellerebbe i run degli altri, e un check cancellato non e' ne' rosso ne'
+  # verde — resta appeso.
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   mutation-score:
