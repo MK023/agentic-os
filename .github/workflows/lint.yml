@@ -305,7 +305,14 @@ jobs:
               problemi.append(f"trovati solo {job_visti} job: questo controllo non ha girato davvero.")
 
           curl_visti = 0
-          for percorso in sorted(glob.glob("scripts/*.sh") + glob.glob(".github/workflows/*.yml")):
+          # `.yaml` anche qui: il ciclo sui job lo guardava e questo no — un workflow
+          # con l'altra estensione avrebbe avuto i job sorvegliati e i curl no.
+          # Asimmetria nata con il gate, trovata rileggendolo lo stesso giorno.
+          for percorso in sorted(
+              glob.glob("scripts/*.sh")
+              + glob.glob(".github/workflows/*.yml")
+              + glob.glob(".github/workflows/*.yaml")
+          ):
               # le continuazioni di riga si uniscono PRIMA di contare: un flag sulla
               # riga successiva appartiene alla stessa invocazione.
               unito = re.sub(r"\\\n\s*", " ", open(percorso).read())
