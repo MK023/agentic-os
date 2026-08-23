@@ -38,9 +38,10 @@ name: notifica
 #    quindi uno schedule morto — GitHub che disabilita i cron su un repository
 #    fermo da 60 giorni, un file che smette di stare sul ramo di default — resta
 #    invisibile. Serve un dead man's switch, che e' un'altra cosa e va decisa a
-#    parte. Vale gia' oggi: `codeql` e `telemetry-baseline` sono nati giovedi'
-#    20/08 e al 23/08 non hanno ancora incontrato un lunedi', quindi non sono MAI
-#    partiti.
+#    parte. Vale gia' oggi: `codeql` e `telemetry-baseline` hanno un cron settimanale
+#    di lunedi', sono nati giovedi' 20/08, e al 23/08 quel cron non e' MAI scattato —
+#    girano su push e su PR, quindi "non sono mai partiti" sarebbe falso come frase
+#    intera: e' lo SCHEDULE che non ha ancora incontrato un lunedi'.
 #
 # 2. Chi notifica il notificatore. `notifica` non e' nella propria lista, e
 #    metterlo non servirebbe: i suoi due modi di fallire sono "il segreto non c'e'
@@ -146,6 +147,11 @@ jobs:
           EVENTO: ${{ github.event.workflow_run.event }}
           RAMO: ${{ github.event.workflow_run.head_branch }}
           URL: ${{ github.event.workflow_run.html_url }}
+          # La CONCLUSIONE, che mancava: con `cancelled` nell'insieme, "e' rosso" e'
+          # falso per un run superato da un push, e chi legge di notte deve poter
+          # distinguere la sonda appesa (il caso per cui questo file esiste) dal
+          # rumore di `cancel-in-progress` senza aprire il link.
+          CONCLUSIONE: ${{ github.event.workflow_run.conclusion }}
         run: |
           set -euo pipefail
           # Rosso e non `skip` se manca il segreto: in questo repository un gate
@@ -158,7 +164,7 @@ jobs:
             exit 1
           fi
 
-          testo="🔴 ${NOME} è rosso (${EVENTO} su ${RAMO}) — ${URL}"
+          testo="🔴 ${NOME}: ${CONCLUSIONE} (${EVENTO} su ${RAMO}) — ${URL}"
           # jq costruisce il JSON: il testo contiene un URL e un nome di ramo, e
           # un `printf` con le virgolette a mano si rompe sul primo carattere da
           # sfuggire, mandando un 400 che sembra un webhook scaduto.
@@ -167,7 +173,7 @@ jobs:
           # `|| ...` esplicito: senza, un host irraggiungibile usciva con il solo
           # stderr di curl e un codice numerico (6, 28) che chi legge alle 3 di
           # notte deve andare a cercare. I tre percorsi rossi dicono tutti perche'.
-          if ! codice=$(curl -sS --max-time 20 -o /tmp/risposta -w '%{http_code}' \
+          if ! codice=$(curl --connect-timeout 5 -sS --max-time 20 -o /tmp/risposta -w '%{http_code}' \
             -X POST -H 'Content-type: application/json' \
             --data "${corpo}" "${WEBHOOK}"); then
             echo "FAIL: non ho raggiunto l'endpoint del webhook (DNS, rete o timeout)." >&2

@@ -272,3 +272,72 @@ jobs:
           print("notifica.yml: un job solo, nessun codice di terzi (uses/container/services), "
                 "permessi vuoti sopra e sul job, condizione identica a quella attesa")
           PY
+
+      # Due invarianti nate il 23/08/2026 e sorvegliate dallo stesso giorno, perche'
+      # una convenzione che vive solo in un file di piano e' un desiderio: il README
+      # di questo repository lo dice con parole sue — "a contract written in a README
+      # that no gate checks is a wish".
+      #
+      # E il secondo controllo esiste perche' il primo tentativo di verificarlo a mano
+      # era CIECO da entrambi i lati: `grep -rn ... | grep -v '^\s*#'` non puo' mai
+      # escludere un commento (grep antepone `file:riga:`), e contando per riga fisica
+      # non vedeva ne' i tre `--max-time` finiti in doppio ne' le invocazioni spezzate
+      # su piu' righe. Qui le continuazioni si uniscono prima di contare.
+      - name: ogni job dichiara il proprio tetto, ogni curl i suoi due
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+
+          problemi = []
+
+          job_visti = 0
+          for percorso in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
+              for nome, corpo in (yaml.safe_load(open(percorso)).get("jobs") or {}).items():
+                  job_visti += 1
+                  if "timeout-minutes" not in (corpo or {}):
+                      problemi.append(
+                          f"{percorso}: il job '{nome}' non dichiara `timeout-minutes`: "
+                          "eredita il default di 360 minuti, e un job che si appende "
+                          "esce `cancelled` dopo sei ore."
+                      )
+          if job_visti < 15:
+              problemi.append(f"trovati solo {job_visti} job: questo controllo non ha girato davvero.")
+
+          curl_visti = 0
+          for percorso in sorted(glob.glob("scripts/*.sh") + glob.glob(".github/workflows/*.yml")):
+              # le continuazioni di riga si uniscono PRIMA di contare: un flag sulla
+              # riga successiva appartiene alla stessa invocazione.
+              unito = re.sub(r"\\\n\s*", " ", open(percorso).read())
+              for riga in unito.splitlines():
+                  nudo = riga.strip()
+                  # `curl` in POSIZIONE DI COMANDO, non la parola `curl` ovunque.
+                  # Senza questo, il gate matchava il proprio codice sorgente — il
+                  # nome dello step, le stringhe dei messaggi, il regex qui dentro —
+                  # ed e' nato rosso sulla realta'. E' la stessa classe che
+                  # `gate-linkedin.py` ha imparato lo stesso giorno: come si nomina un
+                  # eseguibile in una shell.
+                  if nudo.startswith("#") or not re.search(
+                      r"(?:^|[|;&`!]|\$\(|&&|\|\|)\s*"
+                      r"(?:(?:sudo|command|exec|nohup|time|timeout|xargs|env|if|then|do|else|not)\s+|\S+=\S+\s+)*"
+                      r"(?:[\w./~$-]*/)?curl\s",
+                      riga,
+                  ):
+                      continue
+                  curl_visti += 1
+                  breve = nudo[:70]
+                  if riga.count("--max-time") != 1:
+                      problemi.append(f"{percorso}: {riga.count('--max-time')} `--max-time` su un solo curl — vince l'ultimo: {breve}")
+                  if "--connect-timeout" not in riga:
+                      problemi.append(f"{percorso}: curl senza `--connect-timeout`: {breve}")
+          if curl_visti < 20:
+              problemi.append(f"trovate solo {curl_visti} invocazioni di curl: questo controllo non ha girato davvero.")
+
+          if problemi:
+              print("::error::una chiamata senza tetto si appende, e un job senza tetto "
+                    "muore dopo sei ore con conclusione `cancelled`.")
+              for p in problemi:
+                  print(f"::error::{p}")
+              sys.exit(1)
+          print(f"{job_visti} job con timeout-minutes, {curl_visti} curl con entrambi i tetti")
+          PY

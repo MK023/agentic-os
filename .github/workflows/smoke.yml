@@ -82,7 +82,7 @@ jobs:
           # numeri diversi. Vedi il commento su "senza header" piu' sotto.
           controlla() {
             attesi="$1"; descrizione="$2"; percorso="$3"; shift 3
-            codice=$(curl --connect-timeout 5 --max-time 30 -sS -o /dev/null -w '%{http_code}' \
+            codice=$(curl --connect-timeout 5 -sS -o /dev/null -w '%{http_code}' \
               --retry 3 --retry-delay 5 --retry-all-errors --max-time 20 \
               "$@" "${HOST}${percorso}")
             for atteso in $attesi; do
@@ -196,7 +196,7 @@ jobs:
           # --retry-all-errors copre anche i 5xx transitori del bordo Cloudflare:
           # un gate che diventa rosso per un blip di rete smette di essere letto,
           # e questo gira 144 volte al giorno.
-          codice=$(curl --connect-timeout 5 --max-time 30 -sS -o "$RUNNER_TEMP/risposta.json" -w '%{http_code}' \
+          codice=$(curl --connect-timeout 5 -sS -o "$RUNNER_TEMP/risposta.json" -w '%{http_code}' \
             --retry 3 --retry-delay 5 --retry-all-errors --max-time 20 "$URL")
 
           if [ "$codice" != "200" ]; then
