@@ -325,7 +325,11 @@ jobs:
                   # `gate-linkedin.py` ha imparato lo stesso giorno: come si nomina un
                   # eseguibile in una shell.
                   if nudo.startswith("#") or not re.search(
-                      r"(?:^|[|;&`!]|\$\(|&&|\|\|)\s*"
+                      # `run: curl ...` su una riga sola e' posizione di comando quanto
+                      # l'inizio di una riga dentro un blocco `run: |`. Senza questa
+                      # alternativa il gate non vedeva il caso piu' compatto, e la sua
+                      # stessa prova rossa tornava verde.
+                      r"(?:^|[|;&`!]|\$\(|&&|\|\||run:\s*|-\s+run:\s*)\s*"
                       r"(?:(?:sudo|command|exec|nohup|time|timeout|xargs|env|if|then|do|else|not)\s+|\S+=\S+\s+)*"
                       r"(?:[\w./~$-]*/)?curl\s",
                       riga,
