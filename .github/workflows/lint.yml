@@ -50,6 +50,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -82,6 +83,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -208,7 +210,7 @@ jobs:
           # Trovata da una revisione avversaria il 23/08/2026 e riprodotta prima di
           # correggerla.
           ATTESA = (
-              "contains(fromJSON('[\"failure\",\"timed_out\",\"startup_failure\"]'), "
+              "contains(fromJSON('[\"failure\",\"cancelled\",\"timed_out\",\"startup_failure\"]'), "
               "github.event.workflow_run.conclusion) && "
               "contains(fromJSON('[\"schedule\",\"push\",\"workflow_dispatch\"]'), "
               "github.event.workflow_run.event)"

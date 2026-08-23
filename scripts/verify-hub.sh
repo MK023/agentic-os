@@ -38,7 +38,7 @@ fi
 # --- Grafana: raggiungibile E protetta -------------------------------------
 # Niente "|| echo 000": curl scrive gia' 000 in %{http_code} quando non si connette,
 # e il fallback finiva per concatenare due codici ("000000").
-codice=$(curl -s -o /dev/null -w '%{http_code}' "${GRAFANA_URL}/api/health")
+codice=$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' "${GRAFANA_URL}/api/health")
 codice=${codice:-000}
 case "$codice" in
   200)
@@ -61,7 +61,7 @@ esac
 # --- status API: i tre numeri ----------------------------------------------
 # ${arr[@]+"${arr[@]}"}: espandere un array VUOTO sotto `set -u` e' un errore sul
 # bash 3.2 che macOS spedisce ancora. Questa forma lo rende un no-op.
-risposta=$(curl -s -w '\n%{http_code}' ${intestazioni_access[@]+"${intestazioni_access[@]}"} \
+risposta=$(curl --connect-timeout 5 --max-time 30 -s -w '\n%{http_code}' ${intestazioni_access[@]+"${intestazioni_access[@]}"} \
   -H "Authorization: Bearer ${STATUS_TOKEN}" "${STATUS_URL}/status")
 codice=$(echo "$risposta" | tail -1)
 corpo=$(echo "$risposta" | sed '$d')

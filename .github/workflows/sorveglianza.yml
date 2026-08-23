@@ -33,6 +33,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       # Hostname pubblici, non segreti: sono nel DNS e in docs/CLOUDFLARE_TUNNEL_SETUP.md.
       GRAFANA_URL: https://grafana.marcobellingeri.dev
@@ -91,6 +92,7 @@ jobs:
   regola-sentry:
     permissions: {}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -144,6 +146,7 @@ jobs:
   spesa-railway:
     permissions: {}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

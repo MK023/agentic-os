@@ -142,10 +142,10 @@ docker run -d --rm --name ritenzione-loki --network "$RETE" -p 3197:3100 \
 
 echo -n "attendo Loki: "
 for _ in $(seq 1 60); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3197/ready)" = "200" ] && { echo "pronto"; break; }
+  [ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3197/ready)" = "200" ] && { echo "pronto"; break; }
   sleep 2
 done
-[ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3197/ready)" = "200" ] || {
+[ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3197/ready)" = "200" ] || {
   echo "FALLITO: Loki non e' arrivato a servire"; docker logs ritenzione-loki 2>&1 | tail -20; exit 1; }
 
 ORA=$(python3 -c "import time;print(int(time.time()))")
@@ -156,9 +156,9 @@ echo "--- (a) l'API di cancellazione e' chiusa"
 # I parametri VANNO nella query string anche in POST: con `--data-urlencode` Loki
 # risponde 400 "query not set", che e' un rosso per il motivo sbagliato e
 # nasconderebbe un 204. Misurato il 2026-08-21.
-POST=$(curl -s -o "$TMP/post.txt" -w '%{http_code}' -X POST \
+POST=$(curl --connect-timeout 5 --max-time 30 -s -o "$TMP/post.txt" -w '%{http_code}' -X POST \
   "http://localhost:3197/loki/api/v1/delete?query=$QUERY&start=$((ORA-7200))&end=$((ORA-3600))")
-GET=$(curl -s -o "$TMP/get.txt" -w '%{http_code}' "http://localhost:3197/loki/api/v1/delete")
+GET=$(curl --connect-timeout 5 --max-time 30 -s -o "$TMP/get.txt" -w '%{http_code}' "http://localhost:3197/loki/api/v1/delete")
 echo "POST /loki/api/v1/delete -> $POST ; GET -> $GET"
 # 204 e' il valore MISURATO prima del cambiamento, non un'ipotesi: e' cio' che
 # rispondeva la config spedita fino al 2026-08-21.
@@ -166,7 +166,7 @@ echo "POST /loki/api/v1/delete -> $POST ; GET -> $GET"
 [ "$GET"  = "403" ] || { echo "FALLITO: (a) GET risponde $GET, atteso 403";  cat "$TMP/get.txt";  fallimenti=1; }
 
 echo "--- (b) l'ingestione non e' stata toccata dal cambiamento"
-PUSH=$(curl -s -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:3197/loki/api/v1/push \
+PUSH=$(curl --connect-timeout 5 --max-time 30 -s -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:3197/loki/api/v1/push \
   -H 'Content-Type: application/json' \
   -d "{\"streams\":[{\"stream\":{\"service_name\":\"claude-code\"},\"values\":[[\"$((ORA * 1000000000))\",\"riga-di-prova\"]]}]}")
 echo "push -> $PUSH"
@@ -181,7 +181,7 @@ echo "push -> $PUSH"
 
 echo "--- (c) il ciclo di ritenzione gira ancora, e riesce"
 leggi() {
-  curl -s http://localhost:3197/metrics \
+  curl --connect-timeout 5 --max-time 30 -s http://localhost:3197/metrics \
     | awk -v m="loki_compactor_apply_retention_operation_total{status=\"$1\"}" '$1==m {print $2}'
 }
 primo=$(leggi success); primo=${primo:-0}

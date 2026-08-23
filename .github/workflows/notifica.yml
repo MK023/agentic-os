@@ -108,25 +108,33 @@ jobs:
     # rosso e' gia' in faccia a chi l'ha aperta, e un canale che si impara a
     # ignorare e' peggio di nessun canale.
     #
-    # CONCLUSIONI. `failure` da sola lasciava muti due guasti che questo
-    # repository ha gia' in casa, trovati da una revisione avversaria il
-    # 23/08/2026: nessun workflow ha `timeout-minutes` e i tre `curl` di
-    # `verify-hub.sh` non hanno `--max-time`, quindi un Tunnel che ingoia i SYN
-    # appende la sonda fino al limite di sei ore di GitHub e la conclusione e'
-    # `timed_out`; e uno YAML rotto sul ramo di default da' `startup_failure`,
-    # cioe' il gate che non parte affatto.
+    # CONCLUSIONI. Quattro, e la quarta e' arrivata smentendo una frase scritta
+    # QUI il 23/08/2026: "una sonda appesa arriva come `timed_out`". E' FALSO,
+    # misurato lo stesso giorno su un ramo usa-e-getta — `mutation` con
+    # `timeout-minutes: 1` e uno `sleep 180` esce **`cancelled`**, ed e'
+    # coerente con la doc del fornitore, che per `timeout-minutes` dice
+    # "automatically **cancels** it". Con `cancelled` escluso, il notificatore
+    # restava muto proprio sul caso per cui era stato allargato: il run di
+    # `notifica` e' partito e il job e' uscito `skipped`.
     #
-    # `cancelled` NON e' qui, ed e' una scelta dichiarata invece che un buco:
-    # con `cancel-in-progress: true` su quasi tutti i workflow, un secondo push
-    # su main cancella il run del primo, ed e' il funzionamento normale. Il
-    # prezzo scritto: se qualcuno cancella a mano il cron notturno di `mutation`
-    # — o se un `workflow_dispatch` su main lo cancella, perche' condividono il
-    # gruppo `mutation-${{ github.ref }}` — quel silenzio resta.
+    # Quindi `cancelled` e' dentro, e il rumore che porta e' dichiarato invece
+    # che scoperto: con `cancel-in-progress: true` su quasi tutti i workflow, un
+    # push su main che ne supera un altro cancella il run del primo e produrra'
+    # una notifica. Si accetta, e non per rassegnazione: il CLAUDE.md di questo
+    # repository tratta gia' i merge ravvicinati come un pericolo da guardare
+    # (`SKIPPED` e `REMOVED` significano "non e' andato in produzione"), quindi
+    # sapere che un run su main e' stato cancellato e' segnale, non rumore.
+    #
+    # `startup_failure` resta per il gate che non parte affatto — uno YAML rotto
+    # sul ramo di default. `timed_out` resta perche' costa niente tenerlo, non
+    # perche' sia stato osservato: nessuna delle misure di quel giorno l'ha
+    # prodotto, e dirlo e' piu' onesto che lasciar credere che copra qualcosa.
     if: >-
-      contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) &&
+      contains(fromJSON('["failure","cancelled","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) &&
       contains(fromJSON('["schedule","push","workflow_dispatch"]'), github.event.workflow_run.event)
     permissions: {}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: dillo su Slack
         env:
