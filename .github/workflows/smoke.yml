@@ -14,6 +14,10 @@ on:
   schedule:
     # `*/10` e' cio' che si CHIEDE, non cio' che si ottiene. Misurato sui primi
     # dodici run reali del 13/08: intervalli fra 38 e 93 minuti, mediana ~55.
+    # Rimisurato il 23/08 sugli ultimi venti run: 15-92 minuti, mediana ~29,
+    # media 36. Migliorato, non risolto — la coda lunga e' ancora li', e finche'
+    # c'e' la finestra cieca sul percorso pubblico si dichiara in ore, non in
+    # minuti.
     # GitHub non garantisce la puntualita' degli schedule e strozza i cron
     # frequenti sui repo pubblici — il numero qui dentro e' un tetto, non una
     # cadenza.

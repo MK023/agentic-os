@@ -137,3 +137,102 @@ jobs:
           print("nessuno step duplicato")
           PY
 
+
+      # La lista dentro notifica.yml e' una SECONDA lista accanto ai file dei
+      # workflow, e `workflow_run` non accetta jolly: o le due coincidono, o esiste
+      # un gate che quando fallisce di notte non lo dice a nessuno — cioe' il
+      # silenzio che notifica.yml e' nato per rompere, riaperto dal file che qualcuno
+      # aggiungera' fra sei mesi. Questo repository ha gia' pagato due volte per una
+      # seconda lista divergente (`source_paths` in mutation.yml, il pin del
+      # Collector copiato dentro le prove): la terza la vede un gate.
+      #
+      # Con due pavimenti, perche' un confronto fra insiemi vuoti e' verde: se il
+      # glob non trova niente o notifica.yml sparisce, questo step deve gridare, non
+      # passare.
+      - name: notifica.yml sorveglia tutti i workflow
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, pathlib, sys, yaml
+
+          NOTIFICATORE = ".github/workflows/notifica.yml"
+          if not pathlib.Path(NOTIFICATORE).exists():
+              print(f"::error::{NOTIFICATORE} non esiste: nessun cron rosso viene notificato.")
+              sys.exit(1)
+
+          # `on:` in YAML si legge come il booleano True, non come la stringa "on".
+          notificatore = yaml.safe_load(open(NOTIFICATORE))
+          trigger = notificatore.get(True, notificatore.get("on"))
+          sorvegliati = set(trigger["workflow_run"]["workflows"])
+
+          dichiarati = {}
+          for percorso in sorted(glob.glob(".github/workflows/*.yml")):
+              if percorso == NOTIFICATORE:
+                  continue
+              nome = yaml.safe_load(open(percorso)).get("name")
+              if not nome:
+                  print(f"::error::{percorso} non dichiara `name:`, quindi notifica.yml non puo' nominarlo.")
+                  sys.exit(1)
+              dichiarati[nome] = percorso
+
+          if len(dichiarati) < 5:
+              print(f"::error::trovati solo {len(dichiarati)} workflow: questo confronto non ha girato davvero.")
+              sys.exit(1)
+
+          scoperti = sorted(set(dichiarati) - sorvegliati)
+          fantasmi = sorted(sorvegliati - set(dichiarati))
+          if scoperti or fantasmi:
+              for nome in scoperti:
+                  print(f"::error::'{nome}' ({dichiarati[nome]}) non e' in notifica.yml: se fallisce di notte, nessuno lo sa.")
+              for nome in fantasmi:
+                  print(f"::error::notifica.yml sorveglia '{nome}', che non esiste piu': la riga non fa niente e sembra copertura.")
+              sys.exit(1)
+          print(f"notifica.yml sorveglia tutti i {len(dichiarati)} workflow")
+          PY
+
+      # Il `# zizmor: ignore[dangerous-triggers]` in notifica.yml vale solo finche'
+      # valgono le proprieta' con cui e' argomentato. Un `ignore` e' per sempre e le
+      # proprieta' no: basta che qualcuno aggiunga un `actions/checkout` per avere il
+      # pwn request completo, con l'audit gia' zittito e la motivazione che continua
+      # a dire il contrario tre righe sopra. Questo step e' cio' che trasforma
+      # quell'argomento in un controllo.
+      - name: notifica.yml resta la forma sicura di workflow_run
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+
+          NOTIFICATORE = ".github/workflows/notifica.yml"
+          workflow = yaml.safe_load(open(NOTIFICATORE))
+          trigger = workflow.get(True, workflow.get("on"))
+          problemi = []
+
+          # Se un giorno non fosse piu' workflow_run, l'ignore non servirebbe piu' e
+          # nemmeno questo controllo: che sia ancora quello e' la premessa di tutto.
+          if "workflow_run" not in trigger:
+              problemi.append("non e' piu' un workflow_run: togli anche l'ignore di zizmor e questo gate.")
+
+          if workflow.get("permissions") != {}:
+              problemi.append("`permissions` di workflow non e' piu' la mappa vuota.")
+
+          for nome_job, job in (workflow.get("jobs") or {}).items():
+              if job.get("permissions") != {}:
+                  problemi.append(f"il job '{nome_job}' non ha piu' `permissions: {{}}`.")
+              # Il cuore dell'argomento: senza checkout non c'e' codice di nessun
+              # altro da eseguire. Vale per QUALSIASI `uses:`, non solo per
+              # actions/checkout — una action di terzi qui girerebbe con i segreti.
+              for passo in job.get("steps", []):
+                  if "uses" in passo:
+                      problemi.append(f"il job '{nome_job}' usa `{passo['uses']}`: qui dentro non gira codice di nessun altro.")
+              condizione = str(job.get("if", ""))
+              if "pull_request" not in condizione:
+                  problemi.append(f"il job '{nome_job}' non esclude piu' gli eventi pull_request.")
+
+          if problemi:
+              print("::error::notifica.yml non e' piu' la forma sicura di workflow_run, ma "
+                    "l'audit di zizmor e' ancora zittito dal suo `ignore`.")
+              for problema in problemi:
+                  print(f"::error::{problema}")
+              sys.exit(1)
+          print("notifica.yml: nessun checkout, nessuna action di terzi, permessi vuoti, pull_request esclusi")
+          PY

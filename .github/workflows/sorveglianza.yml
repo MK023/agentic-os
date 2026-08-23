@@ -10,7 +10,9 @@ name: sorveglianza
 # e il documento continua ad affermarlo.
 #
 # Questo workflow chiude la prima di quelle righe. Gira una volta al giorno: la
-# domanda non e' "l'hub e' su adesso" — quella la fa smoke.yml ogni ora — ma
+# domanda non e' "l'hub e' su adesso" — quella la fa smoke.yml, che si chiede
+# ogni 10 minuti e nella realta' gira ogni 15-92 (misurato il 23/08/2026: la
+# cadenza degli schedule GitHub e' un tetto, non una promessa) — ma
 # "Access e il bearer sono ancora al loro posto", che non cambia in un'ora.
 on:
   schedule:
