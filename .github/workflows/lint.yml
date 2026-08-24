@@ -312,7 +312,11 @@ jobs:
                   # ha modo di spegnere, e l'unica uscita e' disattivare il gate: un
                   # controllo rosso su cio' su cui non puoi agire diventa un
                   # `continue-on-error` con passi in piu'. Il tetto di quel job vive
-                  # dentro il workflow chiamato, che questo stesso ciclo sorveglia.
+                  # dentro il workflow chiamato: se e' locale (`./.github/...`) questo
+                  # stesso ciclo lo sorveglia, se e' REMOTO (`org/repo/.github/...@sha`)
+                  # non lo legge nessuno da qui. Oggi non ce ne sono; il giorno che ne
+                  # arriva uno, quel tetto e' fuori dalla portata di questo gate e va
+                  # detto invece che presunto.
                   if "uses" in (corpo or {}):
                       continue
                   if "timeout-minutes" not in (corpo or {}):
@@ -337,20 +341,40 @@ jobs:
           #
           # IL TETTO DI QUESTO GATE, dichiarato invece che scoperto dal prossimo che
           # ci sbatte: riconosce `curl` invocato direttamente, in tutte le posizioni
-          # di comando della shell e con i wrapper elencati. NON vede `curl` dentro un
-          # interprete che lo lancia per conto suo (`bash -c "curl ..."`,
-          # `docker exec c curl ...`), ne' un eseguibile nascosto in una variabile
-          # (`$CURL ...`). E' un lint sul nostro stile, non una barriera contro chi
-          # voglia aggirarlo: chi scrive `eval curl` sta scegliendo di non essere
+          # di comando della shell e dietro i wrapper elencati, con i loro argomenti.
+          # NON vede `curl` dentro un interprete che lo lancia per conto suo
+          # (`bash -c "curl ..."`, `docker exec c curl ...`), ne' un eseguibile
+          # nascosto in una variabile (`$CURL ...`), ne' un wrapper con piu' di tre
+          # argomenti davanti. E' un lint sul nostro stile, non una barriera contro chi
+          # voglia aggirarlo: chi scrive `bash -c` sta scegliendo di non essere
           # sorvegliato. Allargare l'elenco una forma per volta e' la mossa che qui e'
-          # gia' costata tre regressioni — se il buco diventa reale, si cambia strada
-          # (parsare la riga con `shlex`), non si allunga la lista.
+          # gia' costata quattro regressioni — se il buco diventa reale, si cambia
+          # strada (parsare la riga con `shlex`), non si allunga la lista.
           CURL = re.compile(
               r"(?:^|[|;&`!({]|\$\(|&&|\|\||^\s*-?\s*run:\s*)\s*"
+              # Un wrapper porta i PROPRI argomenti prima del comando che avvolge:
+              # `timeout 10 curl`, `xargs -I{} curl`, `sudo -u ci curl`,
+              # `env -u HTTP_PROXY curl`. La grammatica sapeva saltare il NOME del
+              # wrapper e non i suoi argomenti, quindi meta' dell'elenco non
+              # funzionava — e quattro di quelle forme sono nel banco di
+              # `gate-linkedin.py` fra quelle da bloccare, cioe' sono forme che qui si
+              # scrivono davvero. Fino a tre token, e nessuno puo' contenere una
+              # virgoletta o un delimitatore: sono argomenti, non un altro comando.
               r"(?:(?:sudo|command|exec|eval|nohup|nice|time|timeout|xargs|env"
-              r"|if|while|until|elif|then|do|else|not)\s+|\S+=\S+\s+)*"
+              r"|if|while|until|elif|then|do|else|not)\s+(?:[^\s'\"|;&()]+\s+){0,3}"
+              r"|\S+=\S+\s+)*"
               r"(?:[\w./~$-]*/)?curl\s"
           )
+          # Dove FINISCE un'invocazione: al primo separatore di comando. Serve perche'
+          # i flag vanno attribuiti al curl a cui appartengono — vedi sotto.
+          SEPARATORE = re.compile(r"&&|\|\||[|;&`]")
+          # `-m` e' la forma breve documentata (`man curl`: "-m, --max-time"), e in una
+          # shell i flag corti si raggruppano (`curl -sSm 30`) e si attaccano al valore
+          # (`-m30`). Cercare la sottostringa `--max-time` bocciava tutte e tre;
+          # cercare `-m` isolato ne bocciava due su tre. Il lookbehind tiene fuori la
+          # `-m` che sta DENTRO `--max-time`.
+          TETTO = re.compile(r"(?<![\w-])--max-time(?=[= ])|(?<![\w-])-[A-Za-z]*m(?=[ =]|\d)")
+          CONNESSIONE = re.compile(r"(?<![\w-])--connect-timeout(?=[= ])")
 
           curl_visti = 0
           # `.yaml` anche qui: il ciclo sui job lo guardava e questo no — un workflow
@@ -368,26 +392,34 @@ jobs:
                   nudo = riga.strip()
                   if nudo.startswith("#"):
                       continue
-                  # Si contano le INVOCAZIONI, non le righe: due curl legittimi sulla
-                  # stessa riga logica (`[ "$(curl A)" = "$(curl B)" ]`) davano
-                  # "2 --max-time su un solo curl", una diagnosi falsa su codice
-                  # corretto, e per giunta ne contavano una sola nel pavimento.
-                  quanti = len(CURL.findall(riga))
-                  if not quanti:
-                      continue
-                  curl_visti += quanti
                   breve = nudo[:70]
-                  # `-m` e' la forma breve DOCUMENTATA di `--max-time` (`man curl`:
-                  # "-m, --max-time"), e `--max-time=30` con l'uguale e' altrettanto
-                  # valida. Contare la sottostringa `--max-time` bocciava la prima e
-                  # accettava la seconda: si verificava una stringa, non un'opzione.
-                  # Il lookbehind tiene fuori la `-m` che sta DENTRO `--max-time`.
-                  tetti = len(re.findall(r"(?<![\w-])(?:--max-time|-m)(?=[= ])", riga))
-                  connessioni = len(re.findall(r"--connect-timeout(?=[= ])", riga))
-                  if tetti != quanti:
-                      problemi.append(f"{percorso}: {tetti} `--max-time` per {quanti} curl — se sono due sulla stessa invocazione vince l'ultimo: {breve}")
-                  if connessioni != quanti:
-                      problemi.append(f"{percorso}: {connessioni} `--connect-timeout` per {quanti} curl: {breve}")
+                  # Ogni invocazione si guarda da sola, e i suoi flag sono quelli che
+                  # stanno fra il suo `curl` e il primo separatore di comando.
+                  #
+                  # Contarli sulla RIGA INTERA era sbagliato in tutti e due i versi, e
+                  # non in teoria: `curl --connect-timeout 5 https://x && git commit -m
+                  # "fatto"` passava VERDE, perche' il `-m` di git faceva da alibi a un
+                  # curl senza tetto — cioe' il gate cieco sull'unica cosa che
+                  # sorveglia; e `curl ... --max-time 30 ... | python3 -m json.tool`
+                  # diventava ROSSO su codice corretto, con `python -m` gia' in uso in
+                  # `scripts/check-python-versions.sh`. Un'opzione senza il comando a
+                  # cui appartiene e' ancora una stringa: la correzione precedente
+                  # aveva cambiato COSA si cerca e non A CHI appartiene.
+                  # Il confine e' il primo separatore MA ANCHE il curl successivo: fra
+                  # `$(curl A)` e `$(curl B)` non c'e' nessun `;` o `|`, e senza questo
+                  # limite i flag del secondo venivano contati anche al primo.
+                  inizi = [m.start() for m in CURL.finditer(riga)] + [len(riga)]
+                  for indice, invocazione in enumerate(CURL.finditer(riga)):
+                      curl_visti += 1
+                      limite = inizi[indice + 1]
+                      fine = SEPARATORE.search(riga, invocazione.end(), limite)
+                      segmento = riga[invocazione.end():fine.start() if fine else limite]
+                      tetti = len(TETTO.findall(segmento))
+                      connessioni = len(CONNESSIONE.findall(segmento))
+                      if tetti != 1:
+                          problemi.append(f"{percorso}: {tetti} `--max-time` su questo curl — se sono due vince l'ultimo: {breve}")
+                      if connessioni != 1:
+                          problemi.append(f"{percorso}: {connessioni} `--connect-timeout` su questo curl: {breve}")
           if curl_visti < 20:
               problemi.append(f"trovate solo {curl_visti} invocazioni di curl: questo controllo non ha girato davvero.")
 

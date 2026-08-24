@@ -80,15 +80,19 @@ def albero() -> Path:
     return temp
 
 
-def gira(codice: str, radice: Path) -> int:
-    # noqa S603: `codice` non e' input non fidato — e' lo script del gate estratto da
-    # `.github/workflows/lint.yml`, cioe' da un file versionato di questo repository,
-    # e girarlo davvero E' il punto del banco. La sola alternativa sarebbe copiarlo
-    # qui dentro, che vorrebbe dire una seconda copia del gate: la cosa che il
-    # progetto vieta per ogni file di configurazione, e per la stessa ragione.
-    return subprocess.run(  # noqa: S603
+def gira_completo(codice: str, radice: Path):
+    """(exit code, stdout+stderr). Il messaggio serve quanto il codice di uscita.
+
+    S603: `codice` non e' input non fidato — e' lo script del gate estratto da
+    `.github/workflows/lint.yml`, cioe' da un file versionato di questo repository, e
+    girarlo davvero E' il punto del banco. La sola alternativa sarebbe copiarlo qui
+    dentro, che vorrebbe dire una seconda copia del gate: la cosa che il progetto
+    vieta per ogni file di configurazione, e per la stessa ragione.
+    """
+    esito = subprocess.run(  # noqa: S603
         [sys.executable, "-c", codice], cwd=radice, capture_output=True, text=True
-    ).returncode
+    )
+    return esito.returncode, esito.stdout + esito.stderr
 
 
 # Ogni caso: (descrizione, esito atteso, come si sporca l'albero).
@@ -113,11 +117,68 @@ CASI = [
         "un curl senza --max-time",
         True,
         lambda t: (t / "scripts/x.sh").write_text("curl --connect-timeout 5 -sS https://x\n"),
+        "`--max-time` su questo curl",
     ),
     (
         "un curl senza --connect-timeout",
         True,
         lambda t: (t / "scripts/x.sh").write_text("curl --max-time 30 -sS https://x\n"),
+        "`--connect-timeout` su questo curl",
+    ),
+    # --- i flag appartengono a UN'invocazione: contarli sulla riga sbagliava in
+    #     tutti e due i versi, e il verso pericoloso era il primo.
+    (
+        "un `-m` di un ALTRO comando non fa da alibi a un curl senza tetto",
+        True,
+        lambda t: (t / "scripts/x.sh").write_text(
+            'curl --connect-timeout 5 -sS https://x && git commit -m "fatto"\n'
+        ),
+        "`--max-time` su questo curl",
+    ),
+    (
+        "un curl completo in pipe verso `python3 -m`",
+        False,
+        lambda t: (t / "scripts/x.sh").write_text(
+            "curl --connect-timeout 5 --max-time 30 -sS https://x | python3 -m json.tool\n"
+        ),
+    ),
+    (
+        "due curl sulla stessa riga, il secondo nudo",
+        True,
+        lambda t: (t / "scripts/x.sh").write_text(
+            '[ "$(curl --connect-timeout 5 --max-time 30 -s A)" = "$(curl -s B)" ]\n'
+        ),
+        "su questo curl",
+    ),
+    # --- i wrapper portano i propri argomenti: meta' dell'elenco era cieca
+    (
+        "`timeout 10 curl` senza tetti",
+        True,
+        lambda t: (t / "scripts/x.sh").write_text("timeout 10 curl -sS https://x\n"),
+        "su questo curl",
+    ),
+    (
+        "`xargs -I{} curl` senza tetti",
+        True,
+        lambda t: (t / "scripts/x.sh").write_text("echo a | xargs -I{} curl -sS https://x\n"),
+        "su questo curl",
+    ),
+    (
+        "`sudo -u ci curl` senza tetti",
+        True,
+        lambda t: (t / "scripts/x.sh").write_text("sudo -u ci curl -sS https://x\n"),
+        "su questo curl",
+    ),
+    # --- le tre scritture della forma breve, tutte valide per curl
+    (
+        "`-sSm 30`, flag corti raggruppati",
+        False,
+        lambda t: (t / "scripts/x.sh").write_text("curl -sSm 30 --connect-timeout 5 https://x\n"),
+    ),
+    (
+        "`-m30`, valore attaccato al flag",
+        False,
+        lambda t: (t / "scripts/x.sh").write_text("curl -m30 --connect-timeout 5 https://x\n"),
     ),
     (
         "due --max-time sulla stessa invocazione (vince l'ultimo)",
@@ -166,9 +227,7 @@ CASI = [
     (
         "`--max-time=30` con l'uguale",
         False,
-        lambda t: (t / "scripts/x.sh").write_text(
-            "curl --max-time=30 --connect-timeout=5 -sS https://x\n"
-        ),
+        lambda t: (t / "scripts/x.sh").write_text("curl --max-time=30 --connect-timeout=5 -sS https://x\n"),
     ),
     (
         "due curl completi sulla stessa riga logica",
@@ -239,15 +298,15 @@ MUTANTI = [
     ),
     (
         "la forma breve `-m`",
-        r"(?<![\w-])(?:--max-time|-m)(?=[= ])",
-        r"(?<![\w-])(?:--max-time)(?=[= ])",
+        r"|(?<![\w-])-[A-Za-z]*m(?=[ =]|\d)",
+        "",
         "`-m 30`, la forma breve documentata di --max-time",
     ),
     (
-        "il conteggio per invocazione",
-        "quanti = len(CURL.findall(riga))",
-        "quanti = 1 if CURL.search(riga) else 0",
-        "due curl completi sulla stessa riga logica",
+        "i flag corti raggruppati (`-sSm`)",
+        r"-[A-Za-z]*m(?=[ =]|\d)",
+        r"-m(?=[ =]|\d)",
+        "`-sSm 30`, flag corti raggruppati",
     ),
     (
         "l'estensione .yaml sui curl",
@@ -255,32 +314,90 @@ MUTANTI = [
         "\n):",
         "un curl senza tetti in un workflow .yaml",
     ),
+    (
+        "il salto dei job `uses:`",
+        'if "uses" in (corpo or {}):\n            continue\n        ',
+        "",
+        "un job che chiama una reusable workflow (non puo' avere timeout-minutes)",
+    ),
+    (
+        "gli argomenti dei wrapper",
+        r"\s+(?:[^\s'\"|;&()]+\s+){0,3}",
+        r"\s+",
+        "`timeout 10 curl` senza tetti",
+    ),
+    (
+        "l'attribuzione dei flag all'invocazione",
+        "segmento = riga[invocazione.end():fine.start() if fine else limite]",
+        "segmento = riga",
+        "un `-m` di un ALTRO comando non fa da alibi a un curl senza tetto",
+    ),
 ]
+
+# Il gate degli step duplicati ha il suo, perche' e' un altro script.
+MUTANTI_DUPLICATI = [
+    (
+        "l'estensione .yaml sugli step duplicati",
+        '\n    + glob.glob(".github/workflows/*.yaml")\n):',
+        "\n):",
+        "due step omonimi nello stesso job (.yaml)",
+    ),
+]
+
+
+def prova_caso(codice, caso):
+    """(va_bene, uscita, perche'). L'oracolo NON e' il solo codice di uscita.
+
+    Un gate che ESPLODE esce 1 come uno che boccia, e con il solo exit code un caso
+    rosso restava verde-di-nome anche quando il controllo che nomina era spento e a
+    farlo fallire era un `KeyError`. Quindi per un caso rosso si pretende anche un
+    `::error::` (il gate ha parlato), nessun `Traceback` (non e' morto) e, dove il
+    caso lo dichiara, il FRAMMENTO del messaggio giusto: rosso per la ragione che il
+    caso nomina, non per una qualunque.
+    """
+    rosso, sporca = caso[1], caso[2]
+    frammento = caso[3] if len(caso) > 3 else None
+    temp = albero()
+    try:
+        sporca(temp)
+        uscita, testo = gira_completo(codice, temp)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+    if "Traceback" in testo:
+        return False, uscita, "il gate e' ESPLOSO invece di decidere"
+    if rosso:
+        if uscita != 1:
+            return False, uscita, "atteso rosso"
+        if "::error::" not in testo:
+            return False, uscita, "uscito 1 senza dire niente"
+        if frammento and frammento not in testo:
+            return False, uscita, f"rosso per un'altra ragione (manca {frammento!r})"
+        return True, uscita, ""
+    if uscita != 0:
+        return False, uscita, "atteso verde"
+    return True, uscita, ""
 
 
 def esegui(titolo, codice, casi) -> int:
     errori = 0
     print(f"\n== {titolo}")
-    for descrizione, rosso, sporca in casi:
-        temp = albero()
-        try:
-            sporca(temp)
-            uscita = gira(codice, temp)
-        finally:
-            shutil.rmtree(temp, ignore_errors=True)
-        atteso = 1 if rosso else 0
-        esito = "ok  " if uscita == atteso else "ERRORE"
-        if uscita != atteso:
+    for caso in casi:
+        va_bene, uscita, perche = prova_caso(codice, caso)
+        if not va_bene:
             errori += 1
-        print(f"  {esito} [{'rosso' if rosso else 'verde'}] {descrizione} -> exit {uscita}")
+        colore = "rosso" if caso[1] else "verde"
+        print(
+            f"  {'ok  ' if va_bene else 'ERRORE'} [{colore}] {caso[0]} -> exit {uscita}"
+            + (f"  ({perche})" if perche else "")
+        )
     return errori
 
 
-def esegui_mutanti(codice) -> int:
+def esegui_mutanti(codice, mutanti, casi, titolo) -> int:
     errori = 0
-    print("\n== i casi non sono vacui: ogni mutante deve far cambiare colore al suo caso")
-    per_nome = {d: (r, s) for d, r, s in CASI}
-    for nome, cerca, sostituisci, caso in MUTANTI:
+    print(f"\n== {titolo}")
+    per_nome = {c[0]: (c[1], c[2]) for c in casi}
+    for nome, cerca, sostituisci, caso in mutanti:
         if cerca not in codice:
             print(f"  ERRORE mutante '{nome}': il pezzo da mutare non esiste piu' nel gate")
             errori += 1
@@ -290,16 +407,21 @@ def esegui_mutanti(codice) -> int:
         temp = albero()
         try:
             sporca(temp)
-            uscita = gira(mutato, temp)
+            uscita, testo = gira_completo(mutato, temp)
         finally:
             shutil.rmtree(temp, ignore_errors=True)
         atteso = 1 if rosso else 0
-        cambiato = uscita != atteso
+        # Il mutante deve far cambiare colore al caso E lasciare il gate VIVO: un
+        # mutante che lo fa esplodere uscirebbe 1 e verrebbe contato come "il caso se
+        # ne accorge", mentre non ha esercitato proprio niente.
+        vivo = "Traceback" not in testo
+        cambiato = uscita != atteso and vivo
         if not cambiato:
             errori += 1
+        motivo = "" if vivo else "  (il mutante ha fatto ESPLODERE il gate: non prova niente)"
         print(
             f"  {'ok  ' if cambiato else 'ERRORE'} tolto {nome}: "
-            f"'{caso}' -> exit {uscita} (senza mutante: {atteso})"
+            f"'{caso}' -> exit {uscita} (senza mutante: {atteso}){motivo}"
         )
     return errori
 
@@ -309,7 +431,18 @@ def main() -> int:
     duplicati = estrai(DUPLICATI)
     errori = esegui("tetti su job e curl", tetti, CASI)
     errori += esegui("step duplicati", duplicati, CASI_DUPLICATI)
-    errori += esegui_mutanti(tetti)
+    errori += esegui_mutanti(
+        tetti,
+        MUTANTI,
+        CASI,
+        "i casi non sono vacui: ogni mutante deve far cambiare colore al suo caso",
+    )
+    errori += esegui_mutanti(
+        duplicati,
+        MUTANTI_DUPLICATI,
+        CASI_DUPLICATI,
+        "e lo stesso per il gate degli step duplicati",
+    )
     print(f"\n{'TUTTO A POSTO' if not errori else str(errori) + ' CASI FUORI POSTO'}")
     return 1 if errori else 0
 
