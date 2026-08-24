@@ -63,7 +63,7 @@ docker compose -f docker/docker-compose.yml config --quiet   # the 9 env vars on
 bash scripts/prova-privacy-log.sh                              # gate: runs the log privacy proof, ~90s, Docker + python3 con PyYAML
 bash scripts/prova-ritenzione-loki.sh                          # gate: delete route closed AND retention still running, ~60s, Docker + python3 con PyYAML
 bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker + python3 con PyYAML
-python3 scripts/prova-gate-workflow.py                         # gate: the two lint.yml workflow gates, 20 cases + 5 mutants, ~20s, python3 con PyYAML
+python3 scripts/prova-gate-workflow.py                         # gate: the two lint.yml workflow gates, 7 cases + 3 mutants, ~10s, python3 con PyYAML
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
