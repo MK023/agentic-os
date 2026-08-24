@@ -158,9 +158,22 @@ cancellato subito dopo; `main` non e' mai diventato rosso.
 | risposta del webhook | `200` | `Slack ha risposto 200: ok` |
 
 La frase "il notificatore ora parla su `cancelled`" smette qui di essere affermata.
-Prima di questa misura l'unica prova esistente era il run `32637543305`, che
-documentava il comportamento **vecchio**: stessa conclusione `cancelled`, job `slack`
-uscito `skipped`. Le due misure insieme sono il prima e il dopo dello stesso guasto.
+
+Prima di questa misura l'unica prova esistente documentava il comportamento **vecchio**,
+e sta in **due** run come quella nuova — attribuirla a uno solo era un errore di questo
+documento, corretto il 24/08: `mutation` run `32637543305` uscito `cancelled`, e
+`notifica` run `32637604133` con il job `slack` **`skipped`**. Le due coppie insieme
+sono il prima e il dopo dello stesso guasto.
+
+**Cosa questa misura NON copre, perche' "misurato end-to-end" senza il residuo dichiarato
+sarebbe la stessa mezza verita' che sta correggendo.** La condizione di `notifica.yml` ha
+due `contains()`: la conclusione e l'**evento**. Qui e' stato esercitato
+`cancelled` x `workflow_dispatch`. Il caso per cui il file esiste — un cron notturno che
+si appende — e' `schedule`, e non e' mai stato osservato: su 106 run di `notifica` il job
+`slack` ha girato due volte in tutto, entrambe con `EVENTO: workflow_dispatch`. Il rischio
+residuo e' basso (i due valori stanno in liste letterali nella stessa espressione, e il
+ramo non-default e' invece coperto: il run di `notifica` e' partito da `main`), ma non e'
+zero e non e' misurato.
 
 ## Task 5: le due invarianti nuove diventano sorvegliate
 
@@ -168,17 +181,31 @@ Non era in questo piano: e' arrivato da una revisione avversaria. `21/21` job ha
 tetto **oggi**; il 22° no, e niente diventa rosso. Una convenzione che vive solo in un
 file di piano e' un desiderio — il README di questo repository lo dice con parole sue.
 
+> **RIMOSSA META' DI QUESTO TASK IL 24/08/2026, e le caselle qui sotto vanno lette con
+> questa riga davanti.** Il controllo sui curl non esiste piu': in quattro giri il suo
+> regex ha sbagliato in entrambe le direzioni — lasciava passare `curl ... && git commit
+> -m "x"` e bocciava `curl -sS "https://x?a=1&b=2"` — perche' non si puo' decidere se
+> una `&` separa o e' un dato senza interpretare il quoting. La motivazione per esteso
+> sta in `.github/workflows/lint.yml`, sopra lo step `ogni job dichiara il proprio
+> tetto`. **Resta solo il controllo sui `timeout-minutes`.** Lasciare queste caselle
+> spuntate senza dirlo faceva credere a chi legge che un gate fermera' il prossimo curl
+> senza tetti: un controllo affermato che non esiste, cioe' la cosa che questo
+> repository considera peggiore di un buco dichiarato.
+
 - [x] **Passo 1:** in `lint.yml`, dentro il job `workflow-lint` che gia' carica ogni
   workflow con `yaml.safe_load`, un controllo che pretende `timeout-minutes` su ogni
-  job e, su ogni invocazione di `curl` (continuazioni unite), **esattamente un**
-  `--max-time` piu' `--connect-timeout`.
+  job ~~e, su ogni invocazione di `curl` (continuazioni unite), **esattamente un**
+  `--max-time` piu' `--connect-timeout`~~ (seconda meta' rimossa il 24/08).
 - [x] **Passo 2: il gate e' nato rotto, e va detto** — matchava la parola `curl` dentro
   il proprio codice sorgente (il nome dello step, le stringhe dei messaggi, il regex
   stesso), quindi era rosso sulla realta'. Ancorato alla posizione di comando, che e'
   la stessa classe imparata lo stesso giorno su un altro hook.
 - [x] **Passo 3: verde sulla realta', rosso su sei rotture** — job nuovo senza tetto,
-  curl nuovo senza tetto, `--max-time` doppio, `--connect-timeout` mancante, e i due
-  pavimenti (meno di 15 job, meno di 20 curl).
+  ~~curl nuovo senza tetto, `--max-time` doppio, `--connect-timeout` mancante~~, e i due
+  pavimenti ~~(meno di 15 job, meno di 20 curl)~~. Dal 24/08 le rotture sorvegliate sono
+  tre e il pavimento uno solo: `meno di 15 job`. Il banco versionato che le esercita —
+  `scripts/prova-gate-workflow.py`, 7 casi e 3 mutanti, in CI — e' nato lo stesso
+  giorno, perche' "provato rosso a mano" e' un ricordo, non un oracolo.
 
 ---
 

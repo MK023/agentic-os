@@ -41,7 +41,12 @@ speaks on `cancelled` was measured end-to-end on 2026-08-24**, once the fix was 
 default branch — `workflow_run` evaluates this file from there, so no branch could have
 proved it: run `32681358781` ended `cancelled`, and `notifica` run `32681432069` ran its
 `slack` job (not `skipped`) and logged `Slack ha risposto 200`. Until that run the claim
-was asserted, not measured, which this repository counts as a defect.
+was asserted, not measured, which this repository counts as a defect. **What that run
+does not cover, because "measured end-to-end" without the residue stated is the same
+half-truth it corrects:** the condition tests the conclusion *and* the event, and only
+`cancelled` × `workflow_dispatch` was exercised. The case the file exists for — a
+nightly cron that hangs — is `schedule`, never observed: across 106 `notifica` runs the
+`slack` job has run twice, both `workflow_dispatch`.
 
 This count was "five" until 2026-08-23, one workflow after it stopped being true — the
 same divergence the `notifica.yml` gate in `lint.yml` exists to prevent one list away.
