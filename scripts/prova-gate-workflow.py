@@ -16,9 +16,11 @@ esecuzione, quindi il banco prova sempre il gate che spedisce davvero. Ogni caso
 da una copia dell'albero VERO (il pavimento vuole l'ordine di grandezza reale) con una
 sola cosa cambiata.
 
-L'ultima sezione e' quella che conta di piu': muta il gate e pretende che un caso
-preciso CAMBI colore. Un caso che resta verde anche quando il controllo che dovrebbe
-esercitare e' stato rimosso non prova niente.
+Le sezioni che contano di piu' sono quelle che MUTANO il gate e pretendono che un
+caso preciso cambi colore: un caso che resta verde anche quando il controllo che
+dovrebbe esercitare e' stato rimosso non prova niente. E ogni sabotatura pretende che
+il gate sia ancora VIVO — uno che esplode esce 1 come uno che boccia, e senza quella
+guardia una prova passa senza aver esercitato niente.
 
 Nota storica, perche' spiega perche' questo file e' meta' di quello che era: fino al
 24/08/2026 c'era un terzo controllo, sui due tetti di ogni `curl`, ed e' stato rimosso
@@ -33,7 +35,6 @@ Esce 0 se tutti i casi si comportano come atteso, 1 altrimenti. Serve PyYAML.
 
 from __future__ import annotations
 
-import pathlib
 import re
 import shutil
 import subprocess
@@ -149,8 +150,8 @@ CASI_DUPLICATI = [
 MUTANTI = [
     (
         "il salto dei job `uses:`",
-        'if "uses" in (corpo or {}):\n            continue\n        ',
-        "",
+        'if "uses" not in corpo and ',
+        "if (",
         "un job che chiama una reusable workflow (non puo' avere timeout-minutes)",
     ),
     (
@@ -224,7 +225,7 @@ def legge_dichiarazione(testo: str) -> dict:
     return d
 
 
-def prova_dichiarazione(codice, titolo, con_pavimento=True) -> int:
+def prova_dichiarazione(codice, titolo) -> int:
     """Il gate deve DICHIARARE i file letti, e devono essere tutti quelli che ci sono.
 
     Perche' non basta il pavimento `job_visti < 15`: conta un TOTALE e non sa CHE COSA
@@ -267,7 +268,7 @@ def prova_dichiarazione(codice, titolo, con_pavimento=True) -> int:
     )
 
     # E la prova che questo controllo NON e' vacuo, che e' la meta' che di solito manca:
-    # si acceca il gate su tre workflow — esattamente i tre della misura — e si pretende
+    # si acceca il gate su un insieme di workflow derivato dal pavimento e si pretende
     # che il confronto se ne accorga. Il pavimento, da solo, non se ne accorgerebbe: i
     # job scendono a 15 e 15 non e' minore di 15.
     # PRIMA sabotatura: un `continue` che salta l'ispezione. E' la forma esatta che una
@@ -275,25 +276,34 @@ def prova_dichiarazione(codice, titolo, con_pavimento=True) -> int:
     # allora il gate dichiarava 11 file, ne ispezionava 8 e usciva 0. Adesso la
     # dichiarazione sta dopo l'ispezione, quindi saltare l'ispezione salta anche la
     # dichiarazione — e questo controllo pretende che si veda.
-    salta = codice.replace(
-        "              qui = 0",
-        '              if percorso.endswith(("sonar.yml","smoke.yml","sorveglianza.yml")): continue\n'
-        "              qui = 0",
-    ).replace(
-        "    qui = 0",
-        '    if percorso.endswith(("sonar.yml","smoke.yml","sorveglianza.yml")): continue\n    qui = 0',
+    # UNA sola sostituzione, ancorata con `re` e con il rientro catturato. Erano due
+    # `.replace` — una sui 14 spazi del YAML grezzo, una sui 4 del codice estratto — e
+    # la guardia copriva la COPPIA invece di ciascuna: quella a 14 spazi non ha mai
+    # morso e nessuno se ne accorgeva. La stessa classe che il giro prima diceva di aver
+    # chiuso sulla mutazione del glob, rifatta venti righe sotto.
+    salta, quante = re.subn(
+        r"^(\s*)qui = 0$",
+        r'\1if percorso.endswith(("sonar.yml","smoke.yml","sorveglianza.yml")): continue\n\1qui = 0',
+        codice,
+        flags=re.M,
     )
-    if salta == codice:
-        print("  ERRORE non trovo `qui = 0`: la sabotatura col `continue` non ha girato")
+    if quante != 1:
+        print(f"  ERRORE `qui = 0` trovato {quante} volte: la sabotatura col `continue` non ha girato")
         return 1
     temp = albero()
     try:
-        _, testo_salta = gira_completo(salta, temp)
+        uscita_salta, testo_salta = gira_completo(salta, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    if legge_dichiarazione(testo_salta) == attesi:
+    # VIVO, non solo diverso: un saboteur che fa esplodere il gate produce dichiarazione
+    # vuota, cioe' "diversa", e passerebbe per riuscito senza aver esercitato niente.
+    if "Traceback" in testo_salta:
+        print(f"  ERRORE il gate sabotato e' ESPLOSO (exit {uscita_salta}): la prova non esercita niente")
+        return 1
+    saltati = {f for f in attesi if f.endswith(("sonar.yml", "smoke.yml", "sorveglianza.yml"))}
+    if legge_dichiarazione(testo_salta) != {k: v for k, v in attesi.items() if k not in saltati}:
         print(
-            "  ERRORE saltando l'ispezione la dichiarazione non cambia: "
+            "  ERRORE saltando l'ispezione la dichiarazione non cala esattamente dei file saltati: "
             "prova cio' che GLOBBA, non cio' che ISPEZIONA"
         )
         return 1
@@ -305,17 +315,21 @@ def prova_dichiarazione(codice, titolo, con_pavimento=True) -> int:
     # uscisse rosso da solo, e questo banco — che e' un check obbligatorio del ruleset —
     # diventasse rosso puntando a se stesso invece che alla causa.
     trovato = re.search(r"job_visti < (\d+)", codice)
-    if not con_pavimento or not trovato:
-        # Senza pavimento non c'e"'"aritmetica da rispettare: si acceca su un file solo,
-        # che basta a provare che il confronto morde.
-        pavimento, margine = 0, max(attesi.values())
+    if not trovato:
+        # Il gate senza pavimento (gli step duplicati) non ha un'aritmetica da
+        # rispettare: si acceca UN file solo, che basta a provare che il confronto
+        # morde. `max(...)` invece era insicuro per fortuna, non per costruzione:
+        # con un workflow da 7 job avrebbe accecato piu' del margine e reso il banco
+        # rosso puntando a se stesso. E il parametro `con_pavimento` era una seconda
+        # lista: `not trovato` lo deduce da solo dal codice del gate.
+        pavimento, margine = 0, min(attesi.values())
     else:
         pavimento = int(trovato.group(1))
         margine = sum(attesi.values()) - pavimento
     ciechi, spesi = [], 0
     for percorso, quanti in sorted(attesi.items(), key=lambda kv: -kv[1]):
         if spesi + quanti <= margine:
-            ciechi.append(pathlib.PurePosixPath(percorso).name)
+            ciechi.append(Path(percorso).name)
             spesi += quanti
     if not ciechi:
         print("  ERRORE nessun file accecabile sotto il pavimento: la prova non puo' girare")
@@ -340,9 +354,20 @@ def prova_dichiarazione(codice, titolo, con_pavimento=True) -> int:
         uscita_cieca, testo_cieco = gira_completo(mutato, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    visti_ciechi = sorted(re.findall(r"^letto: (.+)$", testo_cieco, re.M))
-    if visti_ciechi == attesi:
-        print("  ERRORE il gate accecato dichiara gli stessi file: la mutazione non ha morso")
+    if "Traceback" in testo_cieco:
+        print("  ERRORE il gate accecato e' ESPLOSO: la mutazione non esercita niente")
+        return 1
+    visti_ciechi = legge_dichiarazione(testo_cieco)
+    atteso_cieco = {k: v for k, v in attesi.items() if Path(k).name not in ciechi}
+    # RIDUZIONE ESATTA, non "diverso": il confronto era fra una lista e un dizionario,
+    # cioe' un `if` sempre falso con sopra un messaggio d'errore che rassicurava. Una
+    # mutazione che cambiava il testo del gate senza accecare nessun file passava per
+    # riuscita, e la riga di successo stampava "ne dichiara 11 invece di 11".
+    if visti_ciechi != atteso_cieco:
+        print(
+            f"  ERRORE il gate accecato dichiara {len(visti_ciechi)} file, "
+            f"ne servivano {len(atteso_cieco)}: la mutazione non ha morso come doveva"
+        )
         return 1
     if uscita_cieca != 0:
         print(f"  ERRORE il gate accecato esce {uscita_cieca}: sarebbe rosso da solo, prova viziata")
@@ -408,7 +433,7 @@ def main() -> int:
     errori = esegui("tetti sui job", tetti, CASI)
     errori += prova_dichiarazione(tetti, "tetti sui job")
     errori += esegui("step duplicati", duplicati, CASI_DUPLICATI)
-    errori += prova_dichiarazione(duplicati, "step duplicati", con_pavimento=False)
+    errori += prova_dichiarazione(duplicati, "step duplicati")
     errori += esegui_mutanti(
         tetti,
         MUTANTI,
