@@ -132,11 +132,21 @@ jobs:
               + glob.glob(".github/workflows/*.yaml")
           ):
               workflow = yaml.safe_load(open(percorso))
+              qui = 0
               for nome_job, job in (workflow.get("jobs") or {}).items():
                   nomi = [s.get("name") for s in job.get("steps", []) if s.get("name")]
                   for nome, quante in collections.Counter(nomi).items():
                       if quante > 1:
                           problemi.append(f"{percorso}: il job '{nome_job}' ha {quante} step chiamati {nome!r}")
+                  # per ultimo, dopo il verdetto: vedi la stessa riga nel gate sui tetti
+                  qui += 1
+              # Stessa dichiarazione del gate sui tetti, e per la stessa ragione: nello
+              # stesso job convivono TRE controlli con lo stesso identico glob, e il
+              # 24/08/2026 ne era stato istruito uno solo — la forma corretta invece
+              # della classe, che qui e' gia' costata quattro giri. Questo era il piu'
+              # esposto dei tre: non ha nemmeno un pavimento, quindi su una cartella
+              # vuota usciva 0 dicendo "nessuno step duplicato".
+              print(f"letto: {percorso} ({qui} job)")
 
           if problemi:
               print("::error::uno step duplicato passa due volte e resta verde: se una delle "
@@ -325,8 +335,9 @@ jobs:
 
           job_visti = 0
           for percorso in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
+              qui = 0
               for nome, corpo in (yaml.safe_load(open(percorso)).get("jobs") or {}).items():
-                  job_visti += 1
+                  corpo = corpo or {}
                   # Un job che chiama una reusable workflow (`jobs.<id>.uses:`) NON
                   # PUO' dichiarare `timeout-minutes`: il fornitore non ammette la
                   # chiave su quel tipo di job (le ammesse sono name, uses, with,
@@ -340,14 +351,40 @@ jobs:
                   # non lo legge nessuno da qui. Oggi non ce ne sono; il giorno che ne
                   # arriva uno, quel tetto e' fuori dalla portata di questo gate e va
                   # detto invece che presunto.
-                  if "uses" in (corpo or {}):
-                      continue
-                  if "timeout-minutes" not in (corpo or {}):
+                  if "uses" not in corpo and "timeout-minutes" not in corpo:
                       problemi.append(
                           f"{percorso}: il job '{nome}' non dichiara `timeout-minutes`: "
                           "eredita il default di 360 minuti, e un job che si appende "
                           "esce `cancelled` dopo sei ore."
                       )
+                  # SI CONTA PER ULTIMO, dopo il verdetto, e non c'e' nessun `continue`
+                  # in mezzo: il numero deve essere prodotto dal GIUDIZIO, non
+                  # dall'ATTRAVERSAMENTO. Con `qui += 1` in cima al ciclo — com'era il
+                  # 24/08/2026 — un `continue` una riga sotto lasciava il conto intatto:
+                  # misurato, il gate usciva VERDE su un job senza tetto dichiarando
+                  # 11 file e 21 job perfetti. Il difetto del giro prima spostato di un
+                  # livello dentro. Contare in fondo rende ogni salto visibile, e non
+                  # avere rami da saltare toglie il posto dove scriverlo.
+                  qui += 1
+              job_visti += qui
+              # DICHIARA DOPO AVER ISPEZIONATO, e dichiara quanto hai ispezionato.
+              #
+              # Il pavimento qui sotto conta un TOTALE e non sa CHE COSA ha guardato: i
+              # job reali sono 21 contro una soglia di 15, quindi un gate che smettesse
+              # di leggere tre workflow — `sonar.yml`, `smoke.yml` e `sorveglianza.yml`,
+              # fra i tre, l'unico gate obbligatorio del ruleset e due sonde — ne vedrebbe
+              # 15 e resterebbe VERDE. Alzare la soglia a 21 non chiude la classe: fra sei
+              # mesi la si riabbassa per far tornare il verde.
+              #
+              # La riga sta QUI e non prima del ciclo, e la differenza non e' cosmetica:
+              # dichiarata prima, questa riga proverebbe cosa ha restituito il GLOB, non
+              # cosa e' stato ISPEZIONATO — e un `continue` subito sotto ricreava il
+              # difetto identico con sopra una dichiarazione che afferma il contrario
+              # (misurato il 24/08/2026: 11 file dichiarati, 8 ispezionati, exit 0).
+              # Dichiarare dopo, con il conto, rende la riga una PROVA del lavoro fatto:
+              # `scripts/prova-gate-workflow.py` conta i job per conto suo e confronta
+              # file per file. Il soggetto dichiara, l'oracolo verifica.
+              print(f"letto: {percorso} ({qui} job)")
           if job_visti < 15:
               problemi.append(f"trovati solo {job_visti} job: questo controllo non ha girato davvero.")
 
@@ -364,14 +401,25 @@ jobs:
       # `timeout-minutes` — sono nati rotti due volte in un giorno, ed entrambe le volte
       # erano stati dichiarati "provati rossi" a mano, in una shell che non esiste piu'.
       #
-      # Il pavimento `< 15 job` non li sostituisce, e il margine e' MISURATO: i job reali
-      # sono 21, quindi un gate che smettesse di leggere tre workflow — per esempio
-      # `sonar.yml`, `smoke.yml` e `sorveglianza.yml`, cioe' l'unico gate obbligatorio e
-      # due sonde — ne vedrebbe 15, resterebbe verde sulla realta' E il banco stamperebbe
-      # TUTTO A POSTO. Un pavimento conta un TOTALE e non sa CHE COSA ha guardato. La
-      # chiusura non e' alzarlo a 21 — fra sei mesi lo si riabbassa per far tornare il
-      # verde — ma far dichiarare al gate l'insieme dei file letti e pretenderlo uguale
-      # al glob. Non e' fatto: e' un buco noto, scritto qui invece che scoperto.
+      # Il pavimento `< 15 job` non li sostituisce, e il margine era MISURATO: i job
+      # reali sono 21, quindi un gate che smettesse di leggere `sonar.yml`, `smoke.yml`
+      # e `sorveglianza.yml` — fra i tre, l'unico gate obbligatorio del ruleset e due sonde — ne
+      # vedrebbe 15, resterebbe verde sulla realta' E il banco stampava TUTTO A POSTO.
+      # Un pavimento conta un TOTALE e non sa CHE COSA ha guardato.
+      #
+      # CHIUSA il 24/08/2026 la classe dell'ATTRAVERSAMENTO — un `continue`, un `break`,
+      # un glob ristretto, un file saltato fanno tutti divergere il conto dichiarato da
+      # quello che il banco calcola per conto suo. NON e' chiusa quella del GIUDIZIO:
+      # un'esenzione scritta dentro la condizione stessa lascia il conto perfetto e il
+      # gate verde su un job senza tetto (misurato; `main` e' cieco allo stesso modo).
+      # E' scritto in docs/BLOCKERS.md invece di essere presunto chiuso.
+      #
+      # Il rimedio non e' alzare la soglia a 21 — quella fra sei mesi la si
+      # riabbassa per far tornare il verde: il gate DICHIARA i file letti (`letto: ...`)
+      # e il banco li confronta con il proprio glob, calcolato fuori dal gate. Il banco
+      # prova anche il rosso, accecando il gate su un insieme di file scelto first-fit
+      # sotto il pavimento — derivato dal gate, non inchiodato qui: resta verde da solo, e
+      # solo il confronto se ne accorge.
       #
       # Il banco estrae i due gate da QUESTO file — nessuna seconda copia — li esercita
       # su sette casi, e poi li MUTA pretendendo che il caso corrispondente cambi

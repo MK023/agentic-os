@@ -203,8 +203,11 @@ file di piano e' un desiderio — il README di questo repository lo dice con par
 - [x] **Passo 3: verde sulla realta', rosso su sei rotture** — job nuovo senza tetto,
   ~~curl nuovo senza tetto, `--max-time` doppio, `--connect-timeout` mancante~~, e i due
   pavimenti ~~(meno di 15 job, meno di 20 curl)~~. Dal 24/08 le rotture sorvegliate sono
-  tre e il pavimento uno solo: `meno di 15 job`. Il banco versionato che le esercita —
-  `scripts/prova-gate-workflow.py`, 7 casi e 3 mutanti, in CI — e' nato lo stesso
+  tre e il pavimento uno solo: `meno di 15 job` — che dal 24/08 non e' piu' l'unica
+  difesa, perche' i due gate dichiarano file per file cosa hanno ispezionato. Il banco versionato che le esercita —
+  `scripts/prova-gate-workflow.py`, 7 casi, 3 mutanti e — dal 24/08 — il confronto
+  fra cio' che ogni gate dichiara di aver ispezionato e un conteggio dei job fatto fuori
+  dal gate, in CI — e' nato lo stesso
   giorno, perche' "provato rosso a mano" e' un ricordo, non un oracolo.
 
 ---

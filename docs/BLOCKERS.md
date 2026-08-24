@@ -365,6 +365,40 @@ as a task instead of trusted to a check.
 
 ## Deliberately still open, and why
 
+- **Two holes inside `scripts/prova-gate-workflow.py`, declared on 2026-08-24 rather
+  than patched.** The bench proves the two `lint.yml` workflow gates; these are defects
+  in the *bench*, not in the gates, and both were found by an adversarial review that
+  also verified the exact one-line remedy for each.
+
+  1. `MUTANTI[0]` replaces `'if "uses" not in corpo and '` with `"if ("`, which produces
+     **invalid Python**, not "the gate without the `uses:` exemption". `python3 -c` on a
+     `SyntaxError` exits 1 without printing `Traceback`, so the liveness guard does not
+     catch it and the bench prints `ok` for the wrong reason. The protection underneath
+     still holds — with the correct mutation the case does change colour — what is lost
+     is the *proof of non-vacuity*. Remedy, already measured: `cerca =
+     '"uses" not in corpo and '`, `sostituisci = ""`, and widen `vivo` to `SyntaxError`.
+  2. The first sabotage in `prova_dichiarazione` hardcodes three filenames and guards
+     only that the *substitution happened* (`quante != 1`), not that it **bites**. Rename
+     those files and the comparison becomes a tautology that prints `ok`. Remedy:
+     `if not saltati: ERRORE`, the same guard the second sabotage already has.
+
+  **Why declared instead of fixed:** three rounds of correction on this same fault had
+  already gone by, and two of the three introduced the next defect — the house rule says
+  the fourth attempt does not belong to the session that made the first three. The
+  branch is still strictly better than what it replaced: it closes three classes of gate
+  blindness (`main` stayed green while the gate stopped reading three workflows) and
+  introduces no behavioural regression across ten edge cases. A declared hole beats an
+  asserted control that is not there.
+
+- **What "CHIUSO" means on the declaration in `lint.yml`, precisely.** It closes the
+  class of *traversal* — a `continue`, a `break`, a narrowed glob, a skipped file all
+  make the declared count disagree with the bench's own. It does **not** close the class
+  of *judgement*: an exemption written inside the condition itself
+  (`… and not percorso.endswith("sorveglianza.yml")`) leaves the count perfect and the
+  gate green on a job with no cap. Measured 2026-08-24. `main` is blind to it in exactly
+  the same way, so this is a residue, not a regression — and the only thing covering it
+  is the seven-case battery, which covers by *shape*, not by class.
+
 - ~~Three of five services have no `healthcheckPath`.~~ **Decided 2026-08-20: they do
   not get one, and this is no longer an open item.** Railway wants a literal 200 with
   no credentials, so Prometheus (`/-/healthy`) and Grafana (`/api/health`) would each
