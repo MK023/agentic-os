@@ -121,7 +121,16 @@ jobs:
           import collections, glob, sys, yaml
 
           problemi = []
-          for percorso in sorted(glob.glob(".github/workflows/*.yml")):
+          # `.yaml` anche qui. L'asimmetria era gia' stata trovata e chiusa sul gate
+          # dei curl lo stesso giorno, e lasciata aperta in QUESTO step, che sta
+          # quindici righe sopra: si era corretta la forma segnalata invece della
+          # classe. Con la sola `*.yml`, un workflow con l'altra estensione e due step
+          # omonimi — cioe' l'incidente del 19-08-2026 descritto qui sopra — passava
+          # verde.
+          for percorso in sorted(
+              glob.glob(".github/workflows/*.yml")
+              + glob.glob(".github/workflows/*.yaml")
+          ):
               workflow = yaml.safe_load(open(percorso))
               for nome_job, job in (workflow.get("jobs") or {}).items():
                   nomi = [s.get("name") for s in job.get("steps", []) if s.get("name")]
@@ -295,6 +304,17 @@ jobs:
           for percorso in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
               for nome, corpo in (yaml.safe_load(open(percorso)).get("jobs") or {}).items():
                   job_visti += 1
+                  # Un job che chiama una reusable workflow (`jobs.<id>.uses:`) NON
+                  # PUO' dichiarare `timeout-minutes`: il fornitore non ammette la
+                  # chiave su quel tipo di job (le ammesse sono name, uses, with,
+                  # secrets, strategy, needs, if, concurrency, permissions). Senza
+                  # questa riga il primo che ne scrive uno prende una CI rossa che non
+                  # ha modo di spegnere, e l'unica uscita e' disattivare il gate: un
+                  # controllo rosso su cio' su cui non puoi agire diventa un
+                  # `continue-on-error` con passi in piu'. Il tetto di quel job vive
+                  # dentro il workflow chiamato, che questo stesso ciclo sorveglia.
+                  if "uses" in (corpo or {}):
+                      continue
                   if "timeout-minutes" not in (corpo or {}):
                       problemi.append(
                           f"{percorso}: il job '{nome}' non dichiara `timeout-minutes`: "
@@ -303,6 +323,34 @@ jobs:
                       )
           if job_visti < 15:
               problemi.append(f"trovati solo {job_visti} job: questo controllo non ha girato davvero.")
+
+          # `curl` in POSIZIONE DI COMANDO, non la parola `curl` ovunque: senza questo
+          # il gate matchava il proprio codice sorgente ed e' nato rosso sulla realta'.
+          #
+          # `run:` E' ANCORATO A INIZIO RIGA. Non lo era, e la correzione che aggiunse
+          # quell'alternativa risolse il caso `- run: curl ...` allargandola a
+          # QUALUNQUE testo contenente "run: curl": un esempio dentro un heredoc, una
+          # riga di README generata, un `echo` che spiega come si scrive una sonda
+          # facevano fallire la CI con errori inventati. Si era aggiunta una forma
+          # invece di scrivere la regola. Ancorata, `-\s+run:\s*` diventa superflua:
+          # `-?` la copre.
+          #
+          # IL TETTO DI QUESTO GATE, dichiarato invece che scoperto dal prossimo che
+          # ci sbatte: riconosce `curl` invocato direttamente, in tutte le posizioni
+          # di comando della shell e con i wrapper elencati. NON vede `curl` dentro un
+          # interprete che lo lancia per conto suo (`bash -c "curl ..."`,
+          # `docker exec c curl ...`), ne' un eseguibile nascosto in una variabile
+          # (`$CURL ...`). E' un lint sul nostro stile, non una barriera contro chi
+          # voglia aggirarlo: chi scrive `eval curl` sta scegliendo di non essere
+          # sorvegliato. Allargare l'elenco una forma per volta e' la mossa che qui e'
+          # gia' costata tre regressioni — se il buco diventa reale, si cambia strada
+          # (parsare la riga con `shlex`), non si allunga la lista.
+          CURL = re.compile(
+              r"(?:^|[|;&`!({]|\$\(|&&|\|\||^\s*-?\s*run:\s*)\s*"
+              r"(?:(?:sudo|command|exec|eval|nohup|nice|time|timeout|xargs|env"
+              r"|if|while|until|elif|then|do|else|not)\s+|\S+=\S+\s+)*"
+              r"(?:[\w./~$-]*/)?curl\s"
+          )
 
           curl_visti = 0
           # `.yaml` anche qui: il ciclo sui job lo guardava e questo no — un workflow
@@ -318,29 +366,28 @@ jobs:
               unito = re.sub(r"\\\n\s*", " ", open(percorso).read())
               for riga in unito.splitlines():
                   nudo = riga.strip()
-                  # `curl` in POSIZIONE DI COMANDO, non la parola `curl` ovunque.
-                  # Senza questo, il gate matchava il proprio codice sorgente — il
-                  # nome dello step, le stringhe dei messaggi, il regex qui dentro —
-                  # ed e' nato rosso sulla realta'. E' la stessa classe che
-                  # `gate-linkedin.py` ha imparato lo stesso giorno: come si nomina un
-                  # eseguibile in una shell.
-                  if nudo.startswith("#") or not re.search(
-                      # `run: curl ...` su una riga sola e' posizione di comando quanto
-                      # l'inizio di una riga dentro un blocco `run: |`. Senza questa
-                      # alternativa il gate non vedeva il caso piu' compatto, e la sua
-                      # stessa prova rossa tornava verde.
-                      r"(?:^|[|;&`!]|\$\(|&&|\|\||run:\s*|-\s+run:\s*)\s*"
-                      r"(?:(?:sudo|command|exec|nohup|time|timeout|xargs|env|if|then|do|else|not)\s+|\S+=\S+\s+)*"
-                      r"(?:[\w./~$-]*/)?curl\s",
-                      riga,
-                  ):
+                  if nudo.startswith("#"):
                       continue
-                  curl_visti += 1
+                  # Si contano le INVOCAZIONI, non le righe: due curl legittimi sulla
+                  # stessa riga logica (`[ "$(curl A)" = "$(curl B)" ]`) davano
+                  # "2 --max-time su un solo curl", una diagnosi falsa su codice
+                  # corretto, e per giunta ne contavano una sola nel pavimento.
+                  quanti = len(CURL.findall(riga))
+                  if not quanti:
+                      continue
+                  curl_visti += quanti
                   breve = nudo[:70]
-                  if riga.count("--max-time") != 1:
-                      problemi.append(f"{percorso}: {riga.count('--max-time')} `--max-time` su un solo curl — vince l'ultimo: {breve}")
-                  if "--connect-timeout" not in riga:
-                      problemi.append(f"{percorso}: curl senza `--connect-timeout`: {breve}")
+                  # `-m` e' la forma breve DOCUMENTATA di `--max-time` (`man curl`:
+                  # "-m, --max-time"), e `--max-time=30` con l'uguale e' altrettanto
+                  # valida. Contare la sottostringa `--max-time` bocciava la prima e
+                  # accettava la seconda: si verificava una stringa, non un'opzione.
+                  # Il lookbehind tiene fuori la `-m` che sta DENTRO `--max-time`.
+                  tetti = len(re.findall(r"(?<![\w-])(?:--max-time|-m)(?=[= ])", riga))
+                  connessioni = len(re.findall(r"--connect-timeout(?=[= ])", riga))
+                  if tetti != quanti:
+                      problemi.append(f"{percorso}: {tetti} `--max-time` per {quanti} curl — se sono due sulla stessa invocazione vince l'ultimo: {breve}")
+                  if connessioni != quanti:
+                      problemi.append(f"{percorso}: {connessioni} `--connect-timeout` per {quanti} curl: {breve}")
           if curl_visti < 20:
               problemi.append(f"trovate solo {curl_visti} invocazioni di curl: questo controllo non ha girato davvero.")
 
@@ -352,3 +399,15 @@ jobs:
               sys.exit(1)
           print(f"{job_visti} job con timeout-minutes, {curl_visti} curl con entrambi i tetti")
           PY
+
+      # I due gate qui sopra sono nati rotti due volte in un giorno, ed entrambe le
+      # volte erano stati dichiarati "provati rossi" a mano, in una shell che non
+      # esiste piu'. I loro pavimenti (`< 15 job`, `< 20 curl`) non li sostituiscono:
+      # contano un TOTALE, e la maggioranza dei curl sta in `scripts/`, quindi un regex
+      # che smettesse di vedere tutti quelli dei workflow resterebbe sopra il pavimento
+      # e verde. Questo banco estrae i due gate da QUESTO file — nessuna seconda copia
+      # — li esercita su venti casi, e poi li MUTA pretendendo che il caso
+      # corrispondente cambi colore: un caso che resta verde anche senza il controllo
+      # che dovrebbe esercitare non prova niente.
+      - name: il banco dei due gate qui sopra
+        run: python3 scripts/prova-gate-workflow.py

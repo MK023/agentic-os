@@ -68,7 +68,16 @@ jobs:
   # per cui verify-hub.sh e' ancora manuale.
   ingest-chiede-il-token:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15 e non 10, e il numero viene da un conto, non da un'abitudine.
+    # `--max-time` di curl vale PER TENTATIVO, non per l'operazione intera: con
+    # `--retry 3 --retry-delay 5 --max-time 20` il caso peggiore di UNA chiamata e'
+    # 4x20 + 3x5 = 95s, e `controlla` viene invocata SETTE volte -> 665s = 11m05s,
+    # contro i 600s che questo tetto valeva prima. Una giornata di bordo lento faceva
+    # morire il job per il tetto invece che per il guasto vero, con conclusione
+    # `cancelled` — cioe' proprio la parola che notifica.yml ora sorveglia, sparata
+    # sulla causa sbagliata. Toccare il numero di chiamate o i --retry vuol dire
+    # rifare questo conto.
+    timeout-minutes: 15
     steps:
       - name: l'ingest OTLP rifiuta chi non ha il token
         env:
