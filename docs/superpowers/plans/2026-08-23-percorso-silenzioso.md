@@ -140,12 +140,27 @@ PY
 > "il notificatore ora parla su `cancelled`" è **affermata e non misurata** — che è ciò
 > che questo repository chiama difetto.
 
-- [ ] **Passo 1:** ramo usa-e-getta, `mutation` con `timeout-minutes: 1` e uno
+- [x] **Passo 1:** ramo usa-e-getta, `mutation` con `timeout-minutes: 1` e uno
   `sleep 180`, `gh workflow run mutation.yml --ref <ramo>`.
-- [ ] **Passo 2:** attendere la conclusione. Atteso: `cancelled`.
-- [ ] **Passo 3:** cercare il run di `notifica` corrispondente. Atteso: il job
+- [x] **Passo 2:** attendere la conclusione. Atteso: `cancelled`.
+- [x] **Passo 3:** cercare il run di `notifica` corrispondente. Atteso: il job
   `slack` **eseguito** (non `skipped`) e `Slack ha risposto 200`.
-- [ ] **Passo 4:** cancellare il ramo. `main` non deve mai diventare rosso.
+- [x] **Passo 4:** cancellare il ramo. `main` non deve mai diventare rosso.
+
+**MISURATO il 24/08/2026, dopo il merge della #159.** Ramo `prova/notifica-cancelled`,
+cancellato subito dopo; `main` non e' mai diventato rosso.
+
+| cosa | atteso | osservato |
+|---|---|---|
+| conclusione di `mutation` (run `32681358781`) | `cancelled` | `cancelled` |
+| job `slack` di `notifica` (run `32681432069`) | eseguito, non `skipped` | `success` |
+| la conclusione che il notificatore ha letto | `cancelled` | `CONCLUSIONE: cancelled` |
+| risposta del webhook | `200` | `Slack ha risposto 200: ok` |
+
+La frase "il notificatore ora parla su `cancelled`" smette qui di essere affermata.
+Prima di questa misura l'unica prova esistente era il run `32637543305`, che
+documentava il comportamento **vecchio**: stessa conclusione `cancelled`, job `slack`
+uscito `skipped`. Le due misure insieme sono il prima e il dopo dello stesso guasto.
 
 ## Task 5: le due invarianti nuove diventano sorvegliate
 

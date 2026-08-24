@@ -36,7 +36,12 @@ two paths), `codeql.yml` (per-PR, push and weekly, reporting rather than blockin
 `notifica.yml` (no schedule of its own: it watches the other ten finish and posts to
 Slack any that ends `failure`, `cancelled`, `timed_out` or `startup_failure` — not
 only the failing ones: a job killed by `timeout-minutes` ends `cancelled`, measured on
-2026-08-23, and that is the case the file exists for).
+2026-08-23, and that is the case the file exists for). **That the notifier actually
+speaks on `cancelled` was measured end-to-end on 2026-08-24**, once the fix was on the
+default branch — `workflow_run` evaluates this file from there, so no branch could have
+proved it: run `32681358781` ended `cancelled`, and `notifica` run `32681432069` ran its
+`slack` job (not `skipped`) and logged `Slack ha risposto 200`. Until that run the claim
+was asserted, not measured, which this repository counts as a defect.
 
 This count was "five" until 2026-08-23, one workflow after it stopped being true — the
 same divergence the `notifica.yml` gate in `lint.yml` exists to prevent one list away.
