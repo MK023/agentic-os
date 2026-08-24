@@ -33,6 +33,7 @@ Esce 0 se tutti i casi si comportano come atteso, 1 altrimenti. Serve PyYAML.
 
 from __future__ import annotations
 
+import pathlib
 import re
 import shutil
 import subprocess
@@ -203,13 +204,33 @@ def prova_caso(codice, caso):
     return True, uscita, ""
 
 
-def prova_dichiarazione(codice) -> int:
+def conta_job(radice: Path) -> dict:
+    """L'oracolo: quanti job ha ogni workflow, contati QUI, fuori dal gate."""
+    d = {}
+    cartella = radice / ".github/workflows"
+    for p in sorted(list(cartella.glob("*.yml")) + list(cartella.glob("*.yaml"))):
+        d[p.relative_to(radice).as_posix()] = len((yaml.safe_load(p.read_text()) or {}).get("jobs") or {})
+    return d
+
+
+def legge_dichiarazione(testo: str) -> dict:
+    """`letto: <percorso> (<n> job)` -> {percorso: n}. Un doppione e' un errore."""
+    coppie = re.findall(r"^letto: (.+) \((\d+) job\)$", testo, re.M)
+    d = {}
+    for percorso, quanti in coppie:
+        if percorso in d:
+            return {"DOPPIONE " + percorso: -1}
+        d[percorso] = int(quanti)
+    return d
+
+
+def prova_dichiarazione(codice, titolo, con_pavimento=True) -> int:
     """Il gate deve DICHIARARE i file letti, e devono essere tutti quelli che ci sono.
 
     Perche' non basta il pavimento `job_visti < 15`: conta un TOTALE e non sa CHE COSA
     ha guardato. I job reali sono 21, quindi c'e' un margine di sei. Misurato il
     24/08/2026: un gate che smettesse di leggere `sonar.yml`, `smoke.yml` e
-    `sorveglianza.yml` — l'unico gate obbligatorio del ruleset e due sonde — ne vedrebbe
+    `sorveglianza.yml` — fra i tre, l'unico gate obbligatorio del ruleset e due sonde — ne vedrebbe
     15, resterebbe VERDE sulla realta' e questo banco stampava TUTTO A POSTO.
 
     Alzare la soglia a 21 non chiude la classe: fra sei mesi la si riabbassa per far
@@ -218,54 +239,99 @@ def prova_dichiarazione(codice) -> int:
     confronta. Un file che sparisce dalla vista del gate diventa rosso subito,
     qualunque sia il numero di job rimasti.
     """
-    print("\n== il gate dichiara cosa ha letto")
+    print(f"\n== {titolo}: dichiara cosa ha ISPEZIONATO")
     temp = albero()
     try:
-        attesi = sorted(
-            p.relative_to(temp).as_posix()
-            for p in list((temp / ".github/workflows").glob("*.yml"))
-            + list((temp / ".github/workflows").glob("*.yaml"))
-        )
+        attesi = conta_job(temp)
         uscita, testo = gira_completo(codice, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    dichiarati = sorted(re.findall(r"^letto: (.+)$", testo, re.M))
+    dichiarati = legge_dichiarazione(testo)
     if uscita != 0:
         print(f"  ERRORE il gate non e' verde sull'albero reale (exit {uscita})")
         return 1
     if not dichiarati:
-        print("  ERRORE il gate non dichiara nessun file letto: il pavimento e' l'unica difesa")
+        print("  ERRORE il gate non dichiara niente: il pavimento e' l'unica difesa")
         return 1
     if dichiarati != attesi:
-        mancanti = set(attesi) - set(dichiarati)
-        in_piu = set(dichiarati) - set(attesi)
-        print(f"  ERRORE dichiarati {len(dichiarati)}, presenti {len(attesi)}")
-        if mancanti:
-            print(f"         NON letti: {sorted(mancanti)}")
-        if in_piu:
-            print(f"         letti ma inesistenti: {sorted(in_piu)}")
+        print(f"  ERRORE dichiarati {len(dichiarati)} file, presenti {len(attesi)}")
+        for f in sorted(set(attesi) | set(dichiarati)):
+            if attesi.get(f) != dichiarati.get(f):
+                print(
+                    f"         {f}: ispezionati {dichiarati.get(f, 'MAI')} job, ce ne sono {attesi.get(f, 0)}"
+                )
         return 1
-    print(f"  ok   {len(dichiarati)} file dichiarati = {len(attesi)} file presenti")
+    print(
+        f"  ok   {len(dichiarati)} file e {sum(dichiarati.values())} job dichiarati, "
+        f"uno per uno = quelli che ci sono"
+    )
 
     # E la prova che questo controllo NON e' vacuo, che e' la meta' che di solito manca:
     # si acceca il gate su tre workflow — esattamente i tre della misura — e si pretende
     # che il confronto se ne accorga. Il pavimento, da solo, non se ne accorgerebbe: i
     # job scendono a 15 e 15 non e' minore di 15.
-    ciechi = ("sonar.yml", "smoke.yml", "sorveglianza.yml")
-    # Si muta il GLOB, non il print: modella "il gate non vede quei file", che e' lo
-    # scenario vero. E si muta su una riga sola perche' il codice estratto e' dedentato:
-    # una mutazione multi-riga porterebbe l'indentazione sbagliata e farebbe fallire il
-    # gate per IndentationError — rosso per il motivo sbagliato, cioe' una prova viziata.
-    originale = (
-        'for percorso in sorted(glob.glob(".github/workflows/*.yml")'
-        ' + glob.glob(".github/workflows/*.yaml")):'
+    # PRIMA sabotatura: un `continue` che salta l'ispezione. E' la forma esatta che una
+    # revisione ha trovato il 24/08/2026 quando la dichiarazione stava PRIMA del ciclo:
+    # allora il gate dichiarava 11 file, ne ispezionava 8 e usciva 0. Adesso la
+    # dichiarazione sta dopo l'ispezione, quindi saltare l'ispezione salta anche la
+    # dichiarazione — e questo controllo pretende che si veda.
+    salta = codice.replace(
+        "              qui = 0",
+        '              if percorso.endswith(("sonar.yml","smoke.yml","sorveglianza.yml")): continue\n'
+        "              qui = 0",
+    ).replace(
+        "    qui = 0",
+        '    if percorso.endswith(("sonar.yml","smoke.yml","sorveglianza.yml")): continue\n    qui = 0',
     )
-    mutato = codice.replace(
-        originale,
-        'for percorso in [p for p in sorted(glob.glob(".github/workflows/*.yml")'
-        ' + glob.glob(".github/workflows/*.yaml"))'
-        f" if not p.endswith({ciechi!r})]:",
-    )
+    if salta == codice:
+        print("  ERRORE non trovo `qui = 0`: la sabotatura col `continue` non ha girato")
+        return 1
+    temp = albero()
+    try:
+        _, testo_salta = gira_completo(salta, temp)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+    if legge_dichiarazione(testo_salta) == attesi:
+        print(
+            "  ERRORE saltando l'ispezione la dichiarazione non cambia: "
+            "prova cio' che GLOBBA, non cio' che ISPEZIONA"
+        )
+        return 1
+    print("  ok   un `continue` che salta l'ispezione salta anche la dichiarazione")
+
+    # SECONDA sabotatura: il gate non vede tre file. Quali tre non e' inchiodato qui —
+    # si deriva dal pavimento LETTO NEL GATE, altrimenti l'aritmetica scade: bastava
+    # togliere un job dal repository perche' il gate accecato scendesse sotto la soglia,
+    # uscisse rosso da solo, e questo banco — che e' un check obbligatorio del ruleset —
+    # diventasse rosso puntando a se stesso invece che alla causa.
+    trovato = re.search(r"job_visti < (\d+)", codice)
+    if not con_pavimento or not trovato:
+        # Senza pavimento non c'e"'"aritmetica da rispettare: si acceca su un file solo,
+        # che basta a provare che il confronto morde.
+        pavimento, margine = 0, max(attesi.values())
+    else:
+        pavimento = int(trovato.group(1))
+        margine = sum(attesi.values()) - pavimento
+    ciechi, spesi = [], 0
+    for percorso, quanti in sorted(attesi.items(), key=lambda kv: -kv[1]):
+        if spesi + quanti <= margine:
+            ciechi.append(pathlib.PurePosixPath(percorso).name)
+            spesi += quanti
+    if not ciechi:
+        print("  ERRORE nessun file accecabile sotto il pavimento: la prova non puo' girare")
+        return 1
+    ciechi = tuple(ciechi)
+    # Si muta il GLOB, non il print: modella "il gate non vede quei file". E si
+    # sostituisce la CHIAMATA `glob.glob(...)`, non la riga del `for`, perche' i due
+    # gate scrivono lo stesso glob in due forme diverse — una su una riga, l'altra su
+    # tre. Legare la mutazione alla scrittura invece che alla chiamata l'aveva fatta
+    # girare su un gate solo: la forma invece della classe, di nuovo.
+    mutato = codice
+    for modello in ('".github/workflows/*.yml"', '".github/workflows/*.yaml"'):
+        mutato = mutato.replace(
+            f"glob.glob({modello})",
+            f"[p for p in glob.glob({modello}) if not p.endswith({ciechi!r})]",
+        )
     if mutato == codice:
         print("  ERRORE non trovo la riga da mutare: la prova di cecita' non ha girato")
         return 1
@@ -340,8 +406,9 @@ def main() -> int:
     tetti = estrai(TETTI)
     duplicati = estrai(DUPLICATI)
     errori = esegui("tetti sui job", tetti, CASI)
-    errori += prova_dichiarazione(tetti)
+    errori += prova_dichiarazione(tetti, "tetti sui job")
     errori += esegui("step duplicati", duplicati, CASI_DUPLICATI)
+    errori += prova_dichiarazione(duplicati, "step duplicati", con_pavimento=False)
     errori += esegui_mutanti(
         tetti,
         MUTANTI,
