@@ -81,7 +81,12 @@ def albero() -> Path:
 
 
 def gira(codice: str, radice: Path) -> int:
-    return subprocess.run(
+    # noqa S603: `codice` non e' input non fidato — e' lo script del gate estratto da
+    # `.github/workflows/lint.yml`, cioe' da un file versionato di questo repository,
+    # e girarlo davvero E' il punto del banco. La sola alternativa sarebbe copiarlo
+    # qui dentro, che vorrebbe dire una seconda copia del gate: la cosa che il
+    # progetto vieta per ogni file di configurazione, e per la stessa ragione.
+    return subprocess.run(  # noqa: S603
         [sys.executable, "-c", codice], cwd=radice, capture_output=True, text=True
     ).returncode
 
