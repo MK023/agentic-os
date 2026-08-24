@@ -203,6 +203,91 @@ def prova_caso(codice, caso):
     return True, uscita, ""
 
 
+def prova_dichiarazione(codice) -> int:
+    """Il gate deve DICHIARARE i file letti, e devono essere tutti quelli che ci sono.
+
+    Perche' non basta il pavimento `job_visti < 15`: conta un TOTALE e non sa CHE COSA
+    ha guardato. I job reali sono 21, quindi c'e' un margine di sei. Misurato il
+    24/08/2026: un gate che smettesse di leggere `sonar.yml`, `smoke.yml` e
+    `sorveglianza.yml` — l'unico gate obbligatorio del ruleset e due sonde — ne vedrebbe
+    15, resterebbe VERDE sulla realta' e questo banco stampava TUTTO A POSTO.
+
+    Alzare la soglia a 21 non chiude la classe: fra sei mesi la si riabbassa per far
+    tornare il verde, ed e' la stessa mossa che qui e' gia' costata quattro giri.
+    L'oracolo e' il glob calcolato QUI, fuori dal gate: il soggetto dichiara, il banco
+    confronta. Un file che sparisce dalla vista del gate diventa rosso subito,
+    qualunque sia il numero di job rimasti.
+    """
+    print("\n== il gate dichiara cosa ha letto")
+    temp = albero()
+    try:
+        attesi = sorted(
+            p.relative_to(temp).as_posix()
+            for p in list((temp / ".github/workflows").glob("*.yml"))
+            + list((temp / ".github/workflows").glob("*.yaml"))
+        )
+        uscita, testo = gira_completo(codice, temp)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+    dichiarati = sorted(re.findall(r"^letto: (.+)$", testo, re.M))
+    if uscita != 0:
+        print(f"  ERRORE il gate non e' verde sull'albero reale (exit {uscita})")
+        return 1
+    if not dichiarati:
+        print("  ERRORE il gate non dichiara nessun file letto: il pavimento e' l'unica difesa")
+        return 1
+    if dichiarati != attesi:
+        mancanti = set(attesi) - set(dichiarati)
+        in_piu = set(dichiarati) - set(attesi)
+        print(f"  ERRORE dichiarati {len(dichiarati)}, presenti {len(attesi)}")
+        if mancanti:
+            print(f"         NON letti: {sorted(mancanti)}")
+        if in_piu:
+            print(f"         letti ma inesistenti: {sorted(in_piu)}")
+        return 1
+    print(f"  ok   {len(dichiarati)} file dichiarati = {len(attesi)} file presenti")
+
+    # E la prova che questo controllo NON e' vacuo, che e' la meta' che di solito manca:
+    # si acceca il gate su tre workflow — esattamente i tre della misura — e si pretende
+    # che il confronto se ne accorga. Il pavimento, da solo, non se ne accorgerebbe: i
+    # job scendono a 15 e 15 non e' minore di 15.
+    ciechi = ("sonar.yml", "smoke.yml", "sorveglianza.yml")
+    # Si muta il GLOB, non il print: modella "il gate non vede quei file", che e' lo
+    # scenario vero. E si muta su una riga sola perche' il codice estratto e' dedentato:
+    # una mutazione multi-riga porterebbe l'indentazione sbagliata e farebbe fallire il
+    # gate per IndentationError — rosso per il motivo sbagliato, cioe' una prova viziata.
+    originale = (
+        'for percorso in sorted(glob.glob(".github/workflows/*.yml")'
+        ' + glob.glob(".github/workflows/*.yaml")):'
+    )
+    mutato = codice.replace(
+        originale,
+        'for percorso in [p for p in sorted(glob.glob(".github/workflows/*.yml")'
+        ' + glob.glob(".github/workflows/*.yaml"))'
+        f" if not p.endswith({ciechi!r})]:",
+    )
+    if mutato == codice:
+        print("  ERRORE non trovo la riga da mutare: la prova di cecita' non ha girato")
+        return 1
+    temp = albero()
+    try:
+        uscita_cieca, testo_cieco = gira_completo(mutato, temp)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+    visti_ciechi = sorted(re.findall(r"^letto: (.+)$", testo_cieco, re.M))
+    if visti_ciechi == attesi:
+        print("  ERRORE il gate accecato dichiara gli stessi file: la mutazione non ha morso")
+        return 1
+    if uscita_cieca != 0:
+        print(f"  ERRORE il gate accecato esce {uscita_cieca}: sarebbe rosso da solo, prova viziata")
+        return 1
+    print(
+        f"  ok   accecato su {len(ciechi)} workflow ne dichiara {len(visti_ciechi)} invece di "
+        f"{len(attesi)} — resta verde ({uscita_cieca}) e solo questo confronto lo vede"
+    )
+    return 0
+
+
 def esegui(titolo, codice, casi) -> int:
     errori = 0
     print(f"\n== {titolo}")
@@ -255,6 +340,7 @@ def main() -> int:
     tetti = estrai(TETTI)
     duplicati = estrai(DUPLICATI)
     errori = esegui("tetti sui job", tetti, CASI)
+    errori += prova_dichiarazione(tetti)
     errori += esegui("step duplicati", duplicati, CASI_DUPLICATI)
     errori += esegui_mutanti(
         tetti,

@@ -325,6 +325,15 @@ jobs:
 
           job_visti = 0
           for percorso in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
+              # DICHIARA cosa hai letto. Il pavimento qui sotto conta un TOTALE e non sa
+              # CHE COSA ha guardato: i job reali sono 21 contro una soglia di 15, quindi
+              # un gate che smettesse di leggere tre workflow — misurato: `sonar.yml`,
+              # `smoke.yml` e `sorveglianza.yml`, l'unico gate obbligatorio del ruleset e
+              # due sonde — ne vedrebbe 15 e resterebbe VERDE. Alzare la soglia a 21 non
+              # chiude la classe: fra sei mesi la si riabbassa per far tornare il verde.
+              # `scripts/prova-gate-workflow.py` confronta queste righe con il proprio
+              # glob, calcolato fuori di qui: il soggetto dichiara, l'oracolo verifica.
+              print(f"letto: {percorso}")
               for nome, corpo in (yaml.safe_load(open(percorso)).get("jobs") or {}).items():
                   job_visti += 1
                   # Un job che chiama una reusable workflow (`jobs.<id>.uses:`) NON
@@ -364,14 +373,17 @@ jobs:
       # `timeout-minutes` — sono nati rotti due volte in un giorno, ed entrambe le volte
       # erano stati dichiarati "provati rossi" a mano, in una shell che non esiste piu'.
       #
-      # Il pavimento `< 15 job` non li sostituisce, e il margine e' MISURATO: i job reali
-      # sono 21, quindi un gate che smettesse di leggere tre workflow — per esempio
-      # `sonar.yml`, `smoke.yml` e `sorveglianza.yml`, cioe' l'unico gate obbligatorio e
-      # due sonde — ne vedrebbe 15, resterebbe verde sulla realta' E il banco stamperebbe
-      # TUTTO A POSTO. Un pavimento conta un TOTALE e non sa CHE COSA ha guardato. La
-      # chiusura non e' alzarlo a 21 — fra sei mesi lo si riabbassa per far tornare il
-      # verde — ma far dichiarare al gate l'insieme dei file letti e pretenderlo uguale
-      # al glob. Non e' fatto: e' un buco noto, scritto qui invece che scoperto.
+      # Il pavimento `< 15 job` non li sostituisce, e il margine era MISURATO: i job
+      # reali sono 21, quindi un gate che smettesse di leggere `sonar.yml`, `smoke.yml`
+      # e `sorveglianza.yml` — l'unico gate obbligatorio del ruleset e due sonde — ne
+      # vedrebbe 15, resterebbe verde sulla realta' E il banco stampava TUTTO A POSTO.
+      # Un pavimento conta un TOTALE e non sa CHE COSA ha guardato.
+      #
+      # CHIUSO il 24/08/2026, e non alzando la soglia a 21 — quella fra sei mesi la si
+      # riabbassa per far tornare il verde: il gate DICHIARA i file letti (`letto: ...`)
+      # e il banco li confronta con il proprio glob, calcolato fuori dal gate. Il banco
+      # prova anche il rosso, accecando il gate su quei tre file: resta verde da solo, e
+      # solo il confronto se ne accorge.
       #
       # Il banco estrae i due gate da QUESTO file — nessuna seconda copia — li esercita
       # su sette casi, e poi li MUTA pretendendo che il caso corrispondente cambi
