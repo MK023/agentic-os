@@ -305,6 +305,14 @@ jobs:
       # — e a quel punto `notifica.yml` parla. Era difesa in profondita' sopra un
       # controllo che funziona, non l'ultima linea.
       #
+      # Con DUE eccezioni, che il controllo rimosso copriva e questa frase no: 25 dei 32
+      # curl stanno in `scripts/*.sh`, e quattro di quegli script il CLAUDE.md li
+      # documenta come comandi da lanciare A MANO — li' nessun tetto di job esiste (in
+      # CI invece girano dentro `compose` di images.yml, 15 minuti). E il 32esimo curl e'
+      # dentro `notifica.yml` stesso: se si appende, quel job muore a 5 minuti come
+      # `cancelled` e non lo dice nessuno, perche' il notificatore non sorveglia se
+      # stesso — di proposito, ed e' argomentato nel suo file.
+      #
       # Se un giorno serve davvero, la strada e' `shlex` — tokenizzare rispettando le
       # virgolette — non un altro regex piu' lungo.
       - name: ogni job dichiara il proprio tetto
@@ -352,14 +360,22 @@ jobs:
           print(f"{job_visti} job con timeout-minutes")
           PY
 
-      # I due gate qui sopra sono nati rotti due volte in un giorno, ed entrambe le
-      # volte erano stati dichiarati "provati rossi" a mano, in una shell che non
-      # esiste piu'. I loro pavimenti (`< 15 job`, `< 20 curl`) non li sostituiscono:
-      # contano un TOTALE, e la maggioranza dei curl sta in `scripts/`, quindi un regex
-      # che smettesse di vedere tutti quelli dei workflow resterebbe sopra il pavimento
-      # e verde. Questo banco estrae i due gate da QUESTO file — nessuna seconda copia
-      # — li esercita su venti casi, e poi li MUTA pretendendo che il caso
-      # corrispondente cambi colore: un caso che resta verde anche senza il controllo
-      # che dovrebbe esercitare non prova niente.
-      - name: il banco dei due gate qui sopra
+      # I due gate che questo banco esercita — quello sugli step duplicati e quello sui
+      # `timeout-minutes` — sono nati rotti due volte in un giorno, ed entrambe le volte
+      # erano stati dichiarati "provati rossi" a mano, in una shell che non esiste piu'.
+      #
+      # Il pavimento `< 15 job` non li sostituisce, e il margine e' MISURATO: i job reali
+      # sono 21, quindi un gate che smettesse di leggere tre workflow — per esempio
+      # `sonar.yml`, `smoke.yml` e `sorveglianza.yml`, cioe' l'unico gate obbligatorio e
+      # due sonde — ne vedrebbe 15, resterebbe verde sulla realta' E il banco stamperebbe
+      # TUTTO A POSTO. Un pavimento conta un TOTALE e non sa CHE COSA ha guardato. La
+      # chiusura non e' alzarlo a 21 — fra sei mesi lo si riabbassa per far tornare il
+      # verde — ma far dichiarare al gate l'insieme dei file letti e pretenderlo uguale
+      # al glob. Non e' fatto: e' un buco noto, scritto qui invece che scoperto.
+      #
+      # Il banco estrae i due gate da QUESTO file — nessuna seconda copia — li esercita
+      # su sette casi, e poi li MUTA pretendendo che il caso corrispondente cambi
+      # colore: un caso che resta verde anche senza il controllo che dovrebbe esercitare
+      # non prova niente.
+      - name: il banco dei due gate di questo file
         run: python3 scripts/prova-gate-workflow.py
