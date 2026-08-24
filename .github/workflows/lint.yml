@@ -407,11 +407,18 @@ jobs:
       # vedrebbe 15, resterebbe verde sulla realta' E il banco stampava TUTTO A POSTO.
       # Un pavimento conta un TOTALE e non sa CHE COSA ha guardato.
       #
-      # CHIUSO il 24/08/2026, e non alzando la soglia a 21 — quella fra sei mesi la si
+      # CHIUSA il 24/08/2026 la classe dell'ATTRAVERSAMENTO — un `continue`, un `break`,
+      # un glob ristretto, un file saltato fanno tutti divergere il conto dichiarato da
+      # quello che il banco calcola per conto suo. NON e' chiusa quella del GIUDIZIO:
+      # un'esenzione scritta dentro la condizione stessa lascia il conto perfetto e il
+      # gate verde su un job senza tetto (misurato; `main` e' cieco allo stesso modo).
+      # E' scritto in docs/BLOCKERS.md invece di essere presunto chiuso.
+      #
+      # Il rimedio non e' alzare la soglia a 21 — quella fra sei mesi la si
       # riabbassa per far tornare il verde: il gate DICHIARA i file letti (`letto: ...`)
       # e il banco li confronta con il proprio glob, calcolato fuori dal gate. Il banco
-      # prova anche il rosso, accecando il gate sul piu' grande insieme di file che lo
-      # lascia sopra il pavimento — derivato, non inchiodato: resta verde da solo, e
+      # prova anche il rosso, accecando il gate su un insieme di file scelto first-fit
+      # sotto il pavimento — derivato dal gate, non inchiodato qui: resta verde da solo, e
       # solo il confronto se ne accorge.
       #
       # Il banco estrae i due gate da QUESTO file — nessuna seconda copia — li esercita
