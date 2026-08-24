@@ -66,6 +66,7 @@ jobs:
       # `actions` non riesce a leggere i workflow e il job fallisce.
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       # Senza, il fallimento di un linguaggio cancella l'analisi dell'altro: il
       # risultato mancante non e' un alert in meno, e' un'analisi che non e' mai

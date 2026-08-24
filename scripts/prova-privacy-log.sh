@@ -149,10 +149,10 @@ docker run -d --rm --name privacy-loki --network "$RETE" \
 
 echo -n "attendo Loki: "
 for _ in $(seq 1 60); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3198/ready)" = "200" ] && { echo "pronto"; break; }
+  [ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3198/ready)" = "200" ] && { echo "pronto"; break; }
   sleep 2
 done
-[ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3198/ready)" = "200" ] || {
+[ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3198/ready)" = "200" ] || {
   echo "FALLITO: Loki non e' arrivato a servire"; docker logs privacy-loki 2>&1 | tail -20; exit 1; }
 
 # Il Collector con la config SPEDITA, non una copia: e' l'altra meta' sotto esame.
@@ -194,7 +194,7 @@ done
 # NON-DEVE-ARRIVARE (devono essere esadecimali), quindi per loro il marcatore e' il
 # VALORE: l'asserzione (b-bis) pretende che `deadbeef...` non torni.
 ORA=$(python3 -c "import time;print(int(time.time()*1e9))")
-CODICE=$(curl -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:4398/v1/logs \
+CODICE=$(curl --connect-timeout 5 --max-time 30 -sS -o "$TMP/push.txt" -w '%{http_code}' -X POST http://localhost:4398/v1/logs \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"resourceLogs":[{
   "resource":{"attributes":[
     {"key":"service.name","value":{"stringValue":"claude-code-NON-DEVE-ARRIVARE-nel-valore"}},
@@ -261,7 +261,7 @@ echo "push OTLP verso il Collector: HTTP $CODICE"
 echo -n "attendo che il record sia interrogabile: "
 trovato=""
 for tentativo in $(seq 1 20); do
-  n=$(curl -sG "http://localhost:3198/loki/api/v1/query_range" \
+  n=$(curl --connect-timeout 5 --max-time 30 -sG "http://localhost:3198/loki/api/v1/query_range" \
         --data-urlencode 'query={service_name="claude-code"}' \
         --data-urlencode "start=$((ORA - 300000000000))" --data-urlencode "end=$((ORA + 300000000000))" \
       | python3 -c "import json,sys; print(sum(len(s['values']) for s in json.load(sys.stdin).get('data',{}).get('result',[])))" 2>/dev/null || echo 0)
@@ -271,12 +271,12 @@ done
 [ -n "$trovato" ] || echo "MAI COMPARSO dopo 20s — cio' che segue distingue 'scartato' da 'in ritardo'"
 
 echo "--- (a) le label di indice, e i loro VALORI"
-curl -s "http://localhost:3198/loki/api/v1/labels" | tee "$TMP/labels.json"; echo
+curl --connect-timeout 5 --max-time 30 -s "http://localhost:3198/loki/api/v1/labels" | tee "$TMP/labels.json"; echo
 # I valori, non solo i nomi: `keep_keys` filtra le CHIAVI, quindi un mittente puo'
 # scrivere quello che vuole DENTRO service.name, che e' l'unica label di indice.
-curl -s "http://localhost:3198/loki/api/v1/label/service_name/values" | tee "$TMP/valori.json"; echo
+curl --connect-timeout 5 --max-time 30 -s "http://localhost:3198/loki/api/v1/label/service_name/values" | tee "$TMP/valori.json"; echo
 echo "--- (b) tutto cio' che Loki ha memorizzato per quello stream"
-curl -sG "http://localhost:3198/loki/api/v1/query_range" \
+curl --connect-timeout 5 --max-time 30 -sG "http://localhost:3198/loki/api/v1/query_range" \
   --data-urlencode 'query={service_name="claude-code"}' \
   --data-urlencode "start=$((ORA - 300000000000))" --data-urlencode "end=$((ORA + 300000000000))" > "$TMP/query.json"
 

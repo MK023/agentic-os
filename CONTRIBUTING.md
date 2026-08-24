@@ -33,8 +33,10 @@ every 10 minutes and gets whatever GitHub gives it — 15 to 92 minutes, measure
 2026-08-23 — against production), `sorveglianza.yml` (daily, `verify-hub.sh` with the
 Access and bearer credentials), `telemetry-baseline.yml` (weekly, plus on PRs that touch
 two paths), `codeql.yml` (per-PR, push and weekly, reporting rather than blocking) and
-`notifica.yml` (no schedule of its own: it watches the other ten finish and posts a
-failing one to Slack).
+`notifica.yml` (no schedule of its own: it watches the other ten finish and posts to
+Slack any that ends `failure`, `cancelled`, `timed_out` or `startup_failure` — not
+only the failing ones: a job killed by `timeout-minutes` ends `cancelled`, measured on
+2026-08-23, and that is the case the file exists for).
 
 This count was "five" until 2026-08-23, one workflow after it stopped being true — the
 same divergence the `notifica.yml` gate in `lint.yml` exists to prevent one list away.

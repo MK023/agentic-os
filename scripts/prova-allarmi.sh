@@ -90,7 +90,7 @@ docker run -d --rm --name allarmi-spedito -p 3094:3000 \
   -e GF_SECURITY_ADMIN_PASSWORD="$PASSWORD" agentic-grafana:ci >/dev/null
 spedito_pronto=""
 for _ in $(seq 1 45); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3094/api/health)" = "200" ] && { spedito_pronto=si; break; }
+  [ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3094/api/health)" = "200" ] && { spedito_pronto=si; break; }
   sleep 2
 done
 if [ -z "$spedito_pronto" ]; then
@@ -100,7 +100,7 @@ if [ -z "$spedito_pronto" ]; then
   docker rm -f allarmi-spedito >/dev/null 2>&1 || true
   exit 1
 fi
-regole_spedite=$(curl -s -u "admin:$PASSWORD" http://localhost:3094/api/v1/provisioning/alert-rules \
+regole_spedite=$(curl --connect-timeout 5 --max-time 30 -s -u "admin:$PASSWORD" http://localhost:3094/api/v1/provisioning/alert-rules \
   | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
 docker rm -f allarmi-spedito >/dev/null 2>&1 || true
 if [ "${regole_spedite:-0}" != "5" ]; then
@@ -155,16 +155,16 @@ docker run -d --rm --name allarmi-grafana --network "$RETE" -p 3093:3000 \
 
 echo -n "attendo Grafana: "
 for _ in $(seq 1 60); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3093/api/health)" = "200" ] && { echo "pronto"; break; }
+  [ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3093/api/health)" = "200" ] && { echo "pronto"; break; }
   sleep 2
 done
-[ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3093/api/health)" = "200" ] || {
+[ "$(curl --connect-timeout 5 --max-time 30 -s -o /dev/null -w '%{http_code}' http://localhost:3093/api/health)" = "200" ] || {
   echo "FALLITO: Grafana non e' arrivato a servire"; docker logs allarmi-grafana 2>&1 | tail -30; exit 1; }
 
 AUTH="admin:$PASSWORD"
-curl -s -u "$AUTH" http://localhost:3093/api/v1/provisioning/alert-rules > "$TMP/regole.json"
-curl -s -u "$AUTH" http://localhost:3093/api/v1/provisioning/contact-points > "$TMP/contatti.json"
-curl -s -u "$AUTH" http://localhost:3093/api/datasources > "$TMP/datasource.json"
+curl --connect-timeout 5 --max-time 30 -s -u "$AUTH" http://localhost:3093/api/v1/provisioning/alert-rules > "$TMP/regole.json"
+curl --connect-timeout 5 --max-time 30 -s -u "$AUTH" http://localhost:3093/api/v1/provisioning/contact-points > "$TMP/contatti.json"
+curl --connect-timeout 5 --max-time 30 -s -u "$AUTH" http://localhost:3093/api/datasources > "$TMP/datasource.json"
 
 python3 - "$TMP/regole.json" "$TMP/contatti.json" "$TMP/datasource.json" <<'PY'
 import json, sys
@@ -207,7 +207,7 @@ echo -n "--- (d) attendo che 'Loki e' giu'' passi ad Alerting (Loki non esiste s
 stato_loki=""
 for tentativo in $(seq 1 40); do
   sleep 3
-  curl -s -u "$AUTH" http://localhost:3093/api/prometheus/grafana/api/v1/rules > "$TMP/stato.json" || true
+  curl --connect-timeout 5 --max-time 30 -s -u "$AUTH" http://localhost:3093/api/prometheus/grafana/api/v1/rules > "$TMP/stato.json" || true
   stato_loki=$(python3 -c "
 import json
 d = json.load(open('$TMP/stato.json')).get('data', {}).get('groups', [])

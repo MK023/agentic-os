@@ -77,7 +77,7 @@ punto() { # $1 nome, $2 valore, $3 attributi json
   printf '{"name":"%s","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"asDouble":%s,"timeUnixNano":"%s","attributes":[%s]}]}}' "$1" "$2" "$ORA" "$3"
 }
 IDENT='{"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE@example.com"}},{"key":"organization.id","value":{"stringValue":"NON-DEVE-ARRIVARE-org"}}'
-CODICE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://localhost:34318/v1/metrics" \
+CODICE=$(curl --connect-timeout 5 --max-time 30 -sS -o /dev/null -w '%{http_code}' -X POST "http://localhost:34318/v1/metrics" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"resourceMetrics":[{
    "resource":{"attributes":[{"key":"service.name","value":{"stringValue":"SCELTO-DAL-CLIENT"}},{"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE-risorsa@example.com"}}]},
    "scopeMetrics":[{"scope":{"name":"com.anthropic.claude_code","version":"0.0.0","attributes":[{"key":"user.email","value":{"stringValue":"NON-DEVE-ARRIVARE-scope@example.com"}}]},"metrics":['"$(punto claude_code.session.count 1 '{"key":"session.id","value":{"stringValue":"contratto"}},'"$IDENT")"',
@@ -89,7 +89,7 @@ echo "push metriche: HTTP $CODICE"
 [ "$CODICE" = "200" ] || { echo "FALLITO: il Collector ha rifiutato il payload"; exit 1; }
 sleep 3
 
-curl -sS "http://localhost:${PORTA}/metrics" > /tmp/contratto-metriche.txt
+curl --connect-timeout 5 --max-time 30 -sS "http://localhost:${PORTA}/metrics" > /tmp/contratto-metriche.txt
 
 python3 - /tmp/contratto-metriche.txt <<'PY'
 import json, pathlib, re, sys
