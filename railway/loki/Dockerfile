@@ -6,9 +6,18 @@
 # stato scritto insieme a questa riga il 2026-08-20: la prima versione affermava lo
 # scrape senza che esistesse, che e' il difetto peggiore fra i due.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
-# sotto lo stesso nome. Verificato il 2026-08-20 che 3.7.6 e' l'ultima 3.x pubblicata
-# (v3.7.6, 2026-08-06) — un digest vecchio pinna un'immagine vecchia in silenzio.
-FROM grafana/loki:3.7.6@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
+# sotto lo stesso nome — quindi il digest e' la garanzia, e la lettura del tag prova
+# solo che a QUELLA data il tag indicava quel commit, niente sul domani.
+#
+# Verificato il 2026-08-31 interrogando il registro: `grafana/loki:3.7.7` risolve a
+# sha256:d70e4659…2500, identico a questa riga e alla copia in
+# docker/docker-compose.yml — un digest vecchio pinna un'immagine vecchia in silenzio.
+#
+# La riga precedente diceva "3.7.6 e' l'ultima 3.x pubblicata (v3.7.6, 2026-08-06)" ed
+# e' rimasta sopra un pin 3.7.7 finche' una revisione avversaria non l'ha vista: un
+# commento ancorato a una versione diventa falso al primo bump e non lo dice nessuno.
+# Percio' adesso l'ancora e' la MISURA (data + digest verificato), non la classifica.
+FROM grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
 
 # 10001 e' l'utente che l'immagine di Loki usa gia' (letto con `docker inspect`,
 # non assunto).
