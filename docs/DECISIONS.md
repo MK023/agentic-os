@@ -420,8 +420,83 @@ Sixty, not three, because the three numbers look back 25h and hours of genuine z
 between two sessions; an alert that fires every quiet morning is an alert someone
 silences. **The event declares what it cannot tell apart**: "nobody worked" and "the
 volume is gone" produce the identical signal from these three numbers, so it asks the
-reader to look at the volume rather than announcing a fault. Removing that ambiguity
-needs a second source — `up` on the Collector — not a bigger N.
+reader to look at the volume rather than announcing a fault.
+
+**Measured 2026-08-31: sixty passes was not enough, and the reason is structural.** The
+production alarm fired eight times overnight, hourly, all harmless — the last real
+activity had been ~33h earlier. Sixty passes were chosen so that "a quiet morning" would
+not trigger, but passes are bought by traffic and the public widget polls every 20s
+against a 60s cache, so sixty passes is sixty *minutes* whenever the site has visitors.
+The three queries look back **25h**, so **every gap in work longer than 25h reaches zero
+legitimately** — a weekend guarantees it. No value of N fixes that: N counts passes, and
+the thing that overflows is the 25h window.
+
+**So the second source went in, and it is not `up`.** This paragraph used to say the
+ambiguity needed `up` on the Collector; that was wrong and is worth saying why, because
+`up` looks like the obvious witness. `up` resumes being written a scrape after a volume
+is wiped, so its presence separates nothing: it reads healthy on a lost volume and on a
+quiet weekend alike. What separates them is whether *the Claude Code series itself* has
+history behind the window —
+`count(present_over_time(claude_code_session_count{job="otel-collector"}[7d]))`. Series
+present ⇒ the volume is full and the absence is the operator's ⇒ silence. Empty vector ⇒
+alert.
+
+**What it costs, counted rather than waved at.** It never runs on the normal path — only
+after `ZERO_PASSES_BEFORE_ALERT` consecutive zero passes — but from there it runs on
+*every* pass for as long as the zeros last, not once per alert. A pass is one cache
+window (`STATUS_CACHE_TTL_S`, 60s) and passes are bought by traffic, so a weekend of
+zeros with the widget polling is on the order of a thousand extra queries, not a handful.
+That is the honest number; it is affordable because it is a `count()` over one metric in
+a TSDB this small, and because the alternative — a modulo to space them out — cost the
+counter its direction (see the commit that removed it). Worst-case latency of `/status`
+rises by one `REQUEST_TIMEOUT` (10s) during a zero stretch, and no test pins that ceiling.
+
+`present_over_time` — "the value 1 for any series in the specified interval" — and not
+`max_over_time`, which would answer the same question only as a side effect of taking a
+value nobody reads. The `compose` gate in `images.yml` is what surfaced it: it requires
+**exactly three** `max_over_time` queries in `main.py`, because the three public numbers
+must move together, and a fourth turned it red before the merge. The right fix was not a
+wider count — it was noticing the function was wrong.
+
+**Seven days, not thirty — and the reason stated accurately.** An earlier draft said
+thirty was unsafe because "`retention.size` drops old blocks before the days expire, that
+is the 2026-08-13 failure"; a review showed both halves were wrong. The real values are
+`--storage.tsdb.retention.time=30d` and `--storage.tsdb.retention.size=3GB` on a 5 GB
+volume, and at today's data volume it is the **time** limit that binds first — the size
+cap is a guard against growth, not a pruning in progress. And the 2026-08-13 failure
+happened in the *absence* of a size cap; it is the reason the cap exists, not something
+it caused. What survives is the weaker and true argument: thirty days would rest the
+witness on whichever limit binds, and which one binds can change as data grows. Seven
+days sits clear of both and does not depend on that. An absence longer than a week
+deserves an event anyway. The witness window is deliberately **different** from the
+25h of `QUERIES`: align the two and the witness answers identically to the three numbers
+and stops witnessing, with nothing turning red.
+
+**What the new silence costs, declared because it is a real loss and not a free win.**
+The witness cannot tell "nobody worked" from "no data is arriving": both leave 7d of
+history behind a 25h window of zeros, so both are now silent, where before both were
+loud.
+
+**And the compensating controls must be stated for what they prove, not for how they
+sound** — the first draft of this paragraph failed exactly that test and an adversarial
+review caught it. `smoke.yml` asserts `401` from the Collector on a bad bearer and `403`
+from the WAF: that proves the Collector is alive, reachable, and rejecting — **not** that
+a valid payload is accepted and lands in the TSDB. Prometheus' `up` proves the Collector
+can be scraped, not that anything flows through it. So the case *"everything is up and
+the client simply is not sending"* — the machine relaunched without the telemetry
+variables, named at the top of `CLAUDE.md` — **has no witness from here on**. It had one
+before, and that one fired identically every weekend, which is a signal nobody acts on;
+trading it away is defensible, but it is a trade and this is where it is written down.
+Closing it properly needs a probe of *arrival*, not of liveness, and that is not built.
+
+**What is still ambiguous, declared rather than papered over.** An empty 7d window has
+three causes and the event names all three: a lost volume, a fresh deploy with no history
+yet, or an absence longer than seven days. Only the first is a fault. Narrowing further
+would need the *age of the oldest sample in the TSDB* (a wipe resets it; an absence does
+not), which is a second increment and is not built. And when the witness query itself
+fails, the event says so and stays as ambiguous as it was before the probe existed —
+never silent: a probe that bought silence would make the watchdog mute precisely while
+Prometheus is half broken, which is adding a quiet failure while curing a loud one.
 
 **Both halves ship through three separate Railway services** — the Collector config, the
 status API and the Grafana dashboard live in three images with three `watchPatterns`.
@@ -691,9 +766,21 @@ opens fewer pull requests, or none, and the way anybody finds out is an image qu
 going months stale. There is no way to force a Dependabot run and watch, so the change
 cannot be verified in the direction where it can hurt.
 
-So the two-PR shape stays, and the procedure is written where it is needed rather than
-remembered: `.github/dependabot.yml` says to take one of the two, bring the other half
-into the same branch by hand, and close the other. Done four times on 2026-08-22 (#153,
+**Narrowed 2026-08-31, and only for `github-actions`.** Everything above still holds for
+the docker/compose pair, which is what it was written about. But `groups` — singular, not
+`multi-ecosystem-groups` — is a different feature: one ecosystem, one directory,
+documented, and it fails *open* (a pattern matching nothing returns Dependabot to one PR
+per dependency, rather than quietly opening none). That was the whole objection, and it
+does not apply. So `github/codeql-action/init` and `.../analyze`, which Dependabot counts
+as two dependencies and the action refuses to run at two versions, are now grouped —
+**twice**, because `applies-to` "when undefined, defaults to version updates" and a single
+group would have left security updates arriving split, which is when the delay costs most.
+The docker/compose halves stay ungrouped: they are two *ecosystems*, so only the rejected
+feature would join them.
+
+So for docker the two-PR shape stays, and the procedure is written where it is needed
+rather than remembered: `.github/dependabot.yml` says to take one of the two, bring the
+other half into the same branch by hand, and close the other. Done four times on 2026-08-22 (#153,
 #154), it costs about two minutes. Reopen this if the vendor documents the interaction,
 or if a way to trigger a run on demand appears.
 
