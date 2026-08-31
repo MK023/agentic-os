@@ -143,7 +143,7 @@ cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=ter
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH
 checkov --config-file .checkov.yml -d .
-cd services/public-status-api && mutmut run && mutmut results  # 0 survivors in the 12 blocking functions (mutation.yml names them)
+cd services/public-status-api && mutmut run && mutmut results  # 0 survivors in the 13 blocking functions (mutation.yml names them)
 ```
 
 Dependencies are hash-locked: edit `requirements.in`, then

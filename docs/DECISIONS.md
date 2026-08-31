@@ -420,8 +420,44 @@ Sixty, not three, because the three numbers look back 25h and hours of genuine z
 between two sessions; an alert that fires every quiet morning is an alert someone
 silences. **The event declares what it cannot tell apart**: "nobody worked" and "the
 volume is gone" produce the identical signal from these three numbers, so it asks the
-reader to look at the volume rather than announcing a fault. Removing that ambiguity
-needs a second source — `up` on the Collector — not a bigger N.
+reader to look at the volume rather than announcing a fault.
+
+**Measured 2026-08-31: sixty passes was not enough, and the reason is structural.** The
+production alarm fired eight times overnight, hourly, all harmless — the last real
+activity had been ~33h earlier. Sixty passes were chosen so that "a quiet morning" would
+not trigger, but passes are bought by traffic and the public widget polls every 20s
+against a 60s cache, so sixty passes is sixty *minutes* whenever the site has visitors.
+The three queries look back **25h**, so **every gap in work longer than 25h reaches zero
+legitimately** — a weekend guarantees it. No value of N fixes that: N counts passes, and
+the thing that overflows is the 25h window.
+
+**So the second source went in, and it is not `up`.** This paragraph used to say the
+ambiguity needed `up` on the Collector; that was wrong and is worth saying why, because
+`up` looks like the obvious witness. `up` resumes being written a scrape after a volume
+is wiped, so its presence separates nothing: it reads healthy on a lost volume and on a
+quiet weekend alike. What separates them is whether *the Claude Code series itself* has
+history behind the window —
+`count(max_over_time(claude_code_session_count{job="otel-collector"}[7d]))`, asked only
+on the pass that is about to alert, once per sixty zero passes. Series present ⇒ the
+volume is full and the absence is the operator's ⇒ silence. Empty vector ⇒ alert.
+
+**Seven days, not thirty.** Thirty would match `--storage.tsdb.retention.time`, but
+`retention.size` drops old blocks when the disk fills, *before* the days expire — that is
+the 2026-08-13 failure in this same file. A witness resting on the oldest part of the
+history loses its memory exactly in the weeks when the volume is under pressure, which is
+when it is needed. Seven days sits well clear of that edge, and an absence longer than a
+week deserves an event anyway. The witness window is deliberately **different** from the
+25h of `QUERIES`: align the two and the witness answers identically to the three numbers
+and stops witnessing, with nothing turning red.
+
+**What is still ambiguous, declared rather than papered over.** An empty 7d window has
+three causes and the event names all three: a lost volume, a fresh deploy with no history
+yet, or an absence longer than seven days. Only the first is a fault. Narrowing further
+would need the *age of the oldest sample in the TSDB* (a wipe resets it; an absence does
+not), which is a second increment and is not built. And when the witness query itself
+fails, the event says so and stays as ambiguous as it was before the probe existed —
+never silent: a probe that bought silence would make the watchdog mute precisely while
+Prometheus is half broken, which is adding a quiet failure while curing a loud one.
 
 **Both halves ship through three separate Railway services** — the Collector config, the
 status API and the Grafana dashboard live in three images with three `watchPatterns`.

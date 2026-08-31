@@ -551,8 +551,46 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
 ZERO_PASSES_BEFORE_ALERT = 60
 _ZERO_PASSES = 0
 
+# La SECONDA domanda, quella che i tre numeri non possono rispondere da soli. Le tre
+# query guardano indietro 25h, quindi qualunque pausa piu' lunga di 25h le porta a zero
+# legittimamente — un weekend basta, e il 31/08/2026 la produzione ha prodotto otto
+# eventi in otto ore, tutti innocui. Questa chiede se esiste una serie oltre quella
+# finestra: se c'e', il volume e' pieno e l'assenza e' di chi lavora, non di dati.
+#
+# Sette giorni e non trenta, che sarebbe la retention: `--storage.tsdb.retention.size`
+# fa cadere i blocchi vecchi quando il disco si riempie, PRIMA che scadano i giorni
+# (successo il 13/08/2026, volume da 500 MB). Un testimone appoggiato al fondo della
+# storia perde memoria proprio nei giorni in cui il volume soffre — cioe' quando serve.
+# Sette giorni stanno lontano da quel bordo, e un'assenza piu' lunga di una settimana
+# merita comunque un evento.
+#
+# `count()` e non `sum()`: qui la domanda e' "esiste una serie?", non "quanto vale".
+# Con `sum()` un contatore legittimamente fermo a zero e un vettore vuoto darebbero lo
+# stesso risultato, ed e' la confusione esatta che questo testimone esiste per sciogliere
+# — la stessa gia' scritta per `_check_persistence`: no series means no rule can fire.
+#
+# La finestra e' DIVERSA da quella di QUERIES apposta. Se qualcuno le allineasse, il
+# testimone risponderebbe sempre come i tre numeri e smetterebbe di testimoniare senza
+# che niente diventi rosso: e' un accoppiamento fra due costanti che va saputo prima.
+HISTORY_QUERY = 'count(max_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
 
-async def _check_zero_volume(values: dict) -> None:
+
+async def _c_e_storia(client: httpx.AsyncClient) -> bool | None:
+    """C'è una serie oltre la finestra dei tre numeri? `None` = non si è potuto sapere.
+
+    Tre esiti e non due, deliberatamente. `False` (vettore vuoto) e `None` (query
+    fallita) portano allo stesso allarme ma per ragioni opposte, e impastarli
+    significherebbe far comprare il silenzio a un guasto: un Prometheus che risponde
+    alle tre query e non alla quarta renderebbe MUTO il watchdog proprio mentre e'
+    mezzo rotto. Il ramo d'errore torna al comportamento di prima — si grida, ambigui.
+    """
+    try:
+        return bool((await _query_one(client, HISTORY_QUERY))["data"]["result"])
+    except Exception:  # noqa: BLE001 — stesso contratto di _check_persistence: mai un 502
+        return None
+
+
+async def _check_zero_volume(client: httpx.AsyncClient, values: dict) -> None:
     """Report three zeros that last, instead of serving them with a 200 and no comment.
 
     `_parse_value` risponde 0.0 su result vuoto — scelta dichiarata: un volume perso fa
@@ -573,17 +611,39 @@ async def _check_zero_volume(values: dict) -> None:
         return
 
     _ZERO_PASSES += 1
-    if _ZERO_PASSES < ZERO_PASSES_BEFORE_ALERT:
+    # Il modulo, e non un `>=`, perche' il testimone costa una query su un percorso
+    # caldo: il widget interroga ogni 20s, e chiedere a ogni passata oltre la soglia
+    # sarebbero ~1400 query al giorno a finestra di sette giorni per non dire nulla.
+    # Cosi' la domanda si paga una volta ogni sessanta passate, che e' la cadenza con
+    # cui al massimo si puo' gridare comunque.
+    if _ZERO_PASSES % ZERO_PASSES_BEFORE_ALERT:
         return
-    await _report_infra_throttled(
-        "zero-volume",
-        PublicNumbersAllZero(
-            f"the three public numbers have read zero for {ZERO_PASSES_BEFORE_ALERT} "
-            "consecutive passes (~1h of polling) while Prometheus answered 200 — "
-            "either nothing has run since yesterday, or the data is gone; check the "
-            "prometheus-data volume before assuming the first"
-        ),
+
+    storia = await _c_e_storia(client)
+    if storia:
+        # Il volume ha storia: i tre numeri sono zero perche' non e' girato niente,
+        # non perche' i dati siano spariti. E' il caso frequente — ogni weekend — ed
+        # e' l'unico silenzio nuovo che questa funzione introduce.
+        return
+
+    premessa = (
+        f"the three public numbers have read zero for {ZERO_PASSES_BEFORE_ALERT} "
+        "consecutive passes (~1h of polling) while Prometheus answered 200"
     )
+    # Due messaggi e non uno. Dire "no series in the last 7d" quando la query non ha
+    # risposto sarebbe un'affermazione che nessuno ha misurato, scritta in un evento
+    # che qualcuno leggera' alle tre di notte per decidere se il volume e' perso.
+    dettaglio = (
+        "and no series was found in the last 7d either — so this is NOT simply a "
+        "quiet stretch; check the prometheus-data volume first, then consider a "
+        "fresh deploy with no history yet, or an absence longer than 7d"
+        if storia is False
+        else "and the 7d history probe could not answer, so the quiet-stretch case "
+        "could NOT be ruled out — this event is as ambiguous as it was before the "
+        "probe existed; check the prometheus-data volume, and check why the probe "
+        "failed while the three queries did not"
+    )
+    await _report_infra_throttled("zero-volume", PublicNumbersAllZero(f"{premessa}, {dettaglio}"))
 
 
 @app.get("/healthz")
@@ -729,7 +789,9 @@ async def status(_: RequireToken, response: Response) -> dict:
         # watchdog must not share a failure path with the contract it guards. Same
         # client, so it costs one round trip on the private network, not a connection.
         await _check_persistence(client)
-        # Stessa passata, nessuna query in piu': i tre numeri sono gia' qui.
-        await _check_zero_volume(values)
+        # Stessa passata. I tre numeri sono gia' qui; il client serve solo alla
+        # seconda domanda, che parte una volta ogni ZERO_PASSES_BEFORE_ALERT passate
+        # a zero e mai sul percorso normale.
+        await _check_zero_volume(client, values)
 
     return values
