@@ -181,10 +181,19 @@ PRICES_USD_PER_MTOK = {
     #
     # IL NOME E' MISURATO, NON DEDOTTO, e la differenza qui e' concreta: l'evento
     # Sentry lo consegnava come `claude-opus-51m`, perche' `_etichetta_sicura` scarta
-    # `[` e `]` — e da una sanitizzazione non si torna indietro. Letto dalla dashboard
-    # Grafana con `group by (model) (claude_code_token_usage)`, che ha risposto
-    # `claude-opus-5[1m]` e `claude-haiku-4-5-20251001`: quei due e basta. Il
-    # `claude-opus-5` liscio qui sopra non lo emette nessuno — resta perche' costa
+    # `[` e `]` — e da una sanitizzazione non si torna indietro.
+    #
+    # Letto dalla dashboard Grafana con
+    # `group by (model) (max_over_time(claude_code_token_usage[7d]))`, che ha risposto
+    # `claude-opus-5[1m]`, `claude-haiku-4-5-20251001` e `claude-sonnet-5`.
+    # LA FINESTRA A 7 GIORNI E' LA MISURA, non un di piu': la stessa query in forma
+    # istantanea ne dava DUE, perche' `metric_expiration: 5m` toglie dall'esportatore
+    # una serie ferma da cinque minuti e Sonnet in quel momento taceva. Chiedere solo
+    # l'istantanea avrebbe fatto scoprire il buco da un allarme, non da una misura.
+    #
+    # Del `claude-opus-5` liscio qui sopra si puo' dire solo che NON LO ABBIAMO VISTO
+    # emesso in quella finestra — non che non lo emetta nessuno, che sarebbe una
+    # negazione tratta da sette giorni di osservazione. Resta in tabella perche' costa
     # niente e un modello che non arriva non fa danno, mentre uno che arriva e manca
     # sballa il numero pubblico.
     #
@@ -193,6 +202,13 @@ PRICES_USD_PER_MTOK = {
     # standard pricing" (platform.claude.com/docs/en/about-claude/pricing, letta il
     # 2026-08-31). Non esiste una tariffa a contesto lungo da applicare, quindi
     # copiare i numeri E' la lettura corretta della doc, non un'approssimazione.
+    #
+    # DUE modificatori del fornitore fanno divergere le tariffe di Opus 5, e nessuno
+    # dei due dipende dal contesto: fast mode ($10/$50) e `inference_geo: "us"` (x1,1).
+    # Nominati qui perche' chi legge non li cerchi: nessuno dei due si presenta come
+    # label `model` distinta, quindi nessuno dei due e' distinguibile da qui — se un
+    # domani venissero usati, questa tabella li prezzerebbe al listino base in
+    # silenzio. Assenza dichiarata, non controllo affermato.
     # Le due righe restano separate invece di condividere un dict: se un domani la
     # variante prendesse un prezzo suo, un alias condiviso lo cambierebbe a entrambe.
     "claude-opus-5[1m]": {

@@ -41,6 +41,17 @@ tests:
         values: '500000x5'
       - series: 'claude_code_token_usage{session_id="D",model="claude-opus-4-8",type="output"}'
         values: '400000x5'
+      # E prezza `claude-opus-5[1m]`, aggiunta il 2026-08-31 insieme al modello. Non e'
+      # un caso in piu' per completezza: e' l'UNICA chiave della tabella in cui
+      # scambiare `=` con `=~` non darebbe errore ma darebbe zero in silenzio, perche'
+      # sotto `=~` la regex di Prometheus e' ancorata e `[1m]` diventa una CLASSE DI
+      # CARATTERI — corrisponderebbe a `claude-opus-51` e `claude-opus-5m`, cioe' a
+      # niente di reale. Il pannello usa `=` ed e' corretto; questa serie e' cio' che
+      # lo tiene corretto domani.
+      - series: 'claude_code_token_usage{session_id="E",model="claude-opus-5[1m]",type="input"}'
+        values: '1000000x5'
+      - series: 'claude_code_token_usage{session_id="E",model="claude-opus-5[1m]",type="cacheRead"}'
+        values: '2000000x5'
 
     promql_expr_test:
       # The union form: one row per session, sessions with a partial model mix included.
@@ -54,6 +65,10 @@ tests:
            or claude_code_token_usage{model="claude-opus-5",type="output"} * 25
            or claude_code_token_usage{model="claude-opus-5",type="cacheCreation"} * 10
            or claude_code_token_usage{model="claude-opus-5",type="cacheRead"} * 0.5
+           or claude_code_token_usage{model="claude-opus-5[1m]",type="input"} * 5
+           or claude_code_token_usage{model="claude-opus-5[1m]",type="output"} * 25
+           or claude_code_token_usage{model="claude-opus-5[1m]",type="cacheCreation"} * 10
+           or claude_code_token_usage{model="claude-opus-5[1m]",type="cacheRead"} * 0.5
            or claude_code_token_usage{model="claude-opus-4-8",type="input"} * 5
            or claude_code_token_usage{model="claude-opus-4-8",type="output"} * 25
            or claude_code_token_usage{model="claude-opus-4-8",type="cacheCreation"} * 10
@@ -79,6 +94,9 @@ tests:
           # D: 4e5 output * 25 = 1e7 / 1e6 = 10
           - labels: '{session_id="D"}'
             value: 1.0e+01
+          # E: 1e6 input * 5 + 2e6 cacheRead * 0.5 = 6e6 / 1e6 = 6
+          - labels: '{session_id="E"}'
+            value: 6.0e+00
 
       # The naive form — per-model sums added with `+` — returns NOTHING at all:
       # `+` matches label sets, so a session missing any model drops out entirely.
