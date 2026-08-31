@@ -1430,6 +1430,13 @@ def test_the_zero_alert_forgets_as_soon_as_a_number_moves_again(monkeypatch):
     )
     _mock_persistence("0")
     vuota = _mock_cost([])
+    # SENZA QUESTA RIGA il test drifta di ramo, misurato il 31/08/2026. Da quando esiste
+    # il testimone, non mockarlo lo fa fallire, l'esito e' `None`, e l'evento esce sulla
+    # chiave "zero-volume-cieco": il `pop("zero-volume")` — cioe' cio' che questo test
+    # dichiara di sorvegliare — non veniva piu' esercitato da nessuno, e tre suoi mutanti
+    # sopravvivevano. Un test che cambia ramo sotto silenzio e' peggio di uno assente:
+    # continua a passare col nome di prima.
+    _mock_history([])
 
     def passata(sessioni: str) -> None:
         _mock_scalars(sessions=sessioni, tokens=sessioni)
@@ -1441,8 +1448,11 @@ def test_the_zero_alert_forgets_as_soon_as_a_number_moves_again(monkeypatch):
         passata("0")
     # Quattro passate, un evento solo: il limitatore fa il suo mestiere.
     assert sentry_call.call_count == 1
+    # La chiave e' quella della conclusione DEFINITIVA, non quella del ramo cieco.
+    assert "zero-volume" in main._INFRA_ALERTS_SENT
 
     passata("1")  # i numeri si muovono: il limitatore deve dimenticare
+    assert "zero-volume" not in main._INFRA_ALERTS_SENT
     for _ in range(2):
         passata("0")
 
@@ -1599,6 +1609,12 @@ def test_the_definitive_verdict_is_never_throttled_behind_the_ambiguous_one(monk
     _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
     assert sentry_call.call_count == 1
     assert "could not answer" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+    # QUALE chiave, non solo "una chiave diversa". Senza questa asserzione un mutante
+    # che scambia le due (`storia is not False`) resta vivo: le chiavi restano distinte,
+    # i due eventi partono lo stesso, e il test passa mentre l'etichetta del limitatore
+    # dice il contrario di cio' che e' successo.
+    assert "zero-volume-cieco" in main._INFRA_ALERTS_SENT
+    assert "zero-volume" not in main._INFRA_ALERTS_SENT
 
     # Poi: il testimone risponde, e dice che storia non ce n'e'. Siamo ancora ben
     # dentro INFRA_ALERT_INTERVAL_S, quindi se il secondo evento arriva puo' essere
@@ -1609,6 +1625,20 @@ def test_the_definitive_verdict_is_never_throttled_behind_the_ambiguous_one(monk
     assert orologio.adesso - 1_000.0 < main.INFRA_ALERT_INTERVAL_S
     assert sentry_call.call_count == 2
     assert "no series was found" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+    # Adesso ci sono ENTRAMBE: due conclusioni, due limitatori indipendenti.
+    assert "zero-volume" in main._INFRA_ALERTS_SENT
+    assert "zero-volume-cieco" in main._INFRA_ALERTS_SENT
+
+    # E il ramo sano deve dimenticarle TUTTE E DUE. Dimenticarne una sola farebbe
+    # scivolare la "prima comparsa" del prossimo periodo di zeri fino a un'ora dopo,
+    # per la conclusione dimenticata a meta' — che e' il difetto gia' pagato il
+    # 20/08/2026 su una chiave sola. Senza queste due righe i tre mutanti del
+    # `pop("zero-volume-cieco")` sopravvivevano: nessun test tornava alla salute
+    # partendo dal ramo cieco.
+    _mock_scalars(sessions="1", tokens="1")
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert "zero-volume" not in main._INFRA_ALERTS_SENT
+    assert "zero-volume-cieco" not in main._INFRA_ALERTS_SENT
 
 
 @respx.mock
