@@ -1573,6 +1573,45 @@ def test_a_witness_that_cannot_answer_never_buys_silence(monkeypatch):
 
 
 @respx.mock
+def test_the_definitive_verdict_is_never_throttled_behind_the_ambiguous_one(monkeypatch):
+    # Due conclusioni diverse non condividono una chiave di limitazione. Se il
+    # testimone prima non risponde (evento AMBIGUO) e poi risponde "nessuna serie"
+    # (evento DEFINITIVO, il guasto vero), il secondo deve partire subito: con una
+    # chiave sola resterebbe zitto un'ora dietro al primo, cioe' il limitatore
+    # comprerebbe silenzio proprio alla conclusione che vale di piu'.
+    #
+    # E' la stessa classe gia' pagata su "zero-volume" il 20/08/2026, quando il `pop`
+    # e la segnalazione usavano chiavi divergenti.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setattr(main, "ZERO_PASSES_BEFORE_ALERT", 2)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+
+    # Prima: il testimone non risponde -> evento ambiguo.
+    cieco = respx.get("http://prometheus:9090/api/v1/query", params={"query": HISTORY_Q}).mock(
+        return_value=httpx.Response(500)
+    )
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
+    assert sentry_call.call_count == 1
+    assert "could not answer" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+
+    # Poi: il testimone risponde, e dice che storia non ce n'e'. Siamo ancora ben
+    # dentro INFRA_ALERT_INTERVAL_S, quindi se il secondo evento arriva puo' essere
+    # arrivato solo perche' la chiave e' un'altra.
+    cieco.mock(return_value=httpx.Response(200, json={"data": {"result": []}}))
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
+
+    assert orologio.adesso - 1_000.0 < main.INFRA_ALERT_INTERVAL_S
+    assert sentry_call.call_count == 2
+    assert "no series was found" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+
+
+@respx.mock
 def test_the_witness_is_not_asked_before_the_threshold(monkeypatch):
     # Il testimone e' una query in piu' su un percorso caldo: il widget interroga ogni
     # 20s. Se partisse a ogni passata a zero invece che alla soglia, sarebbero
