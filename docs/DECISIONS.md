@@ -766,9 +766,21 @@ opens fewer pull requests, or none, and the way anybody finds out is an image qu
 going months stale. There is no way to force a Dependabot run and watch, so the change
 cannot be verified in the direction where it can hurt.
 
-So the two-PR shape stays, and the procedure is written where it is needed rather than
-remembered: `.github/dependabot.yml` says to take one of the two, bring the other half
-into the same branch by hand, and close the other. Done four times on 2026-08-22 (#153,
+**Narrowed 2026-08-31, and only for `github-actions`.** Everything above still holds for
+the docker/compose pair, which is what it was written about. But `groups` — singular, not
+`multi-ecosystem-groups` — is a different feature: one ecosystem, one directory,
+documented, and it fails *open* (a pattern matching nothing returns Dependabot to one PR
+per dependency, rather than quietly opening none). That was the whole objection, and it
+does not apply. So `github/codeql-action/init` and `.../analyze`, which Dependabot counts
+as two dependencies and the action refuses to run at two versions, are now grouped —
+**twice**, because `applies-to` "when undefined, defaults to version updates" and a single
+group would have left security updates arriving split, which is when the delay costs most.
+The docker/compose halves stay ungrouped: they are two *ecosystems*, so only the rejected
+feature would join them.
+
+So for docker the two-PR shape stays, and the procedure is written where it is needed
+rather than remembered: `.github/dependabot.yml` says to take one of the two, bring the
+other half into the same branch by hand, and close the other. Done four times on 2026-08-22 (#153,
 #154), it costs about two minutes. Reopen this if the vendor documents the interaction,
 or if a way to trigger a run on demand appears.
 
