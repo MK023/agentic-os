@@ -437,9 +437,16 @@ ambiguity needed `up` on the Collector; that was wrong and is worth saying why, 
 is wiped, so its presence separates nothing: it reads healthy on a lost volume and on a
 quiet weekend alike. What separates them is whether *the Claude Code series itself* has
 history behind the window —
-`count(max_over_time(claude_code_session_count{job="otel-collector"}[7d]))`, asked only
-on the pass that is about to alert, once per sixty zero passes. Series present ⇒ the
-volume is full and the absence is the operator's ⇒ silence. Empty vector ⇒ alert.
+`count(present_over_time(claude_code_session_count{job="otel-collector"}[7d]))`, asked
+only on the pass that is about to alert. Series present ⇒ the volume is full and the
+absence is the operator's ⇒ silence. Empty vector ⇒ alert.
+
+`present_over_time` — "the value 1 for any series in the specified interval" — and not
+`max_over_time`, which would answer the same question only as a side effect of taking a
+value nobody reads. The `compose` gate in `lint.yml` is what surfaced it: it requires
+**exactly three** `max_over_time` queries in `main.py`, because the three public numbers
+must move together, and a fourth turned it red before the merge. The right fix was not a
+wider count — it was noticing the function was wrong.
 
 **Seven days, not thirty.** Thirty would match `--storage.tsdb.retention.time`, but
 `retention.size` drops old blocks when the disk fills, *before* the days expire — that is

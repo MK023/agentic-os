@@ -569,10 +569,22 @@ _ZERO_PASSES = 0
 # stesso risultato, ed e' la confusione esatta che questo testimone esiste per sciogliere
 # — la stessa gia' scritta per `_check_persistence`: no series means no rule can fire.
 #
+# `present_over_time` e non `max_over_time`, e la differenza non e' cosmetica.
+# Documentazione Prometheus, alla lettera: "the value 1 for any series in the specified
+# interval". E' LA domanda, mentre `max_over_time` la risponderebbe solo per effetto
+# collaterale — si prende il massimo e poi si guarda se il vettore e' vuoto, che e' un
+# valore usato come sonda di presenza. Con `present_over_time` la query dice cio' che
+# chiede, e non dipende dai valori: una serie ci sarebbe anche se fosse tutta a zero.
+#
+# Il gate `compose` in lint.yml lo ha reso evidente prima del merge: pretende
+# ESATTAMENTE tre `max_over_time` in questo file, perche' le tre query pubbliche devono
+# muoversi insieme. Questa era la quarta e il gate e' andato rosso. La correzione giusta
+# non era allargare il conteggio — era accorgersi che la funzione era sbagliata.
+#
 # La finestra e' DIVERSA da quella di QUERIES apposta. Se qualcuno le allineasse, il
 # testimone risponderebbe sempre come i tre numeri e smetterebbe di testimoniare senza
 # che niente diventi rosso: e' un accoppiamento fra due costanti che va saputo prima.
-HISTORY_QUERY = 'count(max_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
+HISTORY_QUERY = 'count(present_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
 
 
 async def _c_e_storia(client: httpx.AsyncClient) -> bool | None:

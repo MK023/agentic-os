@@ -29,7 +29,7 @@ client = TestClient(app)
 # sopra. La finestra e' larga E DIVERSA da 25h apposta: se qualcuno allineasse le due,
 # il testimone risponderebbe sempre come i tre numeri e smetterebbe di testimoniare
 # senza che niente diventi rosso.
-HISTORY_Q = 'count(max_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
+HISTORY_Q = 'count(present_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
 SESSIONS_Q = 'sum(max_over_time(claude_code_session_count{job="otel-collector"}[25h]))'
 TOKENS_Q = 'sum(max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
 COST_Q = 'sum by (model, type) (max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
