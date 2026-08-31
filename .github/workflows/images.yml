@@ -352,6 +352,20 @@ jobs:
           print(f"tariffe allineate nei tre posti: {trovate}")
           PY
 
+      # Il gate qui sopra confronta le TARIFFE nei tre posti, e il 31/08/2026 e' stato
+      # verde mentre i tre divergevano: la produzione ha emesso `claude-opus-5[1m]`,
+      # e un modello NUOVO che riusa tariffe gia' presenti — il caso normale, cinque
+      # tariffe per sei modelli — attraversa quel confronto senza muovere niente.
+      # Confrontare la dimensione sbagliata non e' un gate debole: dichiara allineati
+      # tre file che non lo sono, e chi legge smette di guardare.
+      #
+      # Questo confronta i NOMI DEI MODELLI, che e' la dimensione dove la deriva era.
+      # Sta in uno script invece che qui perche' si possa eseguire in locale prima di
+      # aprire la PR, come gli altri `scripts/prova-*`: un gate che si scopre solo
+      # dalla CI costa un giro di push per ogni tentativo.
+      - name: i nomi dei modelli sono gli stessi nei tre posti
+        run: python3 scripts/prova-prezzario-allineato.py
+
       # Stessa famiglia del gate qui sopra, ma le meta' sono TRE, e questo gate e'
       # nato sbagliando proprio quello: scritto per confrontare Dockerfile e compose,
       # ignorava il pannello Grafana — che nello stesso commit era rimasto a 300MB ed
