@@ -176,6 +176,53 @@ PRICES_USD_PER_MTOK = {
         "cacheCreation": 10.00,
         "cacheRead": 0.50,
     },
+    # La variante a contesto 1M, aggiunta il 2026-08-31 dopo che la produzione l'ha
+    # emessa e questa tabella non la conosceva (AGENTI-OS-9, tre occorrenze in due ore).
+    #
+    # IL NOME E' MISURATO, NON DEDOTTO, e la differenza qui e' concreta: l'evento
+    # Sentry lo consegnava come `claude-opus-51m`, perche' `_etichetta_sicura` scarta
+    # `[` e `]` — e da una sanitizzazione non si torna indietro.
+    #
+    # Letto dalla dashboard Grafana con un `group by (model)` sopra un `max_over_time`
+    # a SETTE GIORNI della serie dei token, che ha risposto `claude-opus-5[1m]`,
+    # `claude-haiku-4-5-20251001` e `claude-sonnet-5`. La query e' descritta a parole e
+    # non citata, ed e' deliberato: il gate `compose` di images.yml conta nel sorgente
+    # le occorrenze testuali della funzione di finestra applicata alle metriche di
+    # Claude Code, e ne pretende esattamente TRE — le tre query pubbliche. Citare qui
+    # una quarta query in forma letterale lo fa contare quattro e diventa rosso.
+    # Successo tre volte il 31/08/2026, l'ultima proprio mentre si scriveva questo
+    # avvertimento: il gate conta TESTO, non query, e i commenti sono testo.
+    # LA FINESTRA A 7 GIORNI E' LA MISURA, non un di piu': la stessa query in forma
+    # istantanea ne dava DUE, perche' `metric_expiration: 5m` toglie dall'esportatore
+    # una serie ferma da cinque minuti e Sonnet in quel momento taceva. Chiedere solo
+    # l'istantanea avrebbe fatto scoprire il buco da un allarme, non da una misura.
+    #
+    # Del `claude-opus-5` liscio qui sopra si puo' dire solo che NON LO ABBIAMO VISTO
+    # emesso in quella finestra — non che non lo emetta nessuno, che sarebbe una
+    # negazione tratta da sette giorni di osservazione. Resta in tabella perche' costa
+    # niente e un modello che non arriva non fa danno, mentre uno che arriva e manca
+    # sballa il numero pubblico.
+    #
+    # Stesse tariffe della riga sopra, e non per pigrizia: il fornitore lo dichiara —
+    # "Claude 4.6 and later models include the full 1M token context window at
+    # standard pricing" (platform.claude.com/docs/en/about-claude/pricing, letta il
+    # 2026-08-31). Non esiste una tariffa a contesto lungo da applicare, quindi
+    # copiare i numeri E' la lettura corretta della doc, non un'approssimazione.
+    #
+    # DUE modificatori del fornitore fanno divergere le tariffe di Opus 5, e nessuno
+    # dei due dipende dal contesto: fast mode ($10/$50) e `inference_geo: "us"` (x1,1).
+    # Nominati qui perche' chi legge non li cerchi: nessuno dei due si presenta come
+    # label `model` distinta, quindi nessuno dei due e' distinguibile da qui — se un
+    # domani venissero usati, questa tabella li prezzerebbe al listino base in
+    # silenzio. Assenza dichiarata, non controllo affermato.
+    # Le due righe restano separate invece di condividere un dict: se un domani la
+    # variante prendesse un prezzo suo, un alias condiviso lo cambierebbe a entrambe.
+    "claude-opus-5[1m]": {
+        "input": 5.00,
+        "output": 25.00,
+        "cacheCreation": 10.00,
+        "cacheRead": 0.50,
+    },
     # Aggiunto il 2026-08-21 perche' la produzione lo ha emesso e questa tabella non
     # lo conosceva: l'evento UnknownPricingKey che questa tabella esiste per
     # rispondere e' arrivato davvero (AGENTI-OS-8, tre occorrenze). Fino ad allora

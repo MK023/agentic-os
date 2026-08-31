@@ -158,6 +158,42 @@ def test_unknown_model_is_priced_high_and_reported_not_dropped(monkeypatch):
 
 
 @respx.mock
+def test_the_1m_context_variant_is_priced_like_plain_opus_5_and_reported_never(monkeypatch):
+    # MISURATO IL 31/08/2026, non dedotto: `group by (model)
+    # (max_over_time(claude_code_token_usage[7d]))` su Grafana ha dato tre modelli —
+    # `claude-opus-5[1m]`, `claude-haiku-4-5-20251001`, `claude-sonnet-5`. La finestra
+    # a 7 giorni e' la misura: in forma istantanea la stessa query ne dava due, perche'
+    # `metric_expiration: 5m` nasconde le serie ferme.
+    #
+    # Il nome NON si poteva ricostruire dall'evento Sentry, che sanitizza le etichette
+    # e lo consegnava come `claude-opus-51m`: le parentesi quadre cadono
+    # nell'allow-list, e da li' non si torna indietro.
+    #
+    # Stesse tariffe di `claude-opus-5`, e non e' una comodita': la documentazione del
+    # fornitore lo dichiara — "Claude 4.6 and later models include the full 1M token
+    # context window at standard pricing" (letta il 31/08/2026). Non esiste una
+    # tariffa lunga separata da applicare.
+    #
+    # Il test asserisce ENTRAMBE le meta': il prezzo giusto E il silenzio. Senza la
+    # seconda, una chiave scritta male continuerebbe a pagare la tariffa piu' cara e
+    # il test passerebbe lo stesso sul ramo di fallback.
+    monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars()
+    _mock_cost([_serie("claude-opus-5[1m]", "output", 1_000_000)])
+
+    response = client.get("/status", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 200
+    # 25.00, non 50.00: la tariffa di Opus 5, non quella di ripiego.
+    assert response.json()["cost_usd_today"] == 25.00
+    assert not sentry_call.called
+
+
+@respx.mock
 def test_unknown_token_type_is_priced_high_and_reported_not_dropped(monkeypatch):
     # Same contract one level down: Claude Code's telemetry is beta and its `type`
     # values are not a frozen set, so a new one (a second cache tier, say) must not
@@ -261,14 +297,22 @@ def test_opus_4_8_ha_un_prezzo_suo_e_non_il_fallback():
 
 @respx.mock
 def test_every_model_is_priced_from_its_own_row_not_the_fallback(monkeypatch):
-    # One series per (model, type) in the table, one million tokens each: the
-    # expected total is simply the sum of all twenty list rates (cinque modelli per
-    # quattro tipi — erano sedici finche' la tabella non ha conosciuto Opus 4.8).
-    # With several
-    # models in the table the fallback rates no longer equal any single model's
-    # rates, so this pins each row's numbers individually — a mutated price, a
-    # misspelled model key or a silent fall-through changes the total or fires
-    # a Sentry gap report, and either fails the test.
+    # One series per (model, type) in the table, one million tokens each: the expected
+    # total is simply the sum of all twenty-four list rates (sei modelli per quattro
+    # tipi — erano venti finche' la tabella non ha conosciuto la variante a contesto 1M
+    # di Opus 5, e sedici prima di Opus 4.8). With several models in the table the
+    # fallback rates no longer equal any single model's rates, so this pins each row's
+    # numbers individually — a mutated price or a silent fall-through changes the total
+    # or fires a Sentry gap report, and either fails the test.
+    #
+    # CIO' CHE QUESTO TEST NON PUO' VEDERE, corretto il 31/08/2026 perche' la riga
+    # sopra elencava anche "a misspelled model key" ed era falso: le serie si generano
+    # iterando `main.PRICES_USD_PER_MTOK`, quindi l'oracolo vive dentro il file sotto
+    # esame. Scrivere male una chiave la scrive male anche qui, la ricerca la trova, il
+    # fallback non scatta e il totale non cambia — misurato mutando la chiave in
+    # `claude-opus-51m`: questo test passa. A coprirlo e' il test che scrive il nome A
+    # MANO (`test_the_1m_context_variant_...`), e attribuire quella copertura a questo
+    # test faceva smettere di cercarla altrove.
     monkeypatch.setattr(main, "_PRICING_GAPS_REPORTED", set())
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
     sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
@@ -286,11 +330,13 @@ def test_every_model_is_priced_from_its_own_row_not_the_fallback(monkeypatch):
     response = client.get("/status", headers={"Authorization": "Bearer test-token"})
 
     assert response.status_code == 200
-    # fable 81.00 + opus-5 40.50 + opus-4-8 40.50 + sonnet-5 16.20 + haiku 8.10.
-    # Si aggiorna A MANO quando la tabella cambia, ed e' il gesto che si vuole
-    # rendere visibile: il 2026-08-21 questa riga e' diventata rossa da sola perche'
-    # sonnet-5 e' passato da 24.30 a 16.20, cioe' il repository sovrastimava del 50%.
-    assert response.json()["cost_usd_today"] == 186.30
+    # fable 81.00 + opus-5 40.50 + opus-5[1m] 40.50 + opus-4-8 40.50 + sonnet-5 16.20
+    # + haiku 8.10. Si aggiorna A MANO quando la tabella cambia, ed e' il gesto che si
+    # vuole rendere visibile: il 2026-08-21 questa riga e' diventata rossa da sola
+    # perche' sonnet-5 e' passato da 24.30 a 16.20, cioe' il repository sovrastimava
+    # del 50%; il 2026-08-31 e' diventata rossa di nuovo all'arrivo della variante 1M,
+    # che e' esattamente cio' che deve fare quando la tabella cresce.
+    assert response.json()["cost_usd_today"] == 226.80
     assert not sentry_call.called
 
 
