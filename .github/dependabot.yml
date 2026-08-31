@@ -117,3 +117,51 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(ci)"
+    # `github/codeql-action/init` e `.../analyze` sono due DIPENDENZE distinte per
+    # Dependabot e una cosa sola per l'action, che si rifiuta di girare se le due
+    # metà divergono: "Loaded a configuration file for version '4.37.8', but running
+    # version '4.37.7'". Senza questo gruppo arrivano in due PR (#165/#166,
+    # 25-08-2026) ed è ROSSA CIASCUNA DA SOLA — nessuna delle due può entrare per
+    # prima, quindi restano ferme finché qualcuno non le unisce a mano. Il pin
+    # invecchia mentre due PR aperte danno l'impressione contraria.
+    #
+    # `groups` NON è `multi-ecosystem-groups`, scartato più sopra: quello attraversa
+    # più ecosistemi, questo lavora dentro un solo ecosistema e una sola directory.
+    # La differenza che conta è il modo di sbagliare: se un pattern non prende
+    # niente, Dependabot torna ad aprire una PR per dipendenza. Fallisce APERTO,
+    # cioè rumoroso, non smettendo di proporre in silenzio — che era l'obiezione
+    # contro l'altro meccanismo, ed è l'unica ragione per cui questo si può adottare
+    # senza poterlo provare in anticipo.
+    #
+    # SUI RAPPORTI CON `ignore`, detto per quello che è: il fornitore documenta un
+    # ordine generale — "Check for all explicitly allowed dependencies. Then filter
+    # out any ignored dependencies or versions" (letto il 31-08-2026) — e NON una
+    # frase specifica su `groups` più `ignore`. Qui non morde comunque: i due
+    # `ignore` di questo file stanno su `grafana/grafana`, ecosistema docker, e
+    # questo gruppo vive nella voce `github-actions`. Nessuna sovrapposizione da
+    # arbitrare, quindi la domanda resta aperta e innocua invece di essere dichiarata
+    # chiusa. Se un domani un `ignore` finisse su un'action, va verificato allora.
+    #
+    # DUE GRUPPI E NON UNO, e il secondo è quello che conta di più. `applies-to`
+    # "when undefined, defaults to version updates": un gruppo solo lascerebbe fuori
+    # proprio gli aggiornamenti di SICUREZZA, cioè il caso in cui la divergenza
+    # init/analyze costa di più — due PR rosse ciascuna da sola mentre è aperta
+    # un'advisory. Trovato da due revisioni avversarie indipendenti il 31-08-2026,
+    # entrambe sullo stesso punto; la prima stesura di questo file aveva un gruppo
+    # solo ed era esattamente quel buco.
+    #
+    # Stretti di proposito. Un gruppo su tutte le action ridurrebbe il rumore e
+    # peggiorerebbe la diagnosi: un solo bump rotto bloccherebbe anche le altre sei
+    # famiglie (checkout, setup-python, dependency-review, trivy, checkov,
+    # sonarqube-scan), da spacchettare a mano per sapere quale. Qui il difetto curato
+    # è "due metà dello stesso strumento devono muoversi insieme", e la cura ha
+    # esattamente quel raggio.
+    groups:
+      codeql-action:
+        applies-to: version-updates
+        patterns:
+          - "github/codeql-action*"
+      codeql-action-security:
+        applies-to: security-updates
+        patterns:
+          - "github/codeql-action*"
