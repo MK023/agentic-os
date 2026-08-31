@@ -183,9 +183,15 @@ PRICES_USD_PER_MTOK = {
     # Sentry lo consegnava come `claude-opus-51m`, perche' `_etichetta_sicura` scarta
     # `[` e `]` — e da una sanitizzazione non si torna indietro.
     #
-    # Letto dalla dashboard Grafana con
-    # `group by (model) (max_over_time(claude_code_token_usage[7d]))`, che ha risposto
-    # `claude-opus-5[1m]`, `claude-haiku-4-5-20251001` e `claude-sonnet-5`.
+    # Letto dalla dashboard Grafana con un `group by (model)` sopra un `max_over_time`
+    # a SETTE GIORNI della serie dei token, che ha risposto `claude-opus-5[1m]`,
+    # `claude-haiku-4-5-20251001` e `claude-sonnet-5`. La query e' descritta a parole e
+    # non citata, ed e' deliberato: il gate `compose` di images.yml conta nel sorgente
+    # le occorrenze testuali della funzione di finestra applicata alle metriche di
+    # Claude Code, e ne pretende esattamente TRE — le tre query pubbliche. Citare qui
+    # una quarta query in forma letterale lo fa contare quattro e diventa rosso.
+    # Successo tre volte il 31/08/2026, l'ultima proprio mentre si scriveva questo
+    # avvertimento: il gate conta TESTO, non query, e i commenti sono testo.
     # LA FINESTRA A 7 GIORNI E' LA MISURA, non un di piu': la stessa query in forma
     # istantanea ne dava DUE, perche' `metric_expiration: 5m` toglie dall'esportatore
     # una serie ferma da cinque minuti e Sonnet in quel momento taceva. Chiedere solo
