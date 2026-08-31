@@ -176,6 +176,31 @@ PRICES_USD_PER_MTOK = {
         "cacheCreation": 10.00,
         "cacheRead": 0.50,
     },
+    # La variante a contesto 1M, aggiunta il 2026-08-31 dopo che la produzione l'ha
+    # emessa e questa tabella non la conosceva (AGENTI-OS-9, tre occorrenze in due ore).
+    #
+    # IL NOME E' MISURATO, NON DEDOTTO, e la differenza qui e' concreta: l'evento
+    # Sentry lo consegnava come `claude-opus-51m`, perche' `_etichetta_sicura` scarta
+    # `[` e `]` — e da una sanitizzazione non si torna indietro. Letto dalla dashboard
+    # Grafana con `group by (model) (claude_code_token_usage)`, che ha risposto
+    # `claude-opus-5[1m]` e `claude-haiku-4-5-20251001`: quei due e basta. Il
+    # `claude-opus-5` liscio qui sopra non lo emette nessuno — resta perche' costa
+    # niente e un modello che non arriva non fa danno, mentre uno che arriva e manca
+    # sballa il numero pubblico.
+    #
+    # Stesse tariffe della riga sopra, e non per pigrizia: il fornitore lo dichiara —
+    # "Claude 4.6 and later models include the full 1M token context window at
+    # standard pricing" (platform.claude.com/docs/en/about-claude/pricing, letta il
+    # 2026-08-31). Non esiste una tariffa a contesto lungo da applicare, quindi
+    # copiare i numeri E' la lettura corretta della doc, non un'approssimazione.
+    # Le due righe restano separate invece di condividere un dict: se un domani la
+    # variante prendesse un prezzo suo, un alias condiviso lo cambierebbe a entrambe.
+    "claude-opus-5[1m]": {
+        "input": 5.00,
+        "output": 25.00,
+        "cacheCreation": 10.00,
+        "cacheRead": 0.50,
+    },
     # Aggiunto il 2026-08-21 perche' la produzione lo ha emesso e questa tabella non
     # lo conosceva: l'evento UnknownPricingKey che questa tabella esiste per
     # rispondere e' arrivato davvero (AGENTI-OS-8, tre occorrenze). Fino ad allora
