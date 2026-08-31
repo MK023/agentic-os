@@ -611,13 +611,16 @@ async def _check_zero_volume(client: httpx.AsyncClient, values: dict) -> None:
         return
 
     _ZERO_PASSES += 1
-    # Il modulo, e non un `>=`, perche' il testimone costa una query su un percorso
-    # caldo: il widget interroga ogni 20s, e chiedere a ogni passata oltre la soglia
-    # sarebbero ~1400 query al giorno a finestra di sette giorni per non dire nulla.
-    # Cosi' la domanda si paga una volta ogni sessanta passate, che e' la cadenza con
-    # cui al massimo si puo' gridare comunque.
-    if _ZERO_PASSES % ZERO_PASSES_BEFORE_ALERT:
+    if _ZERO_PASSES < ZERO_PASSES_BEFORE_ALERT:
         return
+    # Un `<`, e non il `% ZERO_PASSES_BEFORE_ALERT` che stava qui il 31/08/2026 per
+    # risparmiare query: in Python `-60 % 60` e' 0, quindi il modulo rendeva
+    # EQUIVALENTE il mutante `_ZERO_PASSES -= 1` — un contatore che va all'indietro
+    # avrebbe continuato ad allarmare alla stessa cadenza, e mutmut lo ha mostrato
+    # (sopravvissuto, dove col `<` muore). Il risparmio difeso era anche sopravvalutato:
+    # oltre la soglia si paga una query in piu' per passata, cioe' qualche centinaio
+    # durante un'assenza, su un `count()` in un TSDB minuscolo. Un contatore che
+    # conserva la direzione vale piu' di quelle query.
 
     storia = await _c_e_storia(client)
     if storia:

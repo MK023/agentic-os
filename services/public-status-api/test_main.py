@@ -1554,12 +1554,22 @@ def test_a_witness_that_cannot_answer_never_buys_silence(monkeypatch):
     assert sentry_call.called
     evento = _evento_inviato(sentry_call)
     assert evento["exception"]["values"][0]["type"] == "PublicNumbersAllZero"
-    # E il messaggio NON deve affermare cio' che non e' stato misurato. Un evento che
+    # Il messaggio si asserisce PER INTERO, non a pezzi. Due ragioni. La prima e' la
+    # stessa gia' scritta in mutation.yml: quel testo e' l'unica istruzione operativa
+    # che riceve chi trova il guasto, quindi appartiene al contratto. La seconda e'
+    # misurata il 31/08/2026 — con `assert "could not answer" in valore` cinque
+    # mutanti di questi letterali sopravvivevano, maiuscolatura compresa.
+    #
+    # E soprattutto NON deve affermare cio' che non e' stato misurato: un evento che
     # dicesse "no series in the last 7d" quando la query non ha risposto manderebbe
     # chi lo legge a cercare un volume perso sulla base di niente.
-    valore = evento["exception"]["values"][0]["value"]
-    assert "could not answer" in valore
-    assert "no series was found" not in valore
+    assert evento["exception"]["values"][0]["value"] == (
+        "the three public numbers have read zero for 60 consecutive passes (~1h of "
+        "polling) while Prometheus answered 200, and the 7d history probe could not "
+        "answer, so the quiet-stretch case could NOT be ruled out — this event is as "
+        "ambiguous as it was before the probe existed; check the prometheus-data "
+        "volume, and check why the probe failed while the three queries did not"
+    )
 
 
 @respx.mock
