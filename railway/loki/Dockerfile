@@ -8,7 +8,7 @@
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Verificato il 2026-08-20 che 3.7.6 e' l'ultima 3.x pubblicata
 # (v3.7.6, 2026-08-06) — un digest vecchio pinna un'immagine vecchia in silenzio.
-FROM grafana/loki:3.7.6@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
+FROM grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
 
 # 10001 e' l'utente che l'immagine di Loki usa gia' (letto con `docker inspect`,
 # non assunto).
