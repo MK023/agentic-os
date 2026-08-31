@@ -25,6 +25,11 @@ client = TestClient(app)
 # pubblica di uno stack di prova. Queste costanti sono duplicate apposta rispetto a
 # `QUERIES`: se qualcuno cambia la query in main.py e non qui, questi test vanno
 # rossi — e' il loro mestiere, ed e' successo davvero il giorno del cambio.
+# Il testimone del watchdog degli zeri, duplicato qui per la stessa ragione delle tre
+# sopra. La finestra e' larga E DIVERSA da 25h apposta: se qualcuno allineasse le due,
+# il testimone risponderebbe sempre come i tre numeri e smetterebbe di testimoniare
+# senza che niente diventi rosso.
+HISTORY_Q = 'count(present_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
 SESSIONS_Q = 'sum(max_over_time(claude_code_session_count{job="otel-collector"}[25h]))'
 TOKENS_Q = 'sum(max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
 COST_Q = 'sum by (model, type) (max_over_time(claude_code_token_usage{job="otel-collector"}[25h]))'
@@ -1323,6 +1328,10 @@ def test_three_zeros_that_last_are_said_out_loud_instead_of_being_served_in_sile
     _mock_scalars(sessions="0", tokens="0")
     _mock_cost([])
     _mock_persistence("0")
+    # Nessuna serie nemmeno in sette giorni: il TSDB e' svuotato davvero, non e' una
+    # pausa. Dal 31/08/2026 questo mock e' cio' che distingue questo test dal caso
+    # innocuo — prima non c'era e il test non sapeva di stare asserendo entrambi.
+    _mock_history([])
 
     for _ in range(main.ZERO_PASSES_BEFORE_ALERT - 1):
         assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
@@ -1337,9 +1346,10 @@ def test_three_zeros_that_last_are_said_out_loud_instead_of_being_served_in_sile
     assert evento["exception"]["values"][0]["type"] == "PublicNumbersAllZero"
     assert evento["exception"]["values"][0]["value"] == (
         "the three public numbers have read zero for 60 consecutive passes (~1h of "
-        "polling) while Prometheus answered 200 — either nothing has run since "
-        "yesterday, or the data is gone; check the prometheus-data volume before "
-        "assuming the first"
+        "polling) while Prometheus answered 200, and no series was found in the last "
+        "7d either — so this is NOT simply a quiet stretch; check the prometheus-data "
+        "volume first, then consider a fresh deploy with no history yet, or an "
+        "absence longer than 7d"
     )
     assert evento["tags"]["endpoint"] == "status"
 
@@ -1420,6 +1430,13 @@ def test_the_zero_alert_forgets_as_soon_as_a_number_moves_again(monkeypatch):
     )
     _mock_persistence("0")
     vuota = _mock_cost([])
+    # SENZA QUESTA RIGA il test drifta di ramo, misurato il 31/08/2026. Da quando esiste
+    # il testimone, non mockarlo lo fa fallire, l'esito e' `None`, e l'evento esce sulla
+    # chiave "zero-volume-cieco": il `pop("zero-volume")` — cioe' cio' che questo test
+    # dichiara di sorvegliare — non veniva piu' esercitato da nessuno, e tre suoi mutanti
+    # sopravvivevano. Un test che cambia ramo sotto silenzio e' peggio di uno assente:
+    # continua a passare col nome di prima.
+    _mock_history([])
 
     def passata(sessioni: str) -> None:
         _mock_scalars(sessions=sessioni, tokens=sessioni)
@@ -1431,8 +1448,11 @@ def test_the_zero_alert_forgets_as_soon_as_a_number_moves_again(monkeypatch):
         passata("0")
     # Quattro passate, un evento solo: il limitatore fa il suo mestiere.
     assert sentry_call.call_count == 1
+    # La chiave e' quella della conclusione DEFINITIVA, non quella del ramo cieco.
+    assert "zero-volume" in main._INFRA_ALERTS_SENT
 
     passata("1")  # i numeri si muovono: il limitatore deve dimenticare
+    assert "zero-volume" not in main._INFRA_ALERTS_SENT
     for _ in range(2):
         passata("0")
 
@@ -1440,3 +1460,201 @@ def test_the_zero_alert_forgets_as_soon_as_a_number_moves_again(monkeypatch):
     # INFRA_ALERT_INTERVAL_S, quindi puo' essere arrivato solo dal `pop`.
     assert orologio.adesso - 1_000.0 < main.INFRA_ALERT_INTERVAL_S
     assert sentry_call.call_count == 2
+
+
+def _mock_history(series: list[dict]):
+    """La seconda domanda del watchdog degli zeri: esiste storia oltre la finestra?
+
+    `series` vuota = vettore vuoto = nessuna serie in sette giorni. NON e' zero, ed e'
+    esattamente la distinzione che il testimone esiste per fare.
+    """
+    return respx.get("http://prometheus:9090/api/v1/query", params={"query": HISTORY_Q}).mock(
+        return_value=httpx.Response(200, json={"data": {"result": series}})
+    )
+
+
+def _passate_a_zero(orologio, quante: int) -> None:
+    for _ in range(quante):
+        assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+        orologio.avanza(main.STATUS_CACHE_TTL_S + 1)
+
+
+@respx.mock
+def test_a_quiet_stretch_longer_than_the_window_is_not_reported_as_a_lost_volume(monkeypatch):
+    # IL CASO PER CUI ESISTE IL TESTIMONE. Le tre query guardano indietro 25h, quindi
+    # qualunque pausa piu' lunga di 25h le porta a zero legittimamente: un weekend
+    # basta. Misurato in produzione il 31/08/2026 — otto eventi in otto ore, tutti
+    # innocui, l'ultima attivita' reale era a mezzanotte del giorno prima.
+    #
+    # Un allarme che grida a ogni weekend e' un allarme che qualcuno silenzia, e un
+    # watchdog silenziato e' peggio di uno assente: risulta acceso.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+    # La storia c'e': quattro serie viste negli ultimi sette giorni. Il volume e'
+    # pieno, i dati ci sono, Marco era via.
+    _mock_history([{"metric": {}, "value": [0, "4"]}])
+
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT + 1)
+
+    assert not sentry_call.called
+
+
+@respx.mock
+def test_zeros_with_no_history_behind_them_are_still_reported(monkeypatch):
+    # L'altra meta': se NEMMENO la finestra larga trova una serie, le ipotesi restano
+    # tre — volume perso, deploy nuovo senza storia, assenza oltre i sette giorni — e
+    # solo la prima e' un guasto. Si grida lo stesso, dicendo che non si sa quale.
+    # Tacere qui rimetterebbe il volume perso esattamente dov'era: invisibile.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+    _mock_history([])  # vettore vuoto: nessuna serie in sette giorni
+
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
+
+    evento = _evento_inviato(sentry_call)
+    assert evento["exception"]["values"][0]["type"] == "PublicNumbersAllZero"
+    valore = evento["exception"]["values"][0]["value"]
+    # `"7d" in valore` NON basta, misurato il 31/08/2026: anche il messaggio del ramo
+    # ambiguo nomina 7d, quindi un mutante che fa sollevare la sonda sul vettore vuoto
+    # (IndexError inghiottita, esito None) passava questo test. L'asserzione deve
+    # distinguere i due messaggi, non solo constatare che un evento e' partito.
+    assert "no series was found in the last 7d" in valore
+    assert "could not answer" not in valore
+    # Le altre due ipotesi nominate, perche' chi legge l'evento alle tre di notte
+    # sappia cosa guardare invece di dedurlo.
+    assert "prometheus-data volume" in valore
+    assert "fresh deploy" in valore
+
+
+@respx.mock
+def test_a_witness_that_cannot_answer_never_buys_silence(monkeypatch):
+    # Il modo in cui questa modifica poteva peggiorare le cose invece di migliorarle:
+    # un testimone che degrada al silenzio rende MUTO il watchdog proprio quando
+    # Prometheus e' mezzo rotto — risponde alle tre query e non alla quarta. Sarebbe
+    # aggiungere un guasto silenzioso mentre se ne cura uno rumoroso.
+    #
+    # Percio' sul ramo d'errore si torna al comportamento di prima: si grida col
+    # messaggio ambiguo. Peggio essere ambigui che zitti.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+    respx.get("http://prometheus:9090/api/v1/query", params={"query": HISTORY_Q}).mock(
+        return_value=httpx.Response(500)
+    )
+
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
+
+    assert sentry_call.called
+    evento = _evento_inviato(sentry_call)
+    assert evento["exception"]["values"][0]["type"] == "PublicNumbersAllZero"
+    # Il messaggio si asserisce PER INTERO, non a pezzi. Due ragioni. La prima e' la
+    # stessa gia' scritta in mutation.yml: quel testo e' l'unica istruzione operativa
+    # che riceve chi trova il guasto, quindi appartiene al contratto. La seconda e'
+    # misurata il 31/08/2026 — con `assert "could not answer" in valore` cinque
+    # mutanti di questi letterali sopravvivevano, maiuscolatura compresa.
+    #
+    # E soprattutto NON deve affermare cio' che non e' stato misurato: un evento che
+    # dicesse "no series in the last 7d" quando la query non ha risposto manderebbe
+    # chi lo legge a cercare un volume perso sulla base di niente.
+    assert evento["exception"]["values"][0]["value"] == (
+        "the three public numbers have read zero for 60 consecutive passes (~1h of "
+        "polling) while Prometheus answered 200, and the 7d history probe could not "
+        "answer, so the quiet-stretch case could NOT be ruled out — this event is as "
+        "ambiguous as it was before the probe existed; check the prometheus-data "
+        "volume, and check why the probe failed while the three queries did not"
+    )
+
+
+@respx.mock
+def test_the_definitive_verdict_is_never_throttled_behind_the_ambiguous_one(monkeypatch):
+    # Due conclusioni diverse non condividono una chiave di limitazione. Se il
+    # testimone prima non risponde (evento AMBIGUO) e poi risponde "nessuna serie"
+    # (evento DEFINITIVO, il guasto vero), il secondo deve partire subito: con una
+    # chiave sola resterebbe zitto un'ora dietro al primo, cioe' il limitatore
+    # comprerebbe silenzio proprio alla conclusione che vale di piu'.
+    #
+    # E' la stessa classe gia' pagata su "zero-volume" il 20/08/2026, quando il `pop`
+    # e la segnalazione usavano chiavi divergenti.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setattr(main, "ZERO_PASSES_BEFORE_ALERT", 2)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    sentry_call = respx.post("https://example.sentry.io/api/9/envelope/").mock(
+        return_value=httpx.Response(200)
+    )
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+
+    # Prima: il testimone non risponde -> evento ambiguo.
+    cieco = respx.get("http://prometheus:9090/api/v1/query", params={"query": HISTORY_Q}).mock(
+        return_value=httpx.Response(500)
+    )
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
+    assert sentry_call.call_count == 1
+    assert "could not answer" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+    # QUALE chiave, non solo "una chiave diversa". Senza questa asserzione un mutante
+    # che scambia le due (`storia is not False`) resta vivo: le chiavi restano distinte,
+    # i due eventi partono lo stesso, e il test passa mentre l'etichetta del limitatore
+    # dice il contrario di cio' che e' successo.
+    assert "zero-volume-cieco" in main._INFRA_ALERTS_SENT
+    assert "zero-volume" not in main._INFRA_ALERTS_SENT
+
+    # Poi: il testimone risponde, e dice che storia non ce n'e'. Siamo ancora ben
+    # dentro INFRA_ALERT_INTERVAL_S, quindi se il secondo evento arriva puo' essere
+    # arrivato solo perche' la chiave e' un'altra.
+    cieco.mock(return_value=httpx.Response(200, json={"data": {"result": []}}))
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT)
+
+    assert orologio.adesso - 1_000.0 < main.INFRA_ALERT_INTERVAL_S
+    assert sentry_call.call_count == 2
+    assert "no series was found" in _evento_inviato(sentry_call)["exception"]["values"][0]["value"]
+    # Adesso ci sono ENTRAMBE: due conclusioni, due limitatori indipendenti.
+    assert "zero-volume" in main._INFRA_ALERTS_SENT
+    assert "zero-volume-cieco" in main._INFRA_ALERTS_SENT
+
+    # E il ramo sano deve dimenticarle TUTTE E DUE. Dimenticarne una sola farebbe
+    # scivolare la "prima comparsa" del prossimo periodo di zeri fino a un'ora dopo,
+    # per la conclusione dimenticata a meta' — che e' il difetto gia' pagato il
+    # 20/08/2026 su una chiave sola. Senza queste due righe i tre mutanti del
+    # `pop("zero-volume-cieco")` sopravvivevano: nessun test tornava alla salute
+    # partendo dal ramo cieco.
+    _mock_scalars(sessions="1", tokens="1")
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    assert "zero-volume" not in main._INFRA_ALERTS_SENT
+    assert "zero-volume-cieco" not in main._INFRA_ALERTS_SENT
+
+
+@respx.mock
+def test_the_witness_is_not_asked_before_the_threshold(monkeypatch):
+    # Il testimone e' una query in piu' su un percorso caldo: il widget interroga ogni
+    # 20s. Se partisse a ogni passata a zero invece che alla soglia, sarebbero
+    # millequattrocento query al giorno di finestra a sette giorni per non dire nulla.
+    # Il costo va pagato quando la domanda serve, cioe' quando si sta per gridare.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@example.sentry.io/9")
+    respx.post("https://example.sentry.io/api/9/envelope/").mock(return_value=httpx.Response(200))
+    _mock_scalars(sessions="0", tokens="0")
+    _mock_cost([])
+    _mock_persistence("0")
+    storia = _mock_history([{"metric": {}, "value": [0, "4"]}])
+
+    _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT - 1)
+
+    assert not storia.called

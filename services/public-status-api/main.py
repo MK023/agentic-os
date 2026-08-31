@@ -551,8 +551,87 @@ async def _check_persistence(client: httpx.AsyncClient) -> None:
 ZERO_PASSES_BEFORE_ALERT = 60
 _ZERO_PASSES = 0
 
+# La SECONDA domanda, quella che i tre numeri non possono rispondere da soli. Le tre
+# query guardano indietro 25h, quindi qualunque pausa piu' lunga di 25h le porta a zero
+# legittimamente — un weekend basta, e il 31/08/2026 la produzione ha prodotto otto
+# eventi in otto ore, tutti innocui. Questa chiede se esiste una serie oltre quella
+# finestra: se c'e', il volume e' pieno e l'assenza e' di chi lavora, non di dati.
+#
+# Sette giorni e non trenta, che sarebbe la retention: `--storage.tsdb.retention.size`
+# fa cadere i blocchi vecchi quando il disco si riempie, PRIMA che scadano i giorni
+# (successo il 13/08/2026, volume da 500 MB). Un testimone appoggiato al fondo della
+# storia perde memoria proprio nei giorni in cui il volume soffre — cioe' quando serve.
+# Sette giorni stanno lontano da quel bordo, e un'assenza piu' lunga di una settimana
+# merita comunque un evento.
+#
+# `count()` e non `sum()`: qui la domanda e' "esiste una serie?", non "quanto vale".
+# Con `sum()` un contatore legittimamente fermo a zero e un vettore vuoto darebbero lo
+# stesso risultato, ed e' la confusione esatta che questo testimone esiste per sciogliere
+# — la stessa gia' scritta per `_check_persistence`: no series means no rule can fire.
+#
+# `present_over_time` e non `max_over_time`, e la differenza non e' cosmetica.
+# Documentazione Prometheus, alla lettera: "the value 1 for any series in the specified
+# interval". E' LA domanda, mentre `max_over_time` la risponderebbe solo per effetto
+# collaterale — si prende il massimo e poi si guarda se il vettore e' vuoto, che e' un
+# valore usato come sonda di presenza. Con `present_over_time` la query dice cio' che
+# chiede, e non dipende dai valori: una serie ci sarebbe anche se fosse tutta a zero.
+#
+# Il gate `compose` — che vive in `.github/workflows/images.yml`, non in lint.yml — lo
+# ha reso evidente prima del merge: conta in questo file le occorrenze di
+# `max_over_time` applicato alle metriche di Claude Code e ne pretende ESATTAMENTE tre,
+# perche' le tre query pubbliche devono muoversi insieme. Questa era la quarta e il gate
+# e' andato rosso. La correzione giusta non era allargare il conteggio — era accorgersi
+# che la funzione era sbagliata.
+#
+# NB: quel gate conta OCCORRENZE DI TESTO, non query. Scrivere qui sopra la stringa
+# esatta che cerca lo fa contare quattro — successo il 31/08/2026, in questo commento,
+# mentre lo si spiegava. Percio' e' descritta a parole invece che citata.
+#
+# SETTE GIORNI, e il motivo detto per quello che e'. Non "perche' retention.size fa
+# cadere i blocchi": i valori reali sono `--storage.tsdb.retention.time=30d` e
+# `--storage.tsdb.retention.size=3GB` su un volume da 5 GB, e con i dati di oggi e' il
+# limite a TEMPO che morde per primo. Il tetto a dimensione e' una precauzione contro la
+# crescita, non una potatura in corso — e il guasto del 13/08/2026 e' avvenuto in
+# ASSENZA di quel tetto, non per causa sua. Sette giorni stanno larghi rispetto a
+# entrambi i limiti e non dipendono da quale dei due mordera' domani; trenta giorni
+# appoggerebbero il testimone esattamente sul bordo che puo' muoversi.
+#
+# La finestra e' DIVERSA da quella di QUERIES apposta. Se qualcuno le allineasse, il
+# testimone risponderebbe sempre come i tre numeri e smetterebbe di testimoniare senza
+# che niente diventi rosso: e' un accoppiamento fra due costanti che va saputo prima.
+HISTORY_QUERY = 'count(present_over_time(claude_code_session_count{job="otel-collector"}[7d]))'
 
-async def _check_zero_volume(values: dict) -> None:
+
+async def _c_e_storia(client: httpx.AsyncClient) -> bool | None:
+    """C'è una serie oltre la finestra dei tre numeri? `None` = non si è potuto sapere.
+
+    Tre esiti e non due, deliberatamente. `False` (vettore vuoto) e `None` (query
+    fallita) portano allo stesso allarme ma per ragioni opposte, e impastarli
+    significherebbe far comprare il silenzio a un guasto: un Prometheus che risponde
+    alle tre query e non alla quarta renderebbe MUTO il watchdog proprio mentre e'
+    mezzo rotto. Il ramo d'errore torna al comportamento di prima — si grida, ambigui.
+
+    COSA QUESTO SILENZIO COSTA, detto qui perche' chi legge la funzione lo sappia: il
+    testimone non distingue "non ha lavorato nessuno" da "non arrivano piu' dati". In
+    entrambi i casi la storia a 7 giorni c'e', quindi in entrambi si tace, dove prima si
+    gridava.
+
+    E cio' che sorveglia quel caso altrove va detto per quello che PROVA, non per come
+    suona. `smoke.yml` asserisce 401 dal Collector su un bearer sbagliato e 403 dal WAF:
+    prova che il Collector e' vivo, raggiungibile e rifiuta — non che un payload valido
+    venga accettato e atterri nel TSDB. Il `up` di Prometheus prova che il Collector si
+    lascia raschiare, non che ci passi dentro qualcosa. Quindi il caso "tutto in piedi e
+    il client non manda" — quello dell'ambiente senza le variabili di telemetria, che il
+    CLAUDE.md nomina in testa — da qui in avanti NON ha un testimone. Prima ce l'aveva,
+    ma gridava identico a ogni weekend, che e' un segnale su cui nessuno agisce.
+    """
+    try:
+        return bool((await _query_one(client, HISTORY_QUERY))["data"]["result"])
+    except Exception:  # noqa: BLE001 — stesso contratto di _check_persistence: mai un 502
+        return None
+
+
+async def _check_zero_volume(client: httpx.AsyncClient, values: dict) -> None:
     """Report three zeros that last, instead of serving them with a 200 and no comment.
 
     `_parse_value` risponde 0.0 su result vuoto — scelta dichiarata: un volume perso fa
@@ -569,21 +648,56 @@ async def _check_zero_volume(values: dict) -> None:
         # Dimenticare qui rende accurata la "prima comparsa" del prossimo periodo di
         # zeri, invece di lasciarla scivolare fino a un'ora dopo. Stessa ragione per
         # cui `_check_persistence` dimentica sul ramo sano.
+        # ENTRAMBE le chiavi, non solo la prima: dimenticarne una farebbe scivolare la
+        # "prima comparsa" del prossimo periodo di zeri fino a un'ora dopo, che e'
+        # esattamente il difetto che questo `pop` esiste per impedire.
         _INFRA_ALERTS_SENT.pop("zero-volume", None)
+        _INFRA_ALERTS_SENT.pop("zero-volume-cieco", None)
         return
 
     _ZERO_PASSES += 1
     if _ZERO_PASSES < ZERO_PASSES_BEFORE_ALERT:
         return
-    await _report_infra_throttled(
-        "zero-volume",
-        PublicNumbersAllZero(
-            f"the three public numbers have read zero for {ZERO_PASSES_BEFORE_ALERT} "
-            "consecutive passes (~1h of polling) while Prometheus answered 200 — "
-            "either nothing has run since yesterday, or the data is gone; check the "
-            "prometheus-data volume before assuming the first"
-        ),
+    # Un `<`, e non il `% ZERO_PASSES_BEFORE_ALERT` che stava qui il 31/08/2026 per
+    # risparmiare query: in Python `-60 % 60` e' 0, quindi il modulo rendeva
+    # EQUIVALENTE il mutante `_ZERO_PASSES -= 1` — un contatore che va all'indietro
+    # avrebbe continuato ad allarmare alla stessa cadenza, e mutmut lo ha mostrato
+    # (sopravvissuto, dove col `<` muore). Il risparmio difeso era anche sopravvalutato:
+    # oltre la soglia si paga una query in piu' per passata, cioe' qualche centinaio
+    # durante un'assenza, su un `count()` in un TSDB minuscolo. Un contatore che
+    # conserva la direzione vale piu' di quelle query.
+
+    storia = await _c_e_storia(client)
+    if storia:
+        # Il volume ha storia: i tre numeri sono zero perche' non e' girato niente,
+        # non perche' i dati siano spariti. E' il caso frequente — ogni weekend — ed
+        # e' l'unico silenzio nuovo che questa funzione introduce.
+        return
+
+    premessa = (
+        f"the three public numbers have read zero for {ZERO_PASSES_BEFORE_ALERT} "
+        "consecutive passes (~1h of polling) while Prometheus answered 200"
     )
+    # Due messaggi e DUE CHIAVI di limitazione, non una. Con una chiave sola, un
+    # testimone che non risponde manda l'evento ambiguo e poi SOFFOCA per un'ora quello
+    # definitivo — cioe' il limitatore comprerebbe silenzio proprio alla conclusione che
+    # vale di piu', che e' il contrario del suo mestiere. Stessa classe gia' pagata su
+    # questa funzione il 20/08/2026, quando il `pop` e la segnalazione divergevano.
+    chiave = "zero-volume" if storia is False else "zero-volume-cieco"
+    # Due messaggi e non uno. Dire "no series in the last 7d" quando la query non ha
+    # risposto sarebbe un'affermazione che nessuno ha misurato, scritta in un evento
+    # che qualcuno leggera' alle tre di notte per decidere se il volume e' perso.
+    dettaglio = (
+        "and no series was found in the last 7d either — so this is NOT simply a "
+        "quiet stretch; check the prometheus-data volume first, then consider a "
+        "fresh deploy with no history yet, or an absence longer than 7d"
+        if storia is False
+        else "and the 7d history probe could not answer, so the quiet-stretch case "
+        "could NOT be ruled out — this event is as ambiguous as it was before the "
+        "probe existed; check the prometheus-data volume, and check why the probe "
+        "failed while the three queries did not"
+    )
+    await _report_infra_throttled(chiave, PublicNumbersAllZero(f"{premessa}, {dettaglio}"))
 
 
 @app.get("/healthz")
@@ -729,7 +843,17 @@ async def status(_: RequireToken, response: Response) -> dict:
         # watchdog must not share a failure path with the contract it guards. Same
         # client, so it costs one round trip on the private network, not a connection.
         await _check_persistence(client)
-        # Stessa passata, nessuna query in piu': i tre numeri sono gia' qui.
-        await _check_zero_volume(values)
+        # Stessa passata. I tre numeri sono gia' qui; il client serve solo alla seconda
+        # domanda, che non parte mai sul percorso normale — solo DOPO
+        # ZERO_PASSES_BEFORE_ALERT passate consecutive a zero, e da li' in poi a ogni
+        # passata finche' gli zeri durano.
+        #
+        # Il costo di latenza nel caso peggiore va saputo: durante una serie di zeri
+        # /status fa QUATTRO richieste a Prometheus invece di tre, ciascuna con
+        # REQUEST_TIMEOUT (10s), quindi il tetto teorico si alza di quel tanto. Non ha
+        # un budget suo di proposito: la risposta sta in cache STATUS_CACHE_TTL_S, e un
+        # secondo orologio per la stessa cadenza si sfasa dal primo — e' la lezione gia'
+        # scritta dentro _check_persistence.
+        await _check_zero_volume(client, values)
 
     return values
