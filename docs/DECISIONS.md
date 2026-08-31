@@ -457,6 +457,18 @@ week deserves an event anyway. The witness window is deliberately **different** 
 25h of `QUERIES`: align the two and the witness answers identically to the three numbers
 and stops witnessing, with nothing turning red.
 
+**What the new silence costs, declared because it is a real loss and not a free win.**
+The witness cannot tell "nobody worked" from "the ingest is dead": both leave 7d of
+history behind a 25h window of zeros, so both are now silent, where before both were
+loud. A Collector that stopped accepting data, or — more likely, per the note at the top
+of `CLAUDE.md` — a machine relaunched without the telemetry environment variables, will
+no longer raise this event. That path is not unwatched, but it is watched *elsewhere*:
+`smoke.yml` asserts the OTLP ingest every two hours, and Prometheus scrapes `up` on the
+Collector every 15s. What has no witness is the narrower case "everything is up and the
+client is simply not configured", and that was already true before this change — the old
+alert fired on it, but fired identically on every weekend, which is the definition of a
+signal nobody can act on.
+
 **What is still ambiguous, declared rather than papered over.** An empty 7d window has
 three causes and the event names all three: a lost volume, a fresh deploy with no history
 yet, or an absence longer than seven days. Only the first is a fault. Narrowing further

@@ -595,6 +595,13 @@ async def _c_e_storia(client: httpx.AsyncClient) -> bool | None:
     significherebbe far comprare il silenzio a un guasto: un Prometheus che risponde
     alle tre query e non alla quarta renderebbe MUTO il watchdog proprio mentre e'
     mezzo rotto. Il ramo d'errore torna al comportamento di prima — si grida, ambigui.
+
+    COSA QUESTO SILENZIO COSTA, detto qui perche' chi legge la funzione lo sappia: il
+    testimone non distingue "non ha lavorato nessuno" da "l'ingest e' morto". In
+    entrambi i casi la storia a 7 giorni c'e', quindi in entrambi si tace, dove prima si
+    gridava. Il secondo caso non resta scoperto — `smoke.yml` interroga l'ingest OTLP
+    ogni due ore e Prometheus scruta `up` sul Collector ogni 15s — ma qui dentro non lo
+    vede piu' nessuno. Vedi docs/DECISIONS.md, che porta il conto completo.
     """
     try:
         return bool((await _query_one(client, HISTORY_QUERY))["data"]["result"])
@@ -804,9 +811,17 @@ async def status(_: RequireToken, response: Response) -> dict:
         # watchdog must not share a failure path with the contract it guards. Same
         # client, so it costs one round trip on the private network, not a connection.
         await _check_persistence(client)
-        # Stessa passata. I tre numeri sono gia' qui; il client serve solo alla
-        # seconda domanda, che parte una volta ogni ZERO_PASSES_BEFORE_ALERT passate
-        # a zero e mai sul percorso normale.
+        # Stessa passata. I tre numeri sono gia' qui; il client serve solo alla seconda
+        # domanda, che non parte mai sul percorso normale — solo DOPO
+        # ZERO_PASSES_BEFORE_ALERT passate consecutive a zero, e da li' in poi a ogni
+        # passata finche' gli zeri durano.
+        #
+        # Il costo di latenza nel caso peggiore va saputo: durante una serie di zeri
+        # /status fa QUATTRO richieste a Prometheus invece di tre, ciascuna con
+        # REQUEST_TIMEOUT (10s), quindi il tetto teorico si alza di quel tanto. Non ha
+        # un budget suo di proposito: la risposta sta in cache STATUS_CACHE_TTL_S, e un
+        # secondo orologio per la stessa cadenza si sfasa dal primo — e' la lezione gia'
+        # scritta dentro _check_persistence.
         await _check_zero_volume(client, values)
 
     return values
