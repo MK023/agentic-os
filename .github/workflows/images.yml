@@ -363,8 +363,17 @@ jobs:
       # Sta in uno script invece che qui perche' si possa eseguire in locale prima di
       # aprire la PR, come gli altri `scripts/prova-*`: un gate che si scopre solo
       # dalla CI costa un giro di push per ogni tentativo.
+      # DUE invocazioni, e la seconda non e' un lusso. `--prova` muta i tre input in
+      # memoria e pretende che il gate diventi rosso su ciascuno: senza, un gate che
+      # smettesse di guardare — una regex che non corrisponde piu' dopo un
+      # riformattamento — resterebbe verde per sempre e nessuno se ne accorgerebbe.
+      # In questo repo tre gate su sei erano nati ciechi; questo e' cio' che lo
+      # impedisce, e costa 0,45s in tutto.
       - name: i nomi dei modelli sono gli stessi nei tre posti
         run: python3 scripts/prova-prezzario-allineato.py
+
+      - name: e il gate sa diventare rosso
+        run: python3 scripts/prova-prezzario-allineato.py --prova
 
       # Stessa famiglia del gate qui sopra, ma le meta' sono TRE, e questo gate e'
       # nato sbagliando proprio quello: scritto per confrontare Dockerfile e compose,
