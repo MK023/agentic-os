@@ -31,10 +31,26 @@ e' ancora sotto il tetto.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent / "docs" / "sorveglianza-baseline.json"
+
+# La forma di un serviceId Railway. Un FILTRO POSITIVO, non una fuga dei caratteri
+# pericolosi, e la differenza e' la solita: fuggire `\n` e `\r` chiude due FORME e
+# lascia aperta la classe — restano gli escape ANSI, i separatori Unicode, e la forma
+# che il fornitore inventera' domani. Cio' che passa di qui e' invece dichiarato: 36
+# caratteri esadecimali e trattini, che e' quello che un id e'.
+#
+# Perche' serve, misurato il 01/09/2026 su questo stesso script: la sonda stampa il
+# nome del servizio piu' consumante, e quel nome viene dalla RISPOSTA dell'API, non dal
+# repository. Un id contenente `\n::stop-commands::<token>` usciva a inizio riga e
+# GitHub Actions smetteva di interpretare le annotazioni successive: il job restava
+# rosso — il verdetto e' il codice di uscita, non un comando di workflow — ma perdeva
+# la riga che dice QUALE servizio e' cresciuto. Cioe' esattamente cio' per cui questa
+# sonda e' stata riscritta. Un allarme che si puo' zittire e' peggio di uno assente.
+FORMA_ID = re.compile(r"^[0-9a-f-]{36}$")
 
 # Il pavimento. "Nessuna differenza" e "nessun dato" hanno lo stesso aspetto: una
 # risposta che elenca un servizio solo produce una somma piccola, sotto ogni tetto, e
@@ -45,12 +61,34 @@ BASE = Path(__file__).resolve().parent.parent / "docs" / "sorveglianza-baseline.
 SERVIZI_MINIMI = 2
 
 
+def _nome(servizio: str | None, nomi: dict[str, str]) -> str:
+    """Il nome stampabile di un servizio. Mai una stringa arbitraria dell'API.
+
+    Tre esiti e non due. Un id NOTO diventa il suo nome — e' il caso normale. Un id
+    sconosciuto ma ben formato resta l'id, che e' la scelta gia' dichiarata nella
+    baseline: un servizio nuovo non deve far fallire la sonda, deve solo comparire con
+    un nome brutto. Un id che non ha la forma di un id non si stampa affatto: non e'
+    un servizio che non conosciamo, e' una risposta che non e' quella che l'API dichiara
+    di dare, e ripeterla nel log significa lasciar scrivere nel log a chi l'ha mandata.
+    """
+    if servizio in nomi:
+        return nomi[servizio]
+    if servizio and FORMA_ID.match(servizio):
+        return servizio
+    return "(id malformato)"
+
+
 def _per_misura(risposta: dict, nomi: dict[str, str]) -> dict[str, dict[str, float]]:
-    """{misura: {nome del servizio: valore}}. Un id sconosciuto resta l'id."""
+    """{misura: {nome del servizio: valore}}."""
     fuori: dict[str, dict[str, float]] = {}
     for riga in (risposta.get("data") or {}).get("usage") or []:
-        servizio = (riga.get("tags") or {}).get("serviceId") or "(senza servizio)"
-        fuori.setdefault(riga["measurement"], {})[nomi.get(servizio, servizio)] = riga["value"]
+        nome = _nome((riga.get("tags") or {}).get("serviceId"), nomi)
+        # Si SOMMA invece di sovrascrivere: piu' id malformati collassano sullo stesso
+        # nome, e un `=` li farebbe sparire tutti tranne l'ultimo — una sottostima
+        # silenziosa del totale, cioe' il modo in cui questa sonda smetterebbe di
+        # suonare senza dirlo.
+        misura = fuori.setdefault(riga["measurement"], {})
+        misura[nome] = misura.get(nome, 0.0) + riga["value"]
     return fuori
 
 
@@ -84,7 +122,15 @@ def main(percorso_risposta: str, modo: str = "") -> int:
 
     if risposta.get("errors"):
         messaggi = [e.get("message") for e in risposta["errors"]]
-        print(f"::error::GraphQL ha risposto con errori: {messaggi}")
+        # `json.dumps` e non un f-string, e non e' pedanteria: anche questi messaggi
+        # arrivano dall'API, e su una riga `::error::` un `\n` restituisce a chi
+        # risponde la possibilita' di scrivere annotazioni. Oggi l'f-string sarebbe
+        # salva per caso — interpolando una LISTA, Python passa da `repr()` e i newline
+        # diventano letterali — ma e' una protezione che sparisce alla prima persona
+        # che scrive `', '.join(messaggi)` per leggibilita', senza che niente diventi
+        # rosso. La fuga e' il contratto dichiarato di `json.dumps`; quella del `repr`
+        # di una lista e' un effetto collaterale.
+        print("::error::GraphQL ha risposto con errori: " + json.dumps(messaggi))
         print("::error::Questo job NON ha misurato niente. Un token scaduto o revocato ha questo sintomo.")
         return 1
 

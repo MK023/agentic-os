@@ -162,6 +162,78 @@ CASI = [
 ]
 
 
+def _nessun_comando_iniettato(testo: str, attesi: int) -> tuple[bool, str]:
+    """Nel log escono ESATTAMENTE le annotazioni che ha scritto la sonda, e nessun'altra.
+
+    Si contano le righe che COMINCIANO per `::`, perche' e' quella la posizione in cui
+    il runner di GitHub Actions interpreta un comando di workflow: una stessa sequenza
+    a meta' riga e' testo innocuo. Il numero atteso e' dichiarato dal caso, non dedotto
+    dall'output — dedurlo dall'output sarebbe l'oracolo dentro il soggetto.
+    """
+    righe = [r for r in testo.splitlines() if r.startswith("::")]
+    if len(righe) != attesi:
+        return False, f"{len(righe)} annotazioni a inizio riga, attese {attesi}: {righe}"
+    return True, ""
+
+
+# Ogni stringa qui e' un pezzo di risposta dell'API, cioe' input NON FIDATO: la sonda
+# stampa il nome del servizio piu' consumante, e quel nome lo sceglie chi risponde.
+OSTILE = "aaa\n::stop-commands::deadbeef\n::error::ALLARME SOPPRESSO\nbbb"
+
+
+def prove_di_iniezione(gira) -> int:
+    """Riprodotto il 01/09/2026 PRIMA che il rimedio esistesse, e rosso allora.
+
+    Con l'id ostile stampato verbatim uscivano due comandi di workflow a inizio riga:
+    `::stop-commands::` spegneva l'interpretazione delle annotazioni successive e la
+    sonda perdeva la riga che dice QUALE servizio e' cresciuto. Il verdetto non si
+    ribaltava — quello e' il codice di uscita — ma l'allarme diventava muto sul perche',
+    che e' esattamente cio' per cui questa sonda e' stata riscritta.
+    """
+    errori = 0
+
+    # Un id che non ha la forma di un id non arriva al log. Il totale invece SI', e va
+    # preteso: un rimedio che scartasse la riga insieme al nome nasconderebbe consumo.
+    uscita, testo = gira(
+        BASELINE,
+        _risposta([("CPU_USAGE", OSTILE, 200.0), ("CPU_USAGE", GRAFANA, 18.0)] + SANA[2:]),
+    )
+    va_bene, perche = _nessun_comando_iniettato(testo, 3)  # i tre ::error:: dello sforamento
+    if not (uscita == 1 and va_bene and "(id malformato)" in testo and "218.0" in testo):
+        errori += 1
+        print(f"  ERRORE un serviceId ostile passa nel log — {perche or testo!r}", file=sys.stderr)
+    else:
+        print("  ok   un serviceId ostile diventa `(id malformato)`, e il suo consumo resta nel totale")
+
+    # Due id malformati finiscono sotto la stessa etichetta, e li' vanno SOMMATI: con un
+    # `=` sopravviverebbe solo l'ultimo e il totale sottostimerebbe in silenzio. Serve
+    # un terzo servizio valido perche' il collasso riduce i nomi distinti, e con due
+    # righe soltanto scatterebbe prima il pavimento sull'estrazione mutila — che e' il
+    # comportamento giusto (fallisce chiuso) ma non e' cio' che questo caso misura.
+    uscita, testo = gira(
+        BASELINE,
+        _risposta([("CPU_USAGE", "x", 10.0), ("CPU_USAGE", "y", 11.0), ("CPU_USAGE", LOKI, 5.0)] + SANA[2:]),
+    )
+    if "21.00  (id malformato)" not in testo or "26.0 al giorno" not in testo:
+        errori += 1
+        print(
+            f"  ERRORE due id malformati si sovrascrivono: il totale sottostima — {testo!r}", file=sys.stderr
+        )
+    else:
+        print("  ok   due id malformati si sommano invece di sovrascriversi")
+
+    # E i messaggi di GraphQL, che sono l'altra stringa che arriva dall'API.
+    uscita, testo = gira(BASELINE, {"errors": [{"message": "boom\n::add-mask::ok\n::error::iniettato"}]})
+    va_bene, perche = _nessun_comando_iniettato(testo, 2)  # le due righe che scrive la sonda
+    if not (uscita == 1 and va_bene):
+        errori += 1
+        print(f"  ERRORE un messaggio GraphQL ostile inietta annotazioni — {perche}", file=sys.stderr)
+    else:
+        print("  ok   un messaggio GraphQL ostile resta su una riga sola")
+
+    return errori
+
+
 def main() -> int:
     errori = 0
     for nome, baseline, risposta, modo, atteso, frammento in CASI:
@@ -192,6 +264,8 @@ def main() -> int:
         )
     else:
         print("  ok   lo stesso caso sotto il tetto e' verde: il rosso veniva dal numero")
+
+    errori += prove_di_iniezione(_gira)
 
     print(f"\n{'TUTTO A POSTO' if not errori else str(errori) + ' CASI FUORI POSTO'}")
     return 1 if errori else 0
