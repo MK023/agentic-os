@@ -184,6 +184,25 @@ assertion stands turns the probe red and names the moved surface. Leaving the ro
 after the reason for it is gone stays silent. That asymmetry is why this is written down
 as a task instead of trusted to a check.
 
+## Open, and it needs one measurement from the operator
+
+- **The Railway consumption probe has no calibrated ceilings, so `sorveglianza` stays
+  red until it gets them — deliberately.** Rewritten on 2026-09-01 from `estimatedUsage`
+  (cumulative over the billing period, so it measured how long the cycle had been
+  running, not consumption) to `usage` over a fixed 24h window grouped by service. The
+  query is validated against the live schema — posted tokenless to
+  `backboard.railway.com/graphql/v2`, which answers `Not Authorized` rather than a shape
+  error — and the logic is exercised by `scripts/prova-sonda-consumo.py` on fixture
+  responses, in `lint.yml`, on every PR.
+
+  **What is missing is a number nobody here can read.** The units of `usage` are
+  undocumented and nobody has ever read them over a 24h window, so writing the ceilings
+  from the old cumulative deltas would be a guess dressed as a measurement — the exact
+  move this file forbids in the other direction. `docs/sorveglianza-baseline.json`
+  therefore ships with `tetti_al_giorno: {}` and the probe **fails on that**, naming it,
+  instead of walking an empty loop and reporting green. One run of
+  `verifica-consumo-railway.py <risposta.json> --taratura` prints the block to paste.
+
 ## Still Marco's call
 
 - ~~**`SLACK_WEBHOOK_URL` on the `grafana` Railway service.**~~ **Set on 2026-08-21, and
@@ -365,30 +384,24 @@ as a task instead of trusted to a check.
 
 ## Deliberately still open, and why
 
-- **Two holes inside `scripts/prova-gate-workflow.py`, declared on 2026-08-24 rather
-  than patched.** The bench proves the two `lint.yml` workflow gates; these are defects
-  in the *bench*, not in the gates, and both were found by an adversarial review that
-  also verified the exact one-line remedy for each.
+- ~~**Two holes inside `scripts/prova-gate-workflow.py`, declared on 2026-08-24 rather
+  than patched.**~~ **Closed 2026-09-01**, with the exact one-line remedies this entry
+  had already measured — and the fourth round belonged to a different session, which is
+  what the house rule asks for.
 
-  1. `MUTANTI[0]` replaces `'if "uses" not in corpo and '` with `"if ("`, which produces
-     **invalid Python**, not "the gate without the `uses:` exemption". `python3 -c` on a
-     `SyntaxError` exits 1 without printing `Traceback`, so the liveness guard does not
-     catch it and the bench prints `ok` for the wrong reason. The protection underneath
-     still holds — with the correct mutation the case does change colour — what is lost
-     is the *proof of non-vacuity*. Remedy, already measured: `cerca =
-     '"uses" not in corpo and '`, `sostituisci = ""`, and widen `vivo` to `SyntaxError`.
-  2. The first sabotage in `prova_dichiarazione` hardcodes three filenames and guards
-     only that the *substitution happened* (`quante != 1`), not that it **bites**. Rename
-     those files and the comparison becomes a tautology that prints `ok`. Remedy:
-     `if not saltati: ERRORE`, the same guard the second sabotage already has.
-
-  **Why declared instead of fixed:** three rounds of correction on this same fault had
-  already gone by, and two of the three introduced the next defect — the house rule says
-  the fourth attempt does not belong to the session that made the first three. The
-  branch is still strictly better than what it replaced: it closes three classes of gate
-  blindness (`main` stayed green while the gate stopped reading three workflows) and
-  introduces no behavioural regression across ten edge cases. A declared hole beats an
-  asserted control that is not there.
+  The first hole is worth keeping written down, because the *shape* recurs: `MUTANTI[0]`
+  replaced `'if "uses" not in corpo and '` with `"if ("`, which produces **invalid
+  Python** rather than "the gate without the `uses:` exemption". `python3 -c` on a
+  `SyntaxError` exits 1 without printing `Traceback`, so the liveness guard counted a
+  corpse as a rejection and the bench printed `ok` for the wrong reason — reproduced
+  before the fix, not assumed. Fixed as the **class** rather than the two forms: a
+  single `morto()` predicate now answers "did the gate die before deciding?" in all four
+  places that used to grep for `Traceback` alone, so the next form is added once instead
+  of four times. The second hole — a sabotage that guarded only that the substitution
+  *happened*, never that it **bit** — now fails loudly if none of the three hardcoded
+  filenames still exists, which is the state that turned the comparison into
+  `attesi == attesi`. Both fixes were proved in both directions: green on the real tree,
+  and red when the three files are renamed or the invalid mutant is put back.
 
 - **What "CHIUSO" means on the declaration in `lint.yml`, precisely.** It closes the
   class of *traversal* — a `continue`, a `break`, a narrowed glob, a skipped file all

@@ -138,11 +138,22 @@ jobs:
   #
   # NON CALCOLA SOLDI, di proposito. L'enum MetricMeasurement non ha nessuna misura
   # in denaro (verificato per introspezione: solo CPU, memoria, disco, rete), e le
-  # unita' di estimatedUsage non sono documentate: MEMORY_USAGE_GB diviso le ore di
-  # un mese darebbe ~$169 contro i ~5 euro della fattura vera. Convertire vorrebbe
+  # unita' di queste misure non sono documentate. Convertire vorrebbe
   # dire indovinare l'unita' E replicare il prezzario in un quarto posto. Cio' che
   # questa sonda intercetta e' la FUGA — un processo che consuma e non dovrebbe —
   # non la bolletta.
+  #
+  # E MISURA UN TASSO, non un totale. Dal 20/08 al 01/09/2026 leggeva `estimatedUsage`,
+  # che e' CUMULATIVO sul ciclo di fatturazione: un numero che sale per costruzione,
+  # confrontato con un tetto fisso, dice da quanto dura il ciclo e non quanto si
+  # consuma. E' diventato rosso il 01/09 con CPU 752.9 contro 750, dopo dodici giorni
+  # di salita monotona senza un solo azzeramento — mentre i delta giornalieri erano
+  # piatti da dieci. Ora la domanda e' "quanto ha consumato NELLE ULTIME 24 ORE", e la
+  # risposta arriva raggruppata per servizio, cosi' l'allarme dice QUALE e' cresciuto
+  # invece di ordinare a chi legge di andarlo a cercare.
+  #
+  # Provata senza token e senza rete da `scripts/prova-sonda-consumo.py`, che gira in
+  # lint.yml su ogni PR: e' l'unico modo di guardare questa sonda prima delle 5:23.
   spesa-railway:
     permissions: {}
     runs-on: ubuntu-latest

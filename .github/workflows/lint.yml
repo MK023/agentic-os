@@ -427,3 +427,12 @@ jobs:
       # non prova niente.
       - name: il banco dei due gate di questo file
         run: python3 scripts/prova-gate-workflow.py
+
+      # La sonda sul consumo Railway vive in sorveglianza.yml, che gira una volta al
+      # giorno e SOLO col token di produzione: fino al 01/09/2026 non c'era modo di
+      # esaminarla senza quel token, ed e' rimasta a misurare la cosa sbagliata per
+      # dodici giorni. Questo banco la esercita su risposte finte, quindi su ogni PR,
+      # senza rete e senza credenziali — compresi i casi che in produzione capitano
+      # una volta l'anno (token revocato, misura assente, risposta mutila).
+      - name: il banco della sonda sul consumo Railway
+        run: python3 scripts/prova-sonda-consumo.py

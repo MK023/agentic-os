@@ -149,9 +149,14 @@ CASI_DUPLICATI = [
 # quello che il suo nome dichiara.
 MUTANTI = [
     (
+        # NON `'if "uses" not in corpo and ' -> 'if ('`, che era la forma fino al
+        # 01/09/2026: produceva `if ("timeout-minutes" not in corpo:`, cioe' codice
+        # NON VALIDO, e quindi non modellava "il gate senza l'esenzione `uses:`" ma
+        # "il gate che non compila". Toglie la sola condizione e lascia
+        # `if "timeout-minutes" not in corpo:`, che e' il gate senza quel ramo.
         "il salto dei job `uses:`",
-        'if "uses" not in corpo and ',
-        "if (",
+        '"uses" not in corpo and ',
+        "",
         "un job che chiama una reusable workflow (non puo' avere timeout-minutes)",
     ),
     (
@@ -172,6 +177,22 @@ MUTANTI_DUPLICATI = [
 ]
 
 
+def morto(testo: str) -> bool:
+    """Il gate e' morto prima di decidere, invece di aver deciso.
+
+    Un gate che ESPLODE esce 1 come uno che boccia: ogni controllo di questo banco
+    deve saperlo distinguere, o conta un cadavere come una bocciatura.
+
+    Perche' e' un predicato e non due `in` sparsi: fino al 01/09/2026 i quattro punti
+    guardavano il solo `Traceback`, e un mutante che produceva codice NON VALIDO
+    passava indenne — `python3 -c` su un errore di sintassi esce 1 stampando
+    `SyntaxError` e nessun `Traceback`. Erano due forme della stessa classe, e la
+    seconda e' stata scoperta solo perche' qualcuno l'ha cercata a mano. Le forme
+    future si aggiungono QUI, in un posto solo, invece che in quattro.
+    """
+    return "Traceback" in testo or "SyntaxError" in testo
+
+
 def prova_caso(codice, caso):
     """(va_bene, uscita, perche'). L'oracolo NON e' il solo codice di uscita.
 
@@ -190,7 +211,7 @@ def prova_caso(codice, caso):
         uscita, testo = gira_completo(codice, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    if "Traceback" in testo:
+    if morto(testo):
         return False, uscita, "il gate e' ESPLOSO invece di decidere"
     if rosso:
         if uscita != 1:
@@ -297,10 +318,23 @@ def prova_dichiarazione(codice, titolo) -> int:
         shutil.rmtree(temp, ignore_errors=True)
     # VIVO, non solo diverso: un saboteur che fa esplodere il gate produce dichiarazione
     # vuota, cioe' "diversa", e passerebbe per riuscito senza aver esercitato niente.
-    if "Traceback" in testo_salta:
+    if morto(testo_salta):
         print(f"  ERRORE il gate sabotato e' ESPLOSO (exit {uscita_salta}): la prova non esercita niente")
         return 1
     saltati = {f for f in attesi if f.endswith(("sonar.yml", "smoke.yml", "sorveglianza.yml"))}
+    # I tre nomi sono INCHIODATI dentro la sabotatura, e questo e' il loro unico
+    # guinzaglio: se nessuno dei tre esiste piu' — rinominato, spostato, unito a un
+    # altro — il `continue` non scatta su niente, la dichiarazione non cala di un
+    # file, e il confronto qui sotto diventa `attesi == attesi`, cioe' una tautologia
+    # che stampa `ok`. La `quante != 1` sopra guarda che la SOSTITUZIONE sia
+    # avvenuta, non che MORDA: sono due domande diverse, e fino al 01/09/2026 si
+    # rispondeva solo alla prima.
+    if not saltati:
+        print(
+            "  ERRORE nessuno fra sonar.yml, smoke.yml e sorveglianza.yml esiste piu': "
+            "la sabotatura col `continue` non salta niente e il confronto e' una tautologia"
+        )
+        return 1
     if legge_dichiarazione(testo_salta) != {k: v for k, v in attesi.items() if k not in saltati}:
         print(
             "  ERRORE saltando l'ispezione la dichiarazione non cala esattamente dei file saltati: "
@@ -354,7 +388,7 @@ def prova_dichiarazione(codice, titolo) -> int:
         uscita_cieca, testo_cieco = gira_completo(mutato, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    if "Traceback" in testo_cieco:
+    if morto(testo_cieco):
         print("  ERRORE il gate accecato e' ESPLOSO: la mutazione non esercita niente")
         return 1
     visti_ciechi = legge_dichiarazione(testo_cieco)
@@ -415,7 +449,7 @@ def esegui_mutanti(codice, mutanti, casi, titolo) -> int:
         # Il mutante deve far cambiare colore al caso E lasciare il gate VIVO: un
         # mutante che lo fa esplodere uscirebbe 1 e verrebbe contato come "il caso se
         # ne accorge", mentre non ha esercitato proprio niente.
-        vivo = "Traceback" not in testo
+        vivo = not morto(testo)
         cambiato = uscita != atteso and vivo
         if not cambiato:
             errori += 1
