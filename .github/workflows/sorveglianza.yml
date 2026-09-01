@@ -119,11 +119,26 @@ jobs:
           # Il token nel file di config di curl, non in argv: `ps` mostrerebbe la
           # riga di comando a chiunque stia sullo stesso host.
           umask 077
+          # Il `trap` PRIMA della scrittura, non un `rm` dopo la curl: fra le due righe
+          # c'e' una finestra in cui il file col bearer sopravvive se lo step muore —
+          # `timeout-minutes` scaduto, run cancellato. Il raggio e' piccolo (il file e'
+          # 0600, $RUNNER_TEMP vive su un runner effimero) ma il rimedio costa una riga,
+          # e la stessa forma sta nel job Railway qui sotto: due copie dello stesso
+          # schema divergono, quindi si toccano insieme o in nessuno dei due.
+          #
+          # TRE trap e non uno con `EXIT INT TERM`, e la differenza e' stata MISURATA il
+          # 01/09/2026: un handler di segnale che si limita a pulire INGHIOTTE il
+          # segnale, e bash esce 0 — cioe' uno step ucciso a meta' si presenterebbe come
+          # riuscito. Con `exit 143` il segnale rilancia lo stato convenzionale E fa
+          # scattare l'EXIT qui sopra, che e' l'unico posto in cui vive la pulizia.
+          # Provato nei quattro casi: uscita 0, uscita 3, errexit, SIGTERM -> 143.
+          trap 'rm -f "$RUNNER_TEMP/sentry.curlrc"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           printf 'header = "Authorization: Bearer %s"\n' "$SENTRY_AUTH_TOKEN" > "$RUNNER_TEMP/sentry.curlrc"
           codice=$(curl --connect-timeout 5 -sS -K "$RUNNER_TEMP/sentry.curlrc" --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
             -o "$RUNNER_TEMP/wf.json" -w '%{http_code}' \
             "${SENTRY_HOST}/api/0/organizations/${SENTRY_ORG}/workflows/")
-          rm -f "$RUNNER_TEMP/sentry.curlrc"
           if [ "$codice" != "200" ]; then
             echo "::error::Sentry ha risposto ${codice}: questo job NON ha verificato la regola, e non e' un allarme sparito."
             exit 1
@@ -174,12 +189,18 @@ jobs:
           fi
           workspace=$(python3 -c "import json;print(json.load(open('docs/sorveglianza-baseline.json'))['workspace_id'])")
           umask 077
+          # Stessa ragione e stessa forma — le tre trap comprese — del job Sentry qui
+          # sopra, dove sta il perche' per esteso: il `trap` precede la scrittura, cosi'
+          # il file col bearer non sopravvive a uno step ucciso fra il `printf` e la
+          # fine della curl, e i due segnali escono col loro stato invece che con 0.
+          trap 'rm -f "$RUNNER_TEMP/rw.curlrc" "$RUNNER_TEMP/query.json"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$RAILWAY_TOKEN" > "$RUNNER_TEMP/rw.curlrc"
           python3 scripts/query-usage-railway.py "$workspace" > "$RUNNER_TEMP/query.json"
           codice=$(curl --connect-timeout 5 -sS -K "$RUNNER_TEMP/rw.curlrc" --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
             -X POST -d @"$RUNNER_TEMP/query.json" -o "$RUNNER_TEMP/usage.json" -w '%{http_code}' \
             https://backboard.railway.com/graphql/v2)
-          rm -f "$RUNNER_TEMP/rw.curlrc" "$RUNNER_TEMP/query.json"
           if [ "$codice" != "200" ]; then
             echo "::error::Railway ha risposto ${codice}: questo job NON ha misurato niente."
             exit 1
