@@ -60,6 +60,13 @@ FORMA_ID = re.compile(r"^[0-9a-f-]{36}$")
 # con passi in piu'. Quanti se ne sono visti si STAMPA, cosi' un calo si legge.
 SERVIZI_MINIMI = 2
 
+# Sotto un decimo dell'osservato la misura e' rotta, non bassa. Dieci e non due perche'
+# il consumo vero oscilla — un deploy, una compattazione di Prometheus — e un pavimento
+# stretto griderebbe a ogni giornata tranquilla, cioe' verrebbe disattivato. Dieci e non
+# cento perche' il caso che conta e' lo zero e i suoi dintorni: una finestra che torna
+# vuota, una query che cambia semantica sotto di noi, l'hub fermo.
+PAVIMENTO_BASSO = 10
+
 
 def _nome(servizio: str | None, nomi: dict[str, str]) -> str:
     """Il nome stampabile di un servizio. Mai una stringa arbitraria dell'API.
@@ -176,6 +183,13 @@ def main(percorso_risposta: str, modo: str = "") -> int:
             continue
         totale = sum(per_servizio.values())
         osservato = base["osservato_al_giorno"].get(misura)
+        if osservato is None:
+            sforati.append(
+                f"{misura} ha un tetto ma nessun valore osservato: senza quello il "
+                "pavimento sul basso non si puo' calcolare, e mezzo controllo si legge "
+                "come un controllo intero."
+            )
+            continue
         print(
             f"{misura}: {totale:.1f} al giorno  (tetto {tetto} — "
             f"misurato il {base['misurato_il']}: {osservato})"
@@ -186,6 +200,20 @@ def main(percorso_risposta: str, modo: str = "") -> int:
             print(f"    {valore:9.2f}  {nome}")
         if totale > tetto:
             sforati.append(f"{misura} = {totale:.1f} al giorno, sopra il tetto di {tetto}.")
+        # E il PAVIMENTO SUL BASSO, che e' l'altra meta' e mancava. `SERVIZI_MINIMI`
+        # conta quanti servizi hanno risposto, mai QUANTO hanno misurato: una risposta
+        # con la forma giusta e tutti i valori a zero attraversava il pavimento, stava
+        # sotto ogni tetto e stampava "consumo a posto". Sei container sempre accesi non
+        # consumano zero CPU in ventiquattro ore — uno zero e' una misura rotta, non un
+        # consumo virtuoso, e questa sonda e' stata appena riscritta proprio perche'
+        # misurava la cosa sbagliata sembrando sana.
+        elif totale < osservato / PAVIMENTO_BASSO:
+            sforati.append(
+                f"{misura} = {totale:.1f} al giorno, sotto un {PAVIMENTO_BASSO}esimo "
+                f"dell'osservato ({osservato}). Un consumo che crolla cosi' non e' un "
+                "risparmio: o l'hub e' fermo, o la finestra della query non ha "
+                "restituito il periodo che dichiara."
+            )
 
     if sforati:
         for s in sforati:

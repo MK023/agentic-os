@@ -140,7 +140,7 @@ bash scripts/prova-ritenzione-loki.sh                          # gate: delete ro
 bash scripts/prova-allarmi.sh                                  # gate: rules load, fire on a broken reality, and notify, ~2m, Docker + python3 con PyYAML
 python3 scripts/prova-gate-workflow.py                         # gate: the two lint.yml workflow gates, 7 cases + 3 mutants + both gates' declared-inspection check, ~4s (measured), python3 con PyYAML
 python3 scripts/prova-sonda-consumo.py                         # gate: the Railway consumption probe on fixture responses — no token, no network, ~0.26s (measured)
-python3 scripts/prova-prezzario-allineato.py [--prova]         # gate: model names AND each (model, type) rate identical in main.py, both Grafana panels and the promtool test; `--prova` asserts the gate goes red on 9 mutants. Both, ~0.64s (measured)
+python3 scripts/prova-prezzario-allineato.py [--prova]         # gate: model names AND each (model, type) rate identical in main.py, both Grafana panels and the promtool test; `--prova` asserts the gate goes red on 11 mutants. Both, ~1.8s (measured)
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import time
 
@@ -1738,11 +1739,14 @@ class _Traccia:
     picco crollerebbe da 3 a 1.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ondata: int = 3, attesa_massima: float = 1.0) -> None:
         self.in_volo = 0
         self.picco = 0
         self.stadi = 0
         self.totale = 0
+        self.ondata = ondata
+        self.attesa_massima = attesa_massima
+        self._formata = asyncio.Event()
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         if self.in_volo == 0:
@@ -1750,11 +1754,28 @@ class _Traccia:
         self.in_volo += 1
         self.picco = max(self.picco, self.in_volo)
         self.totale += 1
-        # Cede il controllo perche' le compagne di ondata possano PARTIRE prima che
-        # questa finisca: senza, ogni richiesta nascerebbe e morirebbe da sola e il
-        # picco leggerebbe 1 anche su codice perfettamente concorrente — la misura
-        # direbbe di piu' sul finto che sul soggetto.
-        await asyncio.sleep(0.01)
+        # Ogni richiesta cede il controllo finche' l'ondata non si e' FORMATA, cosi' le
+        # compagne possono partire prima che questa finisca: senza, ognuna nascerebbe e
+        # morirebbe da sola e il picco leggerebbe 1 anche su codice perfettamente
+        # concorrente — la misura direbbe di piu' sul finto che sul soggetto.
+        #
+        # Un `Event` e NON un `sleep` fisso, e la ragione e' misurata: col sonno da 10 ms
+        # che stava qui, lo scarto fra la prima e la terza richiesta dell'ondata e' 1,2 ms
+        # a vuoto e 5,2 ms con la macchina occupata 4x — cioe' meta' del budget, su un
+        # runner GitHub piu' stretto di questa macchina. Il verso del guasto sarebbe rosso
+        # e non verde, quindi non silenzioso, ma la politica flaky di questo repo vieta
+        # anche quello. Con l'evento il cammino che passa non guarda l'orologio.
+        #
+        # L'evento NON si azzera fra un'ondata e l'altra, di proposito: gli stadi da una
+        # richiesta sola (la sonda di persistenza, quella della storia) lo trovano gia'
+        # alzato e passano subito, invece di pagare `attesa_massima` ciascuno.
+        if self.in_volo >= self.ondata:
+            self._formata.set()
+        with contextlib.suppress(TimeoutError):
+            # Il timeout e' la via d'uscita del caso che DEVE fallire: se qualcuno
+            # serializzasse le tre query, l'ondata non si forma mai e senza questo
+            # il test si appenderebbe invece di dire cosa non va.
+            await asyncio.wait_for(self._formata.wait(), self.attesa_massima)
         self.in_volo -= 1
         return httpx.Response(200, json={"data": {"result": _RISPOSTE[_domanda(request)]}})
 

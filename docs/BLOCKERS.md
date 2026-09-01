@@ -394,10 +394,20 @@ as a task instead of trusted to a check.
   Python** rather than "the gate without the `uses:` exemption". `python3 -c` on a
   `SyntaxError` exits 1 without printing `Traceback`, so the liveness guard counted a
   corpse as a rejection and the bench printed `ok` for the wrong reason — reproduced
-  before the fix, not assumed. Fixed as the **class** rather than the two forms: a
-  single `morto()` predicate now answers "did the gate die before deciding?" in all four
-  places that used to grep for `Traceback` alone, so the next form is added once instead
-  of four times. The second hole — a sabotage that guarded only that the substitution
+  before the fix, not assumed.
+
+  **The first remedy claimed to close the class and closed a third form**, which is worth
+  more than the bug: a `morto()` predicate grepping the output for `Traceback` **or**
+  `SyntaxError`, with a docstring saying future forms get added "in one place". An
+  adversarial review reproduced the fourth: drop an `if` header and leave its body
+  indented, and `python3 -c` exits 1 printing `IndentationError` — neither string, so the
+  corpse counted as a rejection again, inside the fix for exactly that. The class is now
+  closed by `compile()` before the run, so every syntactic death — present or future — is
+  a `SyntaxError` to Python's own parser and nobody has to predict its name. It also
+  removed a false positive the string grep had: the duplicate-step gate prints step
+  *names*, so a step called "prova del SyntaxError" made a correct rejection read as an
+  explosion. `prova_il_predicato()` now guards all four cases, because this class has bitten
+  twice in one day. The second hole — a sabotage that guarded only that the substitution
   *happened*, never that it **bit** — now fails loudly if none of the three hardcoded
   filenames still exists, which is the state that turned the comparison into
   `attesi == attesi`. Both fixes were proved in both directions: green on the real tree,

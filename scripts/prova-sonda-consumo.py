@@ -152,6 +152,30 @@ CASI = [
         GRAFANA,
     ),
     (
+        "tutto a zero con la forma giusta: misura rotta, non consumo virtuoso",
+        BASELINE,
+        _risposta([("CPU_USAGE", LOKI, 0.0), ("CPU_USAGE", GRAFANA, 0.0)] + SANA[2:]),
+        "",
+        1,
+        "non e' un risparmio",
+    ),
+    (
+        "un consumo crollato a un ventesimo: stessa classe dello zero",
+        BASELINE,
+        _risposta([("CPU_USAGE", LOKI, 1.0), ("CPU_USAGE", GRAFANA, 0.5)] + SANA[2:]),
+        "",
+        1,
+        "sotto un 10esimo",
+    ),
+    (
+        "un tetto senza il suo osservato: mezzo controllo non e' un controllo",
+        _senza(BASELINE, osservato_al_giorno={"MEMORY_USAGE_GB": 900.0}),
+        _risposta(SANA),
+        "",
+        1,
+        "nessun valore osservato",
+    ),
+    (
         "--taratura stampa i tetti a 3x senza verificarne nessuno",
         _senza(BASELINE, tetti_al_giorno={}),
         _risposta(SANA),
@@ -234,6 +258,49 @@ def prove_di_iniezione(gira) -> int:
     return errori
 
 
+def prova_la_finestra() -> int:
+    """La FINESTRA, cioe' l'intera correzione del 01/09/2026, provata invece che creduta.
+
+    Questo banco esercitava `verifica-consumo-railway.py` e mai `query-usage-railway.py`,
+    dove pero' vive il pezzo che decide se si sta misurando un TASSO o un CUMULATO. Se
+    `FINESTRA` diventasse `hours=1` i valori scenderebbero di ventiquattro volte,
+    resterebbero sotto ogni tetto per sempre e il job sarebbe verde — che e' parola per
+    parola la forma del difetto che questa correzione esiste per chiudere.
+
+    `corpo()` prende `adesso` come parametro apposta: un'ora fissa rende l'asserzione
+    esatta invece che approssimata, e senza quel parametro questa prova non esisterebbe.
+    """
+    from datetime import UTC, datetime
+
+    print("\n== la finestra della query")
+    spec = importlib.util.spec_from_file_location("query", RADICE / "scripts" / "query-usage-railway.py")
+    query = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(query)
+
+    adesso = datetime(2026, 9, 1, 5, 23, tzinfo=UTC)
+    variabili = query.corpo("W", adesso)["variables"]
+    da = datetime.fromisoformat(variabili["da"].replace("Z", "+00:00"))
+    a = datetime.fromisoformat(variabili["a"].replace("Z", "+00:00"))
+
+    errori = 0
+    for descrizione, condizione in [
+        ("la finestra dura esattamente 24 ore", a - da == query.FINESTRA),
+        ("e 24 ore sono davvero un giorno", query.FINESTRA.total_seconds() == 86400),
+        ("la fine e' l'istante passato", a == adesso),
+        # `Z` e non `+00:00`: lo scalare DateTime di GraphQL lo vuole cosi', e un fuso
+        # scritto nell'altra forma e' un errore che si vede solo in produzione.
+        ("le due date finiscono per Z", variabili["da"].endswith("Z") and variabili["a"].endswith("Z")),
+        ("si raggruppa per servizio", "groupBy: [SERVICE_ID]" in query.QUERY),
+        ("si chiede `usage`, non `estimatedUsage`", "estimatedUsage" not in query.QUERY),
+    ]:
+        if condizione:
+            print(f"  ok   {descrizione}")
+        else:
+            errori += 1
+            print(f"  ERRORE {descrizione}", file=sys.stderr)
+    return errori
+
+
 def main() -> int:
     errori = 0
     for nome, baseline, risposta, modo, atteso, frammento in CASI:
@@ -266,6 +333,7 @@ def main() -> int:
         print("  ok   lo stesso caso sotto il tetto e' verde: il rosso veniva dal numero")
 
     errori += prove_di_iniezione(_gira)
+    errori += prova_la_finestra()
 
     print(f"\n{'TUTTO A POSTO' if not errori else str(errori) + ' CASI FUORI POSTO'}")
     return 1 if errori else 0
