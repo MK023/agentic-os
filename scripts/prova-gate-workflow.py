@@ -83,18 +83,32 @@ def albero() -> Path:
 
 
 def gira_completo(codice: str, radice: Path):
-    """(exit code, stdout+stderr). Il messaggio serve quanto il codice di uscita.
+    """(exit code, stdout+stderr, compila). Il messaggio serve quanto il codice di uscita.
 
     S603: `codice` non e' input non fidato — e' lo script del gate estratto da
     `.github/workflows/lint.yml`, cioe' da un file versionato di questo repository, e
     girarlo davvero E' il punto del banco. La sola alternativa sarebbe copiarlo qui
     dentro, che vorrebbe dire una seconda copia del gate: la cosa che il progetto
     vieta per ogni file di configurazione, e per la stessa ragione.
+
+    Il terzo valore e' il motivo per cui questa funzione e' stata toccata il
+    01/09/2026. "Il gate e' morto prima di decidere?" si chiedeva leggendo il testo in
+    cerca di `Traceback`, poi anche di `SyntaxError`: due forme della stessa classe,
+    enumerate. La terza — `IndentationError`, che si ottiene togliendo una riga di
+    intestazione `if` e lasciando il corpo rientrato — usciva 1 senza nessuna delle due
+    stringhe, e il cadavere veniva contato come bocciatura. `compile()` chiude la CLASSE
+    invece di aggiungere la terza forma: qualunque morte sintattica, presente o futura,
+    e' una `SyntaxError` per il parser di Python e diventa un `False` qui, senza che
+    nessuno debba prevederne il nome.
     """
+    try:
+        compile(codice, "<gate>", "exec")
+    except SyntaxError as errore:  # IndentationError e TabError ne sono sottoclassi
+        return 1, f"il gate non compila: {errore}", False
     esito = subprocess.run(  # noqa: S603
         [sys.executable, "-c", codice], cwd=radice, capture_output=True, text=True
     )
-    return esito.returncode, esito.stdout + esito.stderr
+    return esito.returncode, esito.stdout + esito.stderr, True
 
 
 SENZA_TETTO = "on: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n"
@@ -149,9 +163,14 @@ CASI_DUPLICATI = [
 # quello che il suo nome dichiara.
 MUTANTI = [
     (
+        # NON `'if "uses" not in corpo and ' -> 'if ('`, che era la forma fino al
+        # 01/09/2026: produceva `if ("timeout-minutes" not in corpo:`, cioe' codice
+        # NON VALIDO, e quindi non modellava "il gate senza l'esenzione `uses:`" ma
+        # "il gate che non compila". Toglie la sola condizione e lascia
+        # `if "timeout-minutes" not in corpo:`, che e' il gate senza quel ramo.
         "il salto dei job `uses:`",
-        'if "uses" not in corpo and ',
-        "if (",
+        '"uses" not in corpo and ',
+        "",
         "un job che chiama una reusable workflow (non puo' avere timeout-minutes)",
     ),
     (
@@ -172,6 +191,28 @@ MUTANTI_DUPLICATI = [
 ]
 
 
+def morto(compila: bool, testo: str) -> bool:
+    """Il gate e' morto prima di decidere, invece di aver deciso.
+
+    Un gate che ESPLODE esce 1 come uno che boccia: ogni controllo di questo banco
+    deve saperlo distinguere, o conta un cadavere come una bocciatura.
+
+    Due morti diverse, e solo la seconda si legge nel testo. La morte SINTATTICA la
+    decide `compile()` dentro `gira_completo`, deterministicamente, per l'intera classe:
+    un primo tentativo, lo stesso giorno, cercava le stringhe `Traceback` e
+    `SyntaxError` e lasciava passare `IndentationError` — cioe' enumerava le forme
+    credendo di chiudere la classe, che e' il difetto che stava correggendo. La morte a
+    RUNTIME resta un `Traceback` nel testo, perche' e' quello che Python stampa e non
+    c'e' un modo migliore da qui.
+
+    E `SyntaxError` NON si cerca piu' nel testo, il che toglie anche un falso positivo:
+    il gate degli step duplicati stampa i NOMI degli step nel proprio messaggio, quindi
+    uno step chiamato "prova del SyntaxError" faceva leggere come esplosione una
+    bocciatura perfettamente corretta.
+    """
+    return not compila or "Traceback" in testo
+
+
 def prova_caso(codice, caso):
     """(va_bene, uscita, perche'). L'oracolo NON e' il solo codice di uscita.
 
@@ -187,10 +228,10 @@ def prova_caso(codice, caso):
     temp = albero()
     try:
         sporca(temp)
-        uscita, testo = gira_completo(codice, temp)
+        uscita, testo, compila = gira_completo(codice, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    if "Traceback" in testo:
+    if morto(compila, testo):
         return False, uscita, "il gate e' ESPLOSO invece di decidere"
     if rosso:
         if uscita != 1:
@@ -244,7 +285,7 @@ def prova_dichiarazione(codice, titolo) -> int:
     temp = albero()
     try:
         attesi = conta_job(temp)
-        uscita, testo = gira_completo(codice, temp)
+        uscita, testo, _ = gira_completo(codice, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
     dichiarati = legge_dichiarazione(testo)
@@ -292,15 +333,28 @@ def prova_dichiarazione(codice, titolo) -> int:
         return 1
     temp = albero()
     try:
-        uscita_salta, testo_salta = gira_completo(salta, temp)
+        uscita_salta, testo_salta, compila_salta = gira_completo(salta, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
     # VIVO, non solo diverso: un saboteur che fa esplodere il gate produce dichiarazione
     # vuota, cioe' "diversa", e passerebbe per riuscito senza aver esercitato niente.
-    if "Traceback" in testo_salta:
+    if morto(compila_salta, testo_salta):
         print(f"  ERRORE il gate sabotato e' ESPLOSO (exit {uscita_salta}): la prova non esercita niente")
         return 1
     saltati = {f for f in attesi if f.endswith(("sonar.yml", "smoke.yml", "sorveglianza.yml"))}
+    # I tre nomi sono INCHIODATI dentro la sabotatura, e questo e' il loro unico
+    # guinzaglio: se nessuno dei tre esiste piu' — rinominato, spostato, unito a un
+    # altro — il `continue` non scatta su niente, la dichiarazione non cala di un
+    # file, e il confronto qui sotto diventa `attesi == attesi`, cioe' una tautologia
+    # che stampa `ok`. La `quante != 1` sopra guarda che la SOSTITUZIONE sia
+    # avvenuta, non che MORDA: sono due domande diverse, e fino al 01/09/2026 si
+    # rispondeva solo alla prima.
+    if not saltati:
+        print(
+            "  ERRORE nessuno fra sonar.yml, smoke.yml e sorveglianza.yml esiste piu': "
+            "la sabotatura col `continue` non salta niente e il confronto e' una tautologia"
+        )
+        return 1
     if legge_dichiarazione(testo_salta) != {k: v for k, v in attesi.items() if k not in saltati}:
         print(
             "  ERRORE saltando l'ispezione la dichiarazione non cala esattamente dei file saltati: "
@@ -351,10 +405,10 @@ def prova_dichiarazione(codice, titolo) -> int:
         return 1
     temp = albero()
     try:
-        uscita_cieca, testo_cieco = gira_completo(mutato, temp)
+        uscita_cieca, testo_cieco, compila_cieco = gira_completo(mutato, temp)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    if "Traceback" in testo_cieco:
+    if morto(compila_cieco, testo_cieco):
         print("  ERRORE il gate accecato e' ESPLOSO: la mutazione non esercita niente")
         return 1
     visti_ciechi = legge_dichiarazione(testo_cieco)
@@ -408,14 +462,14 @@ def esegui_mutanti(codice, mutanti, casi, titolo) -> int:
         temp = albero()
         try:
             sporca(temp)
-            uscita, testo = gira_completo(mutato, temp)
+            uscita, testo, compila = gira_completo(mutato, temp)
         finally:
             shutil.rmtree(temp, ignore_errors=True)
         atteso = 1 if rosso else 0
         # Il mutante deve far cambiare colore al caso E lasciare il gate VIVO: un
         # mutante che lo fa esplodere uscirebbe 1 e verrebbe contato come "il caso se
         # ne accorge", mentre non ha esercitato proprio niente.
-        vivo = "Traceback" not in testo
+        vivo = not morto(compila, testo)
         cambiato = uscita != atteso and vivo
         if not cambiato:
             errori += 1
@@ -424,6 +478,71 @@ def esegui_mutanti(codice, mutanti, casi, titolo) -> int:
             f"  {'ok  ' if cambiato else 'ERRORE'} tolto {nome}: "
             f"'{caso}' -> exit {uscita} (senza mutante: {atteso}){motivo}"
         )
+    return errori
+
+
+# Uno step il cui NOME contiene la parola, per provare che il predicato non ci casca.
+NOME_TRABOCCHETTO = (
+    "on: {}\njobs:\n  a:\n    timeout-minutes: 5\n    steps:\n"
+    "      - name: prova del SyntaxError\n        run: 'true'\n"
+    "      - name: prova del SyntaxError\n        run: 'true'\n"
+)
+
+
+def prova_il_predicato(codice: str) -> int:
+    """`morto()` riconosce un cadavere? Provato, non creduto.
+
+    Questa sezione esiste perche' la stessa classe ha morso DUE volte il 01/09/2026:
+    prima con un mutante che produceva codice non valido e veniva contato come
+    bocciatura, poi — dentro la correzione di quel difetto — con `IndentationError`,
+    che non contiene ne' `Traceback` ne' `SyntaxError` e passava di nuovo. Un predicato
+    che decide se una prova ha esercitato qualcosa e' l'ultima cosa che si puo'
+    lasciare senza prova propria: se sbaglia, tutto il resto di questo file stampa `ok`
+    senza aver misurato niente.
+    """
+    print("\n== `morto()` riconosce un cadavere, e non scambia per cadavere un vivo")
+    errori = 0
+    morti = [
+        ("sintassi non valida", codice.replace('if "uses" not in corpo and ', "if (")),
+        # La riga di intestazione sparisce e il corpo resta rientrato: e' la forma che
+        # ha attraversato indenne il primo rimedio.
+        (
+            "rientro non valido",
+            re.sub(
+                r'^\s*if "uses" not in corpo and "timeout-minutes" not in corpo:\n', "", codice, flags=re.M
+            ),
+        ),
+        (
+            "morte a runtime",
+            "import glob\n" + codice.replace("problemi = []", "problemi = []\nraise RuntimeError('boom')", 1),
+        ),
+    ]
+    for nome, mutante in morti:
+        temp = albero()
+        try:
+            _, testo, compila = gira_completo(mutante, temp)
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
+        if morto(compila, testo):
+            print(f"  ok   {nome}: riconosciuto come cadavere")
+        else:
+            errori += 1
+            print(f"  ERRORE {nome}: `morto()` lo conta come bocciatura", file=sys.stderr)
+
+    # E il verso opposto, che e' meta' del valore: una BOCCIATURA corretta non deve
+    # essere letta come esplosione solo perche' il messaggio del gate cita il nome di
+    # un'eccezione. Il gate degli step duplicati stampa i nomi degli step.
+    temp = albero()
+    try:
+        (temp / ".github/workflows/x.yml").write_text(NOME_TRABOCCHETTO)
+        uscita, testo, compila = gira_completo(estrai(DUPLICATI), temp)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+    if uscita == 1 and not morto(compila, testo):
+        print("  ok   uno step chiamato 'prova del SyntaxError' resta una bocciatura, non un'esplosione")
+    else:
+        errori += 1
+        print("  ERRORE un nome di step fa leggere come esplosione una bocciatura corretta", file=sys.stderr)
     return errori
 
 
@@ -446,6 +565,8 @@ def main() -> int:
         CASI_DUPLICATI,
         "e lo stesso per il gate degli step duplicati",
     )
+    errori += prova_il_predicato(tetti)
+
     print(f"\n{'TUTTO A POSTO' if not errori else str(errori) + ' CASI FUORI POSTO'}")
     return 1 if errori else 0
 

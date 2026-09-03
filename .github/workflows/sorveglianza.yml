@@ -119,11 +119,26 @@ jobs:
           # Il token nel file di config di curl, non in argv: `ps` mostrerebbe la
           # riga di comando a chiunque stia sullo stesso host.
           umask 077
+          # Il `trap` PRIMA della scrittura, non un `rm` dopo la curl: fra le due righe
+          # c'e' una finestra in cui il file col bearer sopravvive se lo step muore —
+          # `timeout-minutes` scaduto, run cancellato. Il raggio e' piccolo (il file e'
+          # 0600, $RUNNER_TEMP vive su un runner effimero) ma il rimedio costa una riga,
+          # e la stessa forma sta nel job Railway qui sotto: due copie dello stesso
+          # schema divergono, quindi si toccano insieme o in nessuno dei due.
+          #
+          # TRE trap e non uno con `EXIT INT TERM`, e la differenza e' stata MISURATA il
+          # 01/09/2026: un handler di segnale che si limita a pulire INGHIOTTE il
+          # segnale, e bash esce 0 — cioe' uno step ucciso a meta' si presenterebbe come
+          # riuscito. Con `exit 143` il segnale rilancia lo stato convenzionale E fa
+          # scattare l'EXIT qui sopra, che e' l'unico posto in cui vive la pulizia.
+          # Provato nei quattro casi: uscita 0, uscita 3, errexit, SIGTERM -> 143.
+          trap 'rm -f "$RUNNER_TEMP/sentry.curlrc"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           printf 'header = "Authorization: Bearer %s"\n' "$SENTRY_AUTH_TOKEN" > "$RUNNER_TEMP/sentry.curlrc"
           codice=$(curl --connect-timeout 5 -sS -K "$RUNNER_TEMP/sentry.curlrc" --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
             -o "$RUNNER_TEMP/wf.json" -w '%{http_code}' \
             "${SENTRY_HOST}/api/0/organizations/${SENTRY_ORG}/workflows/")
-          rm -f "$RUNNER_TEMP/sentry.curlrc"
           if [ "$codice" != "200" ]; then
             echo "::error::Sentry ha risposto ${codice}: questo job NON ha verificato la regola, e non e' un allarme sparito."
             exit 1
@@ -138,11 +153,22 @@ jobs:
   #
   # NON CALCOLA SOLDI, di proposito. L'enum MetricMeasurement non ha nessuna misura
   # in denaro (verificato per introspezione: solo CPU, memoria, disco, rete), e le
-  # unita' di estimatedUsage non sono documentate: MEMORY_USAGE_GB diviso le ore di
-  # un mese darebbe ~$169 contro i ~5 euro della fattura vera. Convertire vorrebbe
+  # unita' di queste misure non sono documentate. Convertire vorrebbe
   # dire indovinare l'unita' E replicare il prezzario in un quarto posto. Cio' che
   # questa sonda intercetta e' la FUGA — un processo che consuma e non dovrebbe —
   # non la bolletta.
+  #
+  # E MISURA UN TASSO, non un totale. Dal 20/08 al 01/09/2026 leggeva `estimatedUsage`,
+  # che e' CUMULATIVO sul ciclo di fatturazione: un numero che sale per costruzione,
+  # confrontato con un tetto fisso, dice da quanto dura il ciclo e non quanto si
+  # consuma. E' diventato rosso il 01/09 con CPU 752.9 contro 750, dopo dodici giorni
+  # di salita monotona senza un solo azzeramento — mentre i delta giornalieri erano
+  # piatti da dieci. Ora la domanda e' "quanto ha consumato NELLE ULTIME 24 ORE", e la
+  # risposta arriva raggruppata per servizio, cosi' l'allarme dice QUALE e' cresciuto
+  # invece di ordinare a chi legge di andarlo a cercare.
+  #
+  # Provata senza token e senza rete da `scripts/prova-sonda-consumo.py`, che gira in
+  # lint.yml su ogni PR: e' l'unico modo di guardare questa sonda prima delle 5:23.
   spesa-railway:
     permissions: {}
     runs-on: ubuntu-latest
@@ -163,12 +189,18 @@ jobs:
           fi
           workspace=$(python3 -c "import json;print(json.load(open('docs/sorveglianza-baseline.json'))['workspace_id'])")
           umask 077
+          # Stessa ragione e stessa forma — le tre trap comprese — del job Sentry qui
+          # sopra, dove sta il perche' per esteso: il `trap` precede la scrittura, cosi'
+          # il file col bearer non sopravvive a uno step ucciso fra il `printf` e la
+          # fine della curl, e i due segnali escono col loro stato invece che con 0.
+          trap 'rm -f "$RUNNER_TEMP/rw.curlrc" "$RUNNER_TEMP/query.json"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$RAILWAY_TOKEN" > "$RUNNER_TEMP/rw.curlrc"
           python3 scripts/query-usage-railway.py "$workspace" > "$RUNNER_TEMP/query.json"
           codice=$(curl --connect-timeout 5 -sS -K "$RUNNER_TEMP/rw.curlrc" --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
             -X POST -d @"$RUNNER_TEMP/query.json" -o "$RUNNER_TEMP/usage.json" -w '%{http_code}' \
             https://backboard.railway.com/graphql/v2)
-          rm -f "$RUNNER_TEMP/rw.curlrc" "$RUNNER_TEMP/query.json"
           if [ "$codice" != "200" ]; then
             echo "::error::Railway ha risposto ${codice}: questo job NON ha misurato niente."
             exit 1

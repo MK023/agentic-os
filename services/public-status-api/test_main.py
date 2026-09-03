@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import json
 import time
 
@@ -1704,3 +1706,140 @@ def test_the_witness_is_not_asked_before_the_threshold(monkeypatch):
     _passate_a_zero(orologio, main.ZERO_PASSES_BEFORE_ALERT - 1)
 
     assert not storia.called
+
+
+# --------------------------------------------------------------------------------
+# Il tetto di latenza di /status, e perche' si misurano gli STADI invece dei secondi.
+#
+# Dichiarato aperto il 31/08/2026 e chiuso qui: il commento in fondo a `status()` dice
+# che durante una serie di zeri l'endpoint fa una richiesta in piu' e che "il tetto
+# teorico si alza di quel tanto", ma nessun test lo fissava — cioe' era una frase, non
+# un contratto. Il costo peggiore non e' il NUMERO di richieste: e' quante di esse
+# stanno IN FILA, perche' ognuna porta il suo `REQUEST_TIMEOUT` e solo quelle in fila
+# si sommano. Tre query in parallelo costano un timeout; tre in fila ne costano tre.
+#
+# Percio' l'oracolo e' strutturale e non cronometrico. Un `assert durata < 2s` sarebbe
+# rosso a caso sul runner condiviso di GitHub — la politica flaky di questo repository
+# lo vieta — e soprattutto misurerebbe la macchina invece del codice: con Prometheus
+# finto ogni richiesta torna in microsecondi, quindi un giorno in cui qualcuno
+# serializzasse le tre query pubbliche il cronometro resterebbe verde e la produzione
+# passerebbe da 20 a 40 secondi di caso peggiore senza che niente lo dica.
+STADI_ATTESI_PASSATA_NORMALE = 2  # gather(3 query pubbliche) -> persistenza
+STADI_ATTESI_DURANTE_GLI_ZERI = 3  # ... -> sonda della storia a 7 giorni
+
+
+class _Traccia:
+    """Registra quante richieste a Prometheus stanno in volo insieme, e in quante ondate.
+
+    `stadi` conta le volte in cui il numero di richieste in volo risale da zero: e'
+    esattamente la profondita' della catena sequenziale, cioe' il moltiplicatore di
+    `REQUEST_TIMEOUT` nel caso peggiore. `picco` e' la larghezza della piu' grande
+    ondata parallela, e serve al verso opposto: se qualcuno sostituisse l'`asyncio.gather`
+    con tre `await` in fila, il totale delle richieste non cambierebbe di una e solo il
+    picco crollerebbe da 3 a 1.
+    """
+
+    def __init__(self, ondata: int = 3, attesa_massima: float = 1.0) -> None:
+        self.in_volo = 0
+        self.picco = 0
+        self.stadi = 0
+        self.totale = 0
+        self.ondata = ondata
+        self.attesa_massima = attesa_massima
+        self._formata = asyncio.Event()
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if self.in_volo == 0:
+            self.stadi += 1
+        self.in_volo += 1
+        self.picco = max(self.picco, self.in_volo)
+        self.totale += 1
+        # Ogni richiesta cede il controllo finche' l'ondata non si e' FORMATA, cosi' le
+        # compagne possono partire prima che questa finisca: senza, ognuna nascerebbe e
+        # morirebbe da sola e il picco leggerebbe 1 anche su codice perfettamente
+        # concorrente — la misura direbbe di piu' sul finto che sul soggetto.
+        #
+        # Un `Event` e NON un `sleep` fisso, e la ragione e' misurata: col sonno da 10 ms
+        # che stava qui, lo scarto fra la prima e la terza richiesta dell'ondata e' 1,2 ms
+        # a vuoto e 5,2 ms con la macchina occupata 4x — cioe' meta' del budget, su un
+        # runner GitHub piu' stretto di questa macchina. Il verso del guasto sarebbe rosso
+        # e non verde, quindi non silenzioso, ma la politica flaky di questo repo vieta
+        # anche quello. Con l'evento il cammino che passa non guarda l'orologio.
+        #
+        # L'evento NON si azzera fra un'ondata e l'altra, di proposito: gli stadi da una
+        # richiesta sola (la sonda di persistenza, quella della storia) lo trovano gia'
+        # alzato e passano subito, invece di pagare `attesa_massima` ciascuno.
+        if self.in_volo >= self.ondata:
+            self._formata.set()
+        with contextlib.suppress(TimeoutError):
+            # Il timeout e' la via d'uscita del caso che DEVE fallire: se qualcuno
+            # serializzasse le tre query, l'ondata non si forma mai e senza questo
+            # il test si appenderebbe invece di dire cosa non va.
+            await asyncio.wait_for(self._formata.wait(), self.attesa_massima)
+        self.in_volo -= 1
+        return httpx.Response(200, json={"data": {"result": _RISPOSTE[_domanda(request)]}})
+
+
+def _domanda(request: httpx.Request) -> str:
+    return request.url.params["query"]
+
+
+# Tutti zeri e vettori vuoti: e' lo stato che accende la sonda della storia, cioe' il
+# caso peggiore che questo blocco esiste per misurare.
+_RISPOSTE = {
+    SESSIONS_Q: [{"value": [0, "0"]}],
+    TOKENS_Q: [{"value": [0, "0"]}],
+    COST_Q: [],
+    main.PERSISTENCE_QUERY: [{"value": [0, "0"]}],
+    HISTORY_Q: [{"metric": {}, "value": [0, "4"]}],
+}
+
+
+def _misura_una_passata(orologio) -> _Traccia:
+    traccia = _Traccia()
+    respx.get("http://prometheus:9090/api/v1/query").mock(side_effect=traccia)
+    assert client.get("/status", headers={"Authorization": "Bearer test-token"}).status_code == 200
+    orologio.avanza(main.STATUS_CACHE_TTL_S + 1)
+    return traccia
+
+
+@respx.mock
+def test_una_passata_normale_costa_due_stadi_di_timeout_non_quattro(monkeypatch):
+    orologio = _reset_stato_di_processo(monkeypatch)
+
+    traccia = _misura_una_passata(orologio)
+
+    assert traccia.totale == 4, "tre query pubbliche piu' la sonda di persistenza"
+    assert traccia.picco == 3, (
+        "le tre query pubbliche devono partire INSIEME: un picco di 1 significa che "
+        "qualcuno ha sostituito l'asyncio.gather con tre await in fila, e il caso "
+        "peggiore e' passato da 2 a 4 timeout senza che il totale cambiasse"
+    )
+    assert traccia.stadi == STADI_ATTESI_PASSATA_NORMALE, (
+        f"caso peggiore = {traccia.stadi} x REQUEST_TIMEOUT "
+        f"({traccia.stadi * main.REQUEST_TIMEOUT.read:.0f}s)"
+    )
+
+
+@respx.mock
+def test_durante_gli_zeri_la_sonda_aggiunge_uno_stadio_solo(monkeypatch):
+    # LA RIGA DEL DEBITO. La sonda della storia parte solo dopo
+    # ZERO_PASSES_BEFORE_ALERT passate consecutive a zero, e da li' in poi a OGNI
+    # passata: e' il regime peggiore, e dura quanto durano gli zeri — cioe' tutto un
+    # weekend. Quello che va garantito e' che costi UNO stadio in piu', non due: se un
+    # domani qualcuno le desse un client suo, o la spostasse fuori dalla passata, il
+    # totale salirebbe e con lui il tetto.
+    orologio = _reset_stato_di_processo(monkeypatch)
+    monkeypatch.setattr(main, "ZERO_PASSES_BEFORE_ALERT", 2)
+
+    for _ in range(main.ZERO_PASSES_BEFORE_ALERT):
+        _misura_una_passata(orologio)
+    traccia = _misura_una_passata(orologio)
+
+    assert traccia.totale == 5, "le quattro di prima piu' la sonda della storia"
+    assert traccia.picco == 3
+    assert traccia.stadi == STADI_ATTESI_DURANTE_GLI_ZERI, (
+        f"caso peggiore durante gli zeri = {traccia.stadi} x REQUEST_TIMEOUT "
+        f"({traccia.stadi * main.REQUEST_TIMEOUT.read:.0f}s). Uno stadio in piu' della "
+        "passata normale, e uno solo: la sonda cavalca la passata che c'e' gia'."
+    )

@@ -21,21 +21,36 @@ riusa tariffe gia' presenti — il caso normale, cinque tariffe per sei modelli 
 attraversa quel confronto senza muovere niente. La dimensione sbagliata non e' un gate
 debole: dichiara allineati tre file che non lo sono, e chi legge smette di guardare.
 
+## Le DUE dimensioni, dal 01/09/2026
+
+Fino a ieri questo gate confrontava i soli NOMI, e quello in images.yml il solo insieme
+delle TARIFFE. Misurate separatamente tornano entrambe anche quando un modello e'
+prezzato con le tariffe di un altro: il nome c'e', e il moltiplicatore esiste — su
+un'altra riga. Era il buco dichiarato aperto in fondo a questo file, e si chiudeva solo
+confrontando la COPPIA `(modello, tipo) -> tariffa`, che e' cio' che `verifica` fa ora
+contro ciascun pannello e contro il test promtool.
+
 ## Cosa NON copre, dichiarato invece che sperato
 
-1. Che i nomi siano quelli che la produzione emette DAVVERO. Confronta i tre file fra
-   loro; se sbagliassero tutti e tre allo stesso modo resterebbe verde. Quel lato lo
-   copre `UnknownPricingKey`, ed e' il motivo per cui va tenuto rumoroso.
-2. Che il MOLTIPLICATORE di un modello sia quello della sua riga di tariffe. Un
-   modello prezzato con le tariffe di un altro passa questo gate (i nomi ci sono) E
-   quello delle tariffe (il moltiplicatore esiste, su un altro modello). Serve un
-   confronto per COPPIA (modello, tariffa) che nessuno dei due fa.
-3. Le righe Grafana collassate: i pannelli dentro `row.panels` vengono attraversati,
+1. Che i nomi e le tariffe siano quelli che la produzione emette e che il fornitore
+   pratica DAVVERO. Confronta i tre file fra loro; se sbagliassero tutti e tre allo
+   stesso modo resterebbe verde. Il lato dei nomi lo copre `UnknownPricingKey`, ed e' il
+   motivo per cui va tenuto rumoroso; il lato del listino non lo copre niente qui
+   dentro, e il 20/08/2026 e' costato un prezzo sbagliato del 50%.
+2. Le righe Grafana collassate: i pannelli dentro `row.panels` vengono attraversati,
    ma se un domani comparisse un terzo livello di annidamento andrebbe aggiunto qui.
+3. Una tariffa scritta come ESPRESSIONE in `PRICES_USD_PER_MTOK` (`5.00 * 2`): qui si
+   leggono solo i letterali, esponente compreso. Quella riga non verrebbe letta affatto,
+   quindi il pavimento sulle coppie diventa rosso — cioe' diventa rossa la manutenzione,
+   non il difetto. La notazione scientifica invece SI' si legge: fino al 01/09/2026 non
+   era vero, `1e1` valeva `1.0`, ed era una lettura SBAGLIATA che si presentava come una
+   lettura riuscita — la coppia risultava presente e il pavimento non scattava.
 
 Uso: `python3 scripts/prova-prezzario-allineato.py`, oppure con `--prova` per
-verificare che il gate sappia diventare rosso su sei mutanti. Le due invocazioni
-insieme: **0,45s misurati** il 31/08/2026.
+verificare che il gate sappia diventare rosso su undici mutanti. Le due invocazioni
+insieme: **1,8s misurati** il 01/09/2026 — erano 0,45s con sei mutanti e il solo
+confronto sui nomi. Il confronto per coppia costa: si leggono ventiquattro coppie da
+ciascuno dei tre posti invece di sei nomi.
 """
 
 from __future__ import annotations
@@ -77,6 +92,13 @@ PANNELLI_CHE_PREZZANO = 2
 # token, un filtro) — sarebbe un rosso falso, e un gate che grida a torto viene
 # disattivato.
 _MOLTIPLICATORE = re.compile(r"\*\s*[0-9.]")
+
+# La forma di una tariffa, scritta UNA volta. L'esponente c'e' perche' senza non c'era:
+# `1e1` veniva letto `1.0` da entrambe le estrazioni, la coppia risultava presente — il
+# pavimento a 24 non scattava — e il VALORE era sbagliato di un fattore dieci. Finche'
+# gli altri due file scrivono `10` il confronto diventa rosso lo stesso, ma una
+# riscrittura che toccasse tutti e tre sarebbe rimasta verde su un prezzario sbagliato.
+NUMERO = r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
 
 
 def chiavi_del_prezzario(sorgente: str) -> set[str]:
@@ -123,6 +145,143 @@ def modelli_della_dashboard(dashboard: dict) -> tuple[set[str], dict[tuple[str, 
                     modelli.add(modello.group(1))
                     per_pannello.setdefault((titolo, modello.group(1)), set()).add(tipo.group(1))
     return modelli, per_pannello
+
+
+def _tariffa_accanto(espressione: str, da: int, fino_a: int) -> float | None:
+    """Il moltiplicatore che segue un selettore, cioe' la tariffa di QUELLA coppia.
+
+    In entrambi i pannelli la forma e' `...{model="M",type="T"}[25h]...) * N`: il primo
+    `*` dopo la parentesi graffa e' la tariffa. Si cerca a partire dalla POSIZIONE del
+    selettore e non sull'intera espressione, perche' un'espressione ne concatena
+    ventiquattro e prendere "il primo moltiplicatore" darebbe a tutte la tariffa della
+    prima.
+
+    E si smette al selettore SUCCESSIVO, che e' la meta' non ovvia: senza quel confine
+    una coppia priva di moltiplicatore si prenderebbe in prestito quello della coppia
+    dopo, e il gate leggerebbe una tariffa plausibile dove non ce n'e' nessuna. Meglio
+    `None` — cioe' "qui non c'e' una tariffa" — che un numero preso dal vicino.
+    """
+    trovato = re.compile(r"\*\s*(" + NUMERO + r")").search(espressione, da, fino_a)
+    return float(trovato.group(1)) if trovato else None
+
+
+def _coppie_di_un_espressione(espressione: str) -> dict[tuple[str, str], float]:
+    """{(modello, tipo): tariffa} lette da una singola espressione PromQL."""
+    coppie: dict[tuple[str, str], float] = {}
+    selettori = list(re.finditer(r"\{([^}]*)\}", espressione))
+    for posizione, selettore in enumerate(selettori):
+        modello = re.search(r'model="([^"]+)"', selettore.group(1))
+        tipo = re.search(r'type="([^"]+)"', selettore.group(1))
+        if not (modello and tipo):
+            continue
+        prossimo = selettori[posizione + 1].start() if posizione + 1 < len(selettori) else len(espressione)
+        tariffa = _tariffa_accanto(espressione, selettore.end(), prossimo)
+        if tariffa is not None:
+            coppie[(modello.group(1), tipo.group(1))] = tariffa
+    return coppie
+
+
+def coppie_del_prezzario(sorgente: str) -> dict[tuple[str, str], float]:
+    """{(modello, tipo): tariffa} da `PRICES_USD_PER_MTOK`, la fonte di verita'.
+
+    Si legge il blocco col medesimo `re` di `chiavi_del_prezzario` invece di importare
+    `main` ed esaminare il dizionario vivo: importarlo eseguirebbe il modulo (Sentry,
+    variabili d'ambiente, il client httpx) dentro un gate che deve restare un lettore
+    di file. Il prezzo e' che una tariffa scritta come espressione — `5.00 * 2` — qui
+    non si legge; la tabella oggi porta solo letterali, e se un domani smettesse di
+    farlo questa funzione tornerebbe un dizionario piu' corto e il confronto qui sotto
+    diventerebbe rosso invece che cieco.
+    """
+    blocco = re.search(r"PRICES_USD_PER_MTOK\s*=\s*\{(.*?)\n\}", sorgente, re.S)
+    if blocco is None:
+        return {}
+    coppie: dict[tuple[str, str], float] = {}
+    modello = None
+    for riga in blocco.group(1).splitlines():
+        inizio = re.match(r'\s{4}"([^"]+)":\s*\{', riga)
+        if inizio:
+            modello = inizio.group(1)
+            continue
+        tariffa = re.match(r'\s{8}"([^"]+)":\s*(' + NUMERO + ")", riga)
+        if tariffa and modello:
+            coppie[(modello, tariffa.group(1))] = float(tariffa.group(2))
+    return coppie
+
+
+def coppie_della_dashboard(dashboard: dict) -> dict[str, dict[tuple[str, str], float]]:
+    """{titolo del pannello: {(modello, tipo): tariffa}}.
+
+    PER PANNELLO e non sull'unione, per la stessa ragione dei tipi qui sopra: due
+    pannelli che prezzano lo stesso modello a due tariffe diverse producono due cifre
+    che divergono fra loro, e un'unione le fonderebbe in un insieme che torna.
+    """
+    per_pannello: dict[str, dict[tuple[str, str], float]] = {}
+    for pannello in _pannelli(dashboard):
+        titolo = pannello.get("title", "(senza titolo)")
+        for target in pannello.get("targets") or []:
+            espressione = target.get("expr", "")
+            if _MOLTIPLICATORE.search(espressione):
+                per_pannello.setdefault(titolo, {}).update(_coppie_di_un_espressione(espressione))
+    return per_pannello
+
+
+def coppie_del_promql(sorgente: str) -> dict[tuple[str, str], float]:
+    """Come `modelli_del_promql`, ma con la tariffa: solo dalle espressioni sotto prova."""
+    coppie: dict[tuple[str, str], float] = {}
+    for espressione in re.findall(r"^\s*- expr: \|\n((?:^[ \t]+.*\n|^\s*\n)+)", sorgente, re.M):
+        if _MOLTIPLICATORE.search(espressione):
+            coppie.update(_coppie_di_un_espressione(espressione))
+    return coppie
+
+
+def _confronta_coppie(
+    tabella: dict[tuple[str, str], float],
+    altrove: dict[tuple[str, str], float],
+    dove: str,
+) -> list[str]:
+    """Le tariffe, coppia per coppia: quelle che DIVERGONO e quelle che MANCANO.
+
+    Il primo tentativo, il 01/09/2026, confrontava le sole chiavi presenti in entrambi e
+    si giustificava cosi': *"le assenze le trovano gia' i confronti sui nomi e sui quattro
+    tipi qui accanto"*. Falso in due punti, e una revisione avversaria li ha riprodotti
+    tutti e due:
+
+      - il test promtool NON ha un controllo sui quattro tipi, ha solo quello sui nomi.
+        Togliendo dall'espressione sotto prova il termine
+        `opus-4-8 / cacheRead * 0.5` il modello resta nominato dagli altri tre termini e
+        la tariffa `0.5` resta nell'insieme (la usano anche altri due modelli), quindi
+        nemmeno il gate a insiemi di images.yml se ne accorgeva;
+      - il controllo sui quattro tipi legge il SELETTORE, non il moltiplicatore. Un
+        termine della dashboard puo' perdere il suo `* 0.5` conservando `model=` e
+        `type=`: quei token vengono prezzati 1x invece di 0.5x — il pannello pubblico
+        SOVRASTIMA — e qui la coppia spariva invece di essere segnalata.
+
+    In entrambi i casi il gate usciva 0 stampando "24 coppie alla stessa tariffa" dopo
+    averne lette 23. Un'assenza e una divergenza sono lo stesso difetto visto da due
+    lati, e vanno raccolte nello stesso posto.
+    """
+    divergenti = [
+        f"      {modello} / {tipo}: {dove} dice {tariffa}, il prezzario dice {tabella[(modello, tipo)]}"
+        for (modello, tipo), tariffa in sorted(altrove.items())
+        if (modello, tipo) in tabella and tariffa != tabella[(modello, tipo)]
+    ]
+    mancanti = sorted(coppia for coppia in tabella if coppia not in altrove)
+    problemi = []
+    if divergenti:
+        problemi.append(
+            f"{dove} prezza dei token a una tariffa diversa da quella del prezzario:\n"
+            + "\n".join(divergenti)
+            + "\n  I NOMI combaciano e il moltiplicatore ESISTE — su un altro modello — quindi\n"
+            "  ne' il confronto sui nomi ne' quello sulle tariffe di images.yml lo vedono."
+        )
+    if mancanti:
+        problemi.append(
+            f"{dove} non prezza {len(mancanti)} delle {len(tabella)} coppie del prezzario:\n"
+            + "\n".join(f"      {modello} / {tipo}" for modello, tipo in mancanti)
+            + "\n  Una coppia che manca non vale zero: quei token semplicemente non entrano\n"
+            "  nella cifra, in silenzio, e le due cifre della dashboard divergono fra loro."
+        )
+    return problemi
 
 
 def modelli_del_promql(sorgente: str) -> set[str]:
@@ -182,6 +341,26 @@ def verifica(sorgente_main: str, dashboard: dict, sorgente_promql: str) -> list[
             "  se diverge, la CI esercita una query che non e' quella che gira."
         )
 
+    # IL CONFRONTO PER COPPIA. Dichiarato aperto il 31/08/2026 e chiuso il 01/09: fino a
+    # ieri un modello prezzato con le tariffe di un ALTRO attraversava indenne sia questo
+    # gate (i nomi c'erano tutti) sia quello delle tariffe in images.yml (il
+    # moltiplicatore esisteva, su un'altra riga). Le due dimensioni misurate da sole
+    # tornano entrambe; e' il legame fra le due che si rompeva, e nessuno lo guardava.
+    coppie_tabella = coppie_del_prezzario(sorgente_main)
+    # Il pavimento, come sopra: un'estrazione fallita produce un dizionario vuoto, e un
+    # confronto contro il vuoto e' verde per costruzione.
+    attese = len(tabella) * len(TIPI)
+    if len(coppie_tabella) != attese:
+        return [
+            f"lette {len(coppie_tabella)} coppie (modello, tipo) da PRICES_USD_PER_MTOK, "
+            f"attese {attese} = {len(tabella)} modelli x {len(TIPI)} tipi.\n"
+            "  Non e' un prezzario incompleto: e' un'estrazione che non ha funzionato,\n"
+            "  e un confronto di tariffe contro un dizionario mutilo e' verde per costruzione."
+        ]
+    for titolo, coppie in sorted(coppie_della_dashboard(dashboard).items()):
+        problemi += _confronta_coppie(coppie_tabella, coppie, f"il pannello {titolo!r}")
+    problemi += _confronta_coppie(coppie_tabella, coppie_del_promql(sorgente_promql), "il test promtool")
+
     for (titolo, modello), tipi in sorted(tipi_per_pannello.items()):
         mancanti = TIPI - tipi
         if mancanti:
@@ -200,7 +379,7 @@ def _stato_reale() -> tuple[str, dict, str]:
 
 
 def _prova() -> int:
-    """Il gate sa diventare rosso? Sei mutanti, in memoria, nessun file toccato.
+    """Il gate sa diventare rosso? Undici mutanti, in memoria, nessun file toccato.
 
     Esiste perche' un gate che nessuno ha visto fallire e' una promessa, non un
     controllo — e in questo repo tre gate su sei erano nati ciechi.
@@ -233,7 +412,106 @@ def _prova() -> int:
                     return copia
         return copia
 
+    def _scambia_tariffa(testo: str, modello: str, tipo: str, nuova: str) -> str:
+        """Da' a UNA coppia la tariffa di un ALTRO modello, lasciando tutto il resto.
+
+        E' il mutante che conta piu' di tutti, perche' modella esattamente il buco
+        dichiarato aperto fino al 01/09/2026: i NOMI restano tutti al loro posto e
+        l'insieme delle TARIFFE non cambia — `nuova` e' gia' in uso su un'altra riga —
+        quindi il confronto sui nomi qui sopra e quello sulle tariffe in images.yml
+        restano verdi entrambi. Solo il legame fra le due dimensioni si rompe.
+        """
+        # `[^*\n]*` e non `[^*]*`: senza il divieto di andare a capo, sul file promtool
+        # il selettore agganciava una serie di `input_series` e il moltiplicatore di
+        # una riga LONTANA. Il mutante mordeva un pezzo che il gate ignora — a ragione —
+        # e si presentava come "il gate non lo vede". Una prova che sbaglia bersaglio
+        # accusa il soggetto: e' la stessa classe che questo repo ha gia' pagato.
+        selettore = re.compile(
+            r'(\{[^}]*model="' + re.escape(modello) + r'"[^}]*type="' + re.escape(tipo) + r'"[^}]*\}'
+            r"[^*\n]*\*\s*)" + NUMERO
+        )
+        mutato, quante = selettore.subn(r"\g<1>" + nuova, testo, count=1)
+        if quante != 1:
+            raise SystemExit(f"il mutante non ha morso su {modello}/{tipo}: la prova non gira")
+        return mutato
+
+    def dashboard_con_tariffa_scambiata(d: dict, modello: str, tipo: str, nuova: str) -> dict:
+        """Sulle ESPRESSIONI, non su `json.dumps(d)`.
+
+        Mutare il testo JSON sembrava equivalente e non lo e': li' le virgolette sono
+        `\\"`, il selettore non combacia e il mutante non morde. Sarebbe passato per un
+        gate cieco invece che per una prova scritta male — e' la ragione per cui
+        `_scambia_tariffa` grida invece di restituire il testo intatto.
+        """
+        copia = json.loads(json.dumps(d))
+        for pannello in _pannelli(copia):
+            for target in pannello.get("targets") or []:
+                if _MOLTIPLICATORE.search(target.get("expr", "")):
+                    target["expr"] = _scambia_tariffa(target["expr"], modello, tipo, nuova)
+                    return copia
+        raise SystemExit("nessun pannello che prezza: la prova non gira")
+
+    # `10` e' la tariffa di input di claude-fable-5: esiste gia' nel prezzario, quindi
+    # nessun confronto di soli INSIEMI puo' accorgersene.
+    dash_scambiata = dashboard_con_tariffa_scambiata(dash, "claude-sonnet-5", "input", "10")
+
+    def senza_moltiplicatore(d: dict, modello: str, tipo: str) -> dict:
+        """Il termine resta, il suo `* N` sparisce: `model=` e `type=` sono ancora li'.
+
+        E' il mutante che il controllo sui quattro tipi NON puo' vedere, perche' legge
+        il selettore e non il moltiplicatore. In produzione significa che quei token
+        vengono prezzati 1x invece della loro tariffa, cioe' il pannello pubblico dei
+        costi SOVRASTIMA — e fino al 01/09/2026 usciva verde.
+        """
+        copia = json.loads(json.dumps(d))
+        modello_re = (
+            r'(\{[^}]*model="' + re.escape(modello) + r'"[^}]*type="' + re.escape(tipo) + r'"[^}]*\}'
+            r"[^*\n]*)\*\s*" + NUMERO
+        )
+        for pannello in _pannelli(copia):
+            for target in pannello.get("targets") or []:
+                mutato, quante = re.subn(modello_re, r"\g<1>", target.get("expr", ""), count=1)
+                if quante == 1:
+                    target["expr"] = mutato
+                    return copia
+        raise SystemExit(f"nessun termine {modello}/{tipo} da mutare: la prova non gira")
+
     mutanti = [
+        (
+            "un TERMINE INTERO tolto dal solo test promtool (il modello resta nominato)",
+            main_src,
+            dash,
+            re.sub(
+                r'\n\s*or claude_code_token_usage\{model="claude-opus-4-8",type="cacheRead"\} \* 0\.5',
+                "",
+                promql_src,
+                count=1,
+            ),
+        ),
+        (
+            "il moltiplicatore tolto da un termine del pannello (selettore intatto)",
+            main_src,
+            senza_moltiplicatore(dash, "claude-opus-4-8", "cacheRead"),
+            promql_src,
+        ),
+        (
+            "una tariffa del pannello presa da un ALTRO modello (nomi e insieme di tariffe intatti)",
+            main_src,
+            dash_scambiata,
+            promql_src,
+        ),
+        (
+            "la stessa cosa nel test promtool",
+            main_src,
+            dash,
+            _scambia_tariffa(promql_src, "claude-sonnet-5", "input", "10"),
+        ),
+        (
+            "le tariffe del prezzario non si leggono piu' (rientro cambiato)",
+            main_src.replace('\n        "input":', '\n         "input":'),
+            dash,
+            promql_src,
+        ),
         ("modello tolto dal solo test promtool", main_src, dash, senza_modello_nel_promql(promql_src)),
         (
             "modello tolto dalla sola dashboard",
@@ -304,6 +582,13 @@ def main(argv: list[str]) -> int:
     # venire da un glob vuoto.
     print(f"OK: {len(tabella)} modelli identici nei tre posti — {sorted(tabella)}")
     print(f"    quattro tipi ciascuno in entrambi i pannelli ispezionati: {pannelli}")
+    # Il numero di COPPIE, non un "ok" generico: e' l'unica riga che distingue "le
+    # tariffe combaciano" da "non ne ho letta nessuna", e sono due esiti che senza
+    # questa stampa hanno lo stesso aspetto.
+    print(
+        f"    e {len(coppie_del_prezzario(main_src))} coppie (modello, tipo) alla stessa "
+        "tariffa in ciascun pannello e nel test promtool"
+    )
     return 0
 
 
