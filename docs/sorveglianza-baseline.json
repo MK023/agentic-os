@@ -11,13 +11,44 @@
     "19a0e798-bf31-476c-b998-85cbbc4d151c": "prometheus",
     "532bb5b6-7738-4dac-8551-7873e8832bbe": "otel-collector"
   },
-  "misurato_il": null,
-  "osservato_al_giorno": {},
-  "_tetti": "circa 3x l'osservato: sotto e' rumore di crescita normale, sopra e' qualcosa che non dovrebbe girare. Ora il 3x sta su un TASSO, quindi vuol dire 'tre volte il consumo di un giorno normale' invece di 'tre volte quello che il contatore aveva accumulato quel martedi''.",
+  "misurato_il": "2026-09-03",
+  "osservato_al_giorno": {
+    "CPU_USAGE": 31.6,
+    "MEMORY_USAGE_GB": 1855.1
+  },
+  "_tetti": "3x il GIORNO PIU' CARICO osservato, non 3x la misura di taratura. Il 03/09/2026 `usage` ha dato CPU 31.6 e memoria 1855.1, ma quel giorno era TRANQUILLO: sotto il minimo CPU dei dodici giorni precedenti (36.1) e in fondo al range della memoria. Tarare 3x su una giornata quieta avrebbe lasciato un margine di 1,95x sul giorno piu' carico gia' visto (CPU 48.6, memoria 2731) — cioe' un rosso al primo giorno normale, e un allarme che grida a torto viene disattivato. 150 e 8200 sono 3x quel massimo. Restano stretti abbastanza: una fuga vera (container in crash loop, query scappata, volume che si riempie) moltiplica per cinque o piu', non per due.",
   "_taratura": "VUOTI FINCHE' NON MISURATI, e la sonda e' ROSSA finche' lo sono: un dizionario vuoto renderebbe il confronto una passeggiata a vuoto e il job verde, che e' il guasto silenzioso che questa sonda esiste per impedire. Si tarano una volta sola con `python3 scripts/verifica-consumo-railway.py <risposta.json> --taratura`, che stampa il blocco da incollare qui.",
-  "tetti_al_giorno": {},
+  "tetti_al_giorno": {
+    "CPU_USAGE": 150,
+    "MEMORY_USAGE_GB": 8200
+  },
   "_sentry": "La regola d'allarme di agentic-os vive nel workflow Sentry qui sotto. NON si legge da /projects/.../rules/: quello e' una proiezione legacy che PERDE la condizione every_event (misurato il 20/08 — stessa regola, tre id diversi su tre viste, e /rules/ ne mostrava due condizioni su tre).",
   "sentry_workflow_id": "727678",
-  "sentry_condizioni_attese": ["new_high_priority_issue", "existing_high_priority_issue", "every_event"],
-  "sentry_frequency_attesa": 60
+  "sentry_condizioni_attese": [
+    "new_high_priority_issue",
+    "existing_high_priority_issue",
+    "every_event"
+  ],
+  "sentry_frequency_attesa": 60,
+  "_range_osservato": "Tassi giornalieri dai delta dei run 22/08-01/09/2026, dopo l'arrivo di Loki: CPU da 36.1 a 48.6 (media 43.2), memoria da 1714 a 2731 (media 2241). Sono delta di `estimatedUsage`, misura diversa da `usage` — ma le due si sono confermate a vicenda: la memoria del 03/09 (1855.1) cade DENTRO quel range e la CPU appena sotto, quindi sono la stessa grandezza e i tetti si possono tarare sull'una leggendo l'altra.",
+  "_unita": "vCPU-minuto e GB-minuto, DEDOTTE il 03/09/2026 e non documentate dal fornitore. Il rapporto fra il valore di `usage` e la media istantanea letta dall'MCP Railway sta fra 1170 e 1387 per tutti e sei i servizi, contro i 1440 minuti di un giorno. La stessa lettura ha corroborato la ripartizione: l'ordine dei sei servizi per consumo di CPU e' IDENTICO nelle due fonti. Resta una deduzione, non una riga di doc.",
+  "_per_servizio": "Il tetto di ciascun servizio e' PER_SERVIZIO (5) volte il suo valore qui sotto. Esiste perche' il tetto sul totale ha un buco, trovato il 03/09/2026 provandolo: grafana che passa da 10.3 a 103 porta la somma a 124, sotto il tetto di 150, e non suona niente — mentre un singolo servizio che scappa e' la forma PIU' probabile di fuga. Un servizio nuovo non compare qui e quindi non ha un tetto suo: contribuisce al totale finche' non si ri-tara.",
+  "osservato_per_servizio": {
+    "CPU_USAGE": {
+      "cloudflared": 3.21,
+      "grafana": 10.3,
+      "loki": 8.53,
+      "otel-collector": 2.15,
+      "prometheus": 5.02,
+      "status-api": 2.41
+    },
+    "MEMORY_USAGE_GB": {
+      "cloudflared": 105.78,
+      "grafana": 547.96,
+      "loki": 277.16,
+      "otel-collector": 167.6,
+      "prometheus": 670.97,
+      "status-api": 85.64
+    }
+  }
 }
