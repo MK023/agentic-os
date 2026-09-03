@@ -104,12 +104,12 @@ CASI = [
         "loki",
     ),
     (
-        "tetti non ancora tarati: rosso, non verde per dizionario vuoto",
+        "tetti non tarati: rosso, E stampa gia' il blocco da incollare",
         _senza(BASELINE, tetti_al_giorno={}),
         _risposta(SANA),
         "",
         1,
-        "NON ha verificato niente",
+        '"tetti_al_giorno": {',
     ),
     (
         "un solo servizio nella risposta: estrazione mutila, non consumo basso",

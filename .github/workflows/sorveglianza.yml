@@ -20,12 +20,7 @@ on:
   # Nessun trigger su pull_request, e non e' una dimenticanza: i segreti non
   # arrivano ai PR da fork, quindi il job sarebbe rosso per tutti tranne che per
   # noi. Un rosso che dipende da chi apre la PR non e' un segnale.
-  workflow_dispatch:
-    inputs:
-      taratura:
-        description: "Stampa i tetti da incollare invece di verificarli (nessuna verifica)"
-        type: boolean
-        default: false
+  workflow_dispatch: {}
 
 permissions: {}
 
@@ -186,11 +181,6 @@ jobs:
       - name: il consumo Railway resta sotto i tetti dichiarati
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          # In `env` e non interpolato dentro il `run`: e' un booleano e non potrebbe
-          # portare niente di ostile, ma la regola vale per la classe e non per il caso
-          # — un input che entra nello script per sostituzione testuale e' la forma
-          # dell'iniezione nei workflow, e la si evita sempre, non quando sembra rischiosa.
-          TARATURA: ${{ inputs.taratura }}
         run: |
           set -uo pipefail
           if [ -z "${RAILWAY_TOKEN:-}" ]; then
@@ -215,19 +205,4 @@ jobs:
             echo "::error::Railway ha risposto ${codice}: questo job NON ha misurato niente."
             exit 1
           fi
-          # Il modo di TARARE senza che il token esca dalla CI. I tetti si misurano una
-          # volta e poi si incollano nella baseline, e la misura richiede una chiamata
-          # autenticata: farla a mano vuol dire che il segreto passa da una shell, da un
-          # file di shell history e da qualunque cosa stia guardando quel terminale.
-          # Qui il token e' gia' dove deve stare, e chi tara legge il risultato dal log.
-          #
-          # Il confronto e' con `= "true"` e non con `!= "false"`: su `schedule` il
-          # contesto `inputs` non esiste e la variabile arriva VUOTA, che deve valere
-          # "verifica", non "salta la verifica". Il default di questo `if` e' il
-          # controllo, non la sua assenza — un'inversione qui renderebbe la sonda
-          # silenziosamente inutile a ogni giro notturno.
-          if [ "${TARATURA:-}" = "true" ]; then
-            python3 scripts/verifica-consumo-railway.py "$RUNNER_TEMP/usage.json" --taratura
-          else
-            python3 scripts/verifica-consumo-railway.py "$RUNNER_TEMP/usage.json"
-          fi
+          python3 scripts/verifica-consumo-railway.py "$RUNNER_TEMP/usage.json"
