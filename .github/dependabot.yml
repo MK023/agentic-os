@@ -46,12 +46,26 @@ updates:
     # questo bump sarebbe arrivato verde, e il conteggio sarebbe passato da 13 a 28
     # senza che niente lo dicesse. Un commento non e' un gate: questa riga lo e'.
     #
-    # IGNORATA LA SOLA 13.2.0, non tutta la 13.2.x: se esce una 13.2.1 ricompilata
-    # con un Go recente va rimisurata e presa. 13.1.x e' ancora mantenuta (13.1.4 e
-    # 13.2.0 sono uscite lo stesso giorno), quindi restare qui non e' restare indietro.
+    # IGNORATE PER NOME, non tutta la 13.2.x: se ne esce una ricompilata con un Go
+    # recente va rimisurata e presa. 13.1.x e' ancora mantenuta (13.1.4 e 13.2.0 sono
+    # uscite lo stesso giorno), quindi restare qui non e' restare indietro.
+    #
+    # 13.2.1, MISURATA IL 03-09-2026 sulla PR #179 che la proponeva. La riga qui sopra
+    # diceva "va rimisurata e presa": e' stata rimisurata e NON va presa. Risolve ZERO
+    # delle CVE di 13.1.4, ne aggiunge 14, e si riporta dentro CVE-2026-33814 esattamente
+    # come 13.2.0. Non e' una 13.2.x ricompilata: e' la stessa regressione col numero
+    # successivo.
+    #
+    # E il numero da solo non avrebbe voluto dire niente: la misura e' stata fatta
+    # rileggendo il job `images` della PR (nessun Docker in locale) e ripetendo LA STESSA
+    # estrazione sul log di 13.1.4 come CONTROLLO. Il controllo torna 15 = le 13 CVE Go
+    # gia' documentate piu' le 2 di Alpine, cioe' riproduce la misura del 20/08 e quindi
+    # il 29 di 13.2.1 e' confrontabile. Un primo tentativo di conteggio dava 7 contro 4:
+    # sbagliato, perche' trivy stampa severita' e stato solo sulla prima riga di ogni
+    # gruppo — se ne e' accorto il controllo, non l'occhio.
     ignore:
       - dependency-name: "grafana/grafana"
-        versions: ["13.2.0"]
+        versions: ["13.2.0", "13.2.1"]
   # Aggiunta il 21/08/2026: mancava, e la Fase 1.5 era gia' in produzione da un
   # giorno. Il servizio del log store non avrebbe MAI ricevuto un bump — e il
   # difetto sarebbe arrivato al contrario: Dependabot avrebbe aggiornato il solo
@@ -105,9 +119,15 @@ updates:
     # Stessa immagine, stesso motivo: senza l'ignore anche qui il bump entrerebbe
     # da meta' — il Dockerfile Railway fermo e il compose avanti, cioe' il drift
     # che questa voce esiste per impedire, al contrario.
+    #
+    # Le DUE liste vanno tenute identiche, e il 03/09/2026 e' stata la prova che serve:
+    # 13.2.1 e' arrivata come DUE PR (#179 sul Dockerfile Railway, #180 sul compose), una
+    # per ecosistema, e ciascuna era rossa da sola sul gate `compose`. Aggiungere la
+    # versione a una lista sola avrebbe lasciato l'altra meta' a ripresentarsi ogni
+    # settimana.
     ignore:
       - dependency-name: "grafana/grafana"
-        versions: ["13.2.0"]
+        versions: ["13.2.0", "13.2.1"]
 
   # Le action sono pinnate a SHA: senza questa voce resterebbero ferme per sempre,
   # ed è il modo in cui un pin passa da protezione a debito.

@@ -127,10 +127,24 @@ the very CVE the 2026-08-14 triage had named as its worst.
 So "wait for Dependabot" would have made this worse, and it would have arrived
 **green**: the `images` job prints third-party image CVEs without failing, on purpose,
 so a bump from 13 to 28 changes nothing anybody sees. `.github/dependabot.yml` now
-ignores `grafana/grafana` **13.2.0 by name**, in both places the image is pinned. Only
-that version, not the 13.2.x line: a 13.2.1 rebuilt against a current Go should be
-re-measured and taken, and 13.1.x is still maintained, so staying here is not falling
-behind.
+ignores `grafana/grafana` **by name**, in both places the image is pinned. Named
+versions, not the 13.2.x line: one rebuilt against a current Go should be re-measured
+and taken, and 13.1.x is still maintained, so staying here is not falling behind.
+
+**13.2.1 arrived on 2026-09-03, was re-measured as that sentence promised, and was
+rejected.** It resolves **zero** of 13.1.4's, adds **14**, and brings back
+`CVE-2026-33814` — the same verdict as 13.2.0, so not a rebuild but the same regression
+carrying the next number. Measured without a local Docker, by reading the `images` job
+of PR #179 (the only run that actually builds 13.2.1: #180 bumps the compose pin, whose
+job still builds 13.1.4). **The control is the part that made the number usable**: the
+same extraction run against the 13.1.4 log returns 15 = the 13 documented Go CVEs plus
+Alpine's 2, which reproduces the 2026-08-20 measurement and makes 13.2.1's 29
+comparable. A first attempt returned 7 against 4 — wrong, because trivy prints severity
+and status only on the first row of each group — and it was the control that said so,
+not the reading. **A count without its control is a number, not a measurement.**
+
+Both PRs were closed and both ignore lists updated together: one bump arrives as two
+PRs, one per ecosystem, and each is red on its own against the `compose` gate.
 
 **The rest is unchanged and still a watch rather than a task**: the fixes remain
 upstream-only, exposure is unchanged (Access, single-email policy, no platform domain,
