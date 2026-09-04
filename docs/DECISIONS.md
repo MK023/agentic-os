@@ -1377,22 +1377,25 @@ traffic carries, in plaintext at that point, the Worker's `CF-Access-Client-Secr
 the status API's bearer, and `OTLP_INGEST_TOKEN` on the `otel.` path. **One token
 yields three of the other five.** It is also the cheapest rotation in the table —
 one variable, one service, no client anywhere to update — which is the exact inverse
-of `OTLP_INGEST_TOKEN`, whose three-place rotation the table does warn about.
+of `OTLP_INGEST_TOKEN`, whose **four**-place rotation the table warns about below.
 
 ## Where each secret lives, and what rotating one costs
 
-Doppler is the source of truth. Railway service variables are the runtime copy. The
-laptop keeps exactly one, because a shell reads it on every terminal and a network
-call there fails offline.
+Doppler is the source of truth. Railway service variables are the runtime copy. A
+workstation keeps only what a shell has to read on every terminal, where a network call
+to Doppler would fail offline: the ingest token on both machines, and on the Mac the
+Access service token that `verify-hub.sh` uses. **There are two workstations since 2026-09-04** — the Mac and
+a Linux VM — so the column below is no longer "Laptop": a producer whose copy of a
+secret is not in this table is a rotation that reads as complete and is not.
 
-| Secret | Doppler | Railway | Laptop | Cloudflare Worker | GitHub |
+| Secret | Doppler | Railway | Workstations | Cloudflare Worker | GitHub |
 |---|---|---|---|---|---|
-| `OTLP_INGEST_TOKEN` | yes | `otel-collector` | Keychain (`agentic-os-otlp-ingest`) | — | — |
+| `OTLP_INGEST_TOKEN` | yes | `otel-collector` | Mac: Keychain (`agentic-os-otlp-ingest`) · VM: `/root/.config/agentic-os/otlp-ingest`, `0600` | — | — |
 | `STATUS_API_TOKEN` | yes | `status-api` | — | as `AGENTIC_OS_STATUS_TOKEN` | yes (`sorveglianza.yml`) |
 | `TUNNEL_TOKEN` | yes | `cloudflared` | — | — | — |
 | `GF_SECURITY_ADMIN_PASSWORD` | yes | `grafana` | — | — | — |
 | `SENTRY_DSN` | yes | `status-api` | — | — | — |
-| Access service token (ID + secret) | yes | **never** | for `verify-hub.sh` | `AGENTIC_OS_ACCESS_CLIENT_*` | yes (`CF_ACCESS_CLIENT_*`) |
+| Access service token (ID + secret) | yes | **never** | Mac: for `verify-hub.sh` (on the VM it comes from Doppler, not a local file) | `AGENTIC_OS_ACCESS_CLIENT_*` | yes (`CF_ACCESS_CLIENT_*`) |
 | the four `LOKI_R2_*` (bucket, endpoint, key id, secret) | yes | `loki` | — | — | — |
 | `SLACK_WEBHOOK_URL` | yes | `grafana` | — | — | yes (`notifica.yml`, since 2026-08-23) |
 | `HEALTHCHECKS_PING_KEY` | yes | — | — | — | yes (`healthchecks.yml`, since 2026-09-04) |
@@ -1419,10 +1422,18 @@ guess.
 The Access credentials never touch Railway on purpose: it is Cloudflare that verifies
 them, at the edge. The hub does not even see them as something to check.
 
-**Rotation is where this bites.** `OTLP_INGEST_TOKEN` lives in three places — Doppler,
-the Collector, and the shell. Change two of the three and telemetry stops **in
-silence**: Claude Code keeps exporting with the old value and the Collector answers
-401, which nothing surfaces. Same shape for `STATUS_API_TOKEN`, which must match
+**Rotation is where this bites.** `OTLP_INGEST_TOKEN` lives in **four** places since
+2026-09-04 — Doppler, the Collector, the Mac's Keychain, and the VM's
+`/root/.config/agentic-os/otlp-ingest`. Change three of the four and telemetry stops
+**in silence** on whichever machine was missed: Claude Code keeps exporting with the old
+value and the Collector answers 401, which nothing surfaces. The second producer makes
+that silence *quieter*, not louder — the three public numbers are a deliberate
+unfiltered sum, so the machine still exporting keeps them moving and the loss shows up
+as numbers that look low rather than as numbers that stop. `_check_zero_volume` catches
+total silence and cannot catch this; if the numbers ever look low, a producer that
+stopped exporting is the first thing to check. Deliberately not built: a per-producer
+witness. It would be a second alarm surface for a failure that has never occurred here,
+and naming it is what makes it findable. Same shape for `STATUS_API_TOKEN`, which must match
 between the Railway service and the Worker secret **whose name is different**
 (`AGENTIC_OS_STATUS_TOKEN`). And since 2026-08-23 `SLACK_WEBHOOK_URL` has the same
 shape: rotating the Slack incoming webhook now breaks *two* consumers, Grafana's contact
