@@ -1,6 +1,6 @@
 # What is not done yet
 
-Current as of 2026-08-20. The last tag is **v1.1.0** (2026-08-16) and `main` is
+Current as of 2026-09-03. The last tag is **v1.1.0** (2026-08-16) and `main` is
 ahead of it: the six services run — `loki` since 2026-08-21 — the Tunnel serves its
 three hostnames, the
 public endpoint answers with real numbers, and `smoke.yml` watches it from
