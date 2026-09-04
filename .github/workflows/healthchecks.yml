@@ -1,0 +1,137 @@
+name: battito
+
+# Il dead man's switch dei cron di questo repository.
+#
+# COSA VEDE CHE NESSUN ALTRO VEDE. `notifica.yml` guarda i run che FINISCONO: un cron
+# che non parte affatto non produce nessun evento, quindi non produce nessuna
+# notifica. Qui il segnale e' invertito — healthchecks.io si aspetta un battito entro
+# una finestra, e se non arriva e' LUI a parlare, da fuori. Le due assenze che
+# `notifica.yml` dichiara ai punti 1 e 2 dei suoi commenti si chiudono entrambe qui.
+#
+# PERCHE' UN WATCHER INVECE DI CINQUE MODIFICHE. Ognuno dei cinque workflow
+# sorvegliati ha piu' di un job, quindi un ping messo dentro un job direbbe "quel job
+# e' andato", non "il cron e' partito" — e l'esito che serve e' quello del workflow,
+# che esiste solo qui. In piu' i cinque file non si toccano, quindi questa aggiunta
+# non puo' far regredire cio' che gia' funziona.
+#
+# IL FILTRO SULLO SCHEDULE E' IL DISEGNO, NON UN DETTAGLIO. `workflow_run` scatta per
+# OGNI trigger: senza `workflow_run.event == 'schedule'` un `workflow_dispatch`
+# lanciato a mano manderebbe un battito e il monitor direbbe "vivo" per un cron che
+# non parte piu' da solo. E' il modo di fallire piu' insidioso di questo file, perche'
+# lascia il verde. Lo pretende `scripts/healthchecks.py --self-check`, in lint.yml.
+#
+# LO SLUG E' IL NOME DEL FILE senza estensione. La convenzione la verifica il
+# self-check: se i due divergono il ping finisce su un check inesistente e
+# healthchecks risponde 404 senza che nessuno guardi.
+#
+# CHI SORVEGLIA QUESTO FILE. `notifica.yml` lo elenca, ma la sua condizione ammette
+# solo gli eventi schedule/push/workflow_dispatch: un `battito` fallito gira su
+# `workflow_run` e quindi NON produce una notifica Slack. Non e' una svista ed e'
+# gia' coperto — un battito che fallisce e' un battito che non arriva, e un battito
+# che non arriva e' esattamente cio' che healthchecks.io trasforma in allarme. Il
+# guardiano che muore viene dichiarato morto dal servizio che guarda, non da se'.
+
+# SOPPRESSIONE ZIZMOR, argomentata perche' resta.
+#
+# `workflow_run` e' segnalato HIGH per categoria (`dangerous-triggers`): gira sul ramo
+# di default CON i segreti, svegliato da workflow che possono essere partiti da una PR
+# di un fork. L'exploit noto e' in tre passi — la PR del fork produce un artefatto, il
+# workflow privilegiato lo scarica, lo esegue con le nostre credenziali.
+#
+# Nessuno dei tre passi esiste qui: niente `checkout`, niente artefatti, niente
+# `uses:` di nessun tipo, `permissions: {}` in cima E sul job, e il filtro sullo
+# schedule esclude per costruzione tutto cio' che nasce da una PR. L'unico segreto
+# presente e' la ping key, che sa solo dire "sono vivo". La API key, che potrebbe
+# allungare un grace fino a rendere cieco l'allarme, non entra mai in questo
+# repository: `--apply` lo lancia una persona da Doppler.
+#
+# La riga sotto spegne l'audit; `forma_watcher()` in scripts/healthchecks.py pretende
+# che quelle proprieta' siano ancora vere a ogni PR. Una promessa scritta e una
+# sorvegliata sembrano uguali sulla pagina.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows:
+      - smoke
+      - mutation
+      - sorveglianza
+      - codeql
+      - telemetry-baseline
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  # Per workflow sorvegliato: due battiti di cron diversi non devono annullarsi a
+  # vicenda, e `cancel-in-progress: false` perche' un battito cancellato e' un battito
+  # perso, cioe' un divario raddoppiato contro una finestra dimensionata sul divario
+  # singolo.
+  group: battito-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  battito:
+    name: Battito del cron
+    if: github.event.workflow_run.event == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # I dati dell'evento passano SOLO da `env`, mai interpolati dentro `run:`: il
+      # path arriva dall'evento e dentro uno script diventerebbe iniezione. E' lo
+      # stesso schema gia' usato in notifica.yml, dove e' stato provato con un ramo
+      # chiamato `main"; rm -rf /  $(id)`.
+      - name: Ping
+        env:
+          PERCORSO: ${{ github.event.workflow_run.path }}
+          ESITO: ${{ github.event.workflow_run.conclusion }}
+          PING_KEY: ${{ secrets.HEALTHCHECKS_PING_KEY }}
+        run: |
+          set -euo pipefail
+          slug=$(basename "$PERCORSO" .yml)
+
+          # `set -u` NON intercetta una variabile definita ma vuota, ed e' proprio il
+          # caso di un secret assente: l'URL diventerebbe `hc-ping.com//<slug>` e
+          # healthchecks risponderebbe 404 — lo stesso codice che sotto significa "il
+          # check non esiste", con una diagnosi che manda a lanciare `--apply`, cosa
+          # che non risolverebbe niente. Un guardiano senza chiave non e' un guardiano.
+          if [ -z "$PING_KEY" ]; then
+            echo "::error::HEALTHCHECKS_PING_KEY assente o vuoto: nessun battito puo' partire"
+            exit 1
+          fi
+
+          # IL BATTITO DICE "LO SCHEDULE E' PARTITO", non "la run e' andata bene".
+          # Questo e' un dead man's switch: cio' che sorveglia e' l'ASSENZA di run.
+          # Quindi OGNI esito manda un battito, e solo un guasto vero lo manda su
+          # /fail. Mettere `cancelled` e `skipped` sul ramo "niente battito" sarebbe
+          # un difetto misurabile: healthchecks misura il divario fra due PING, mentre
+          # le finestre in healthchecks.py sono dimensionate sul divario fra due RUN —
+          # un solo battito saltato raddoppia il divario e fa suonare un allarme falso.
+          # E la cancellazione e' raggiungibile: con `cancel-in-progress: false` GitHub
+          # cancella comunque la run IN CODA quando ne arriva una piu' recente.
+          #
+          # Chi dice QUALE gate e' rosso resta notifica.yml, che sa nominarlo. Qui un
+          # /fail serve solo a non lasciare verde un check il cui cron gira e fallisce.
+          case "$ESITO" in
+            failure|timed_out|startup_failure) coda="/fail" ;;
+            *) coda="" ;;
+          esac
+
+          # `|| true`: questo step SORVEGLIA i cron, non li esegue. Se healthchecks.io
+          # e' giu' il battito si perde, ma un guardiano che colora di rosso una run
+          # riuscita e' peggio di nessun guardiano. Il codice `000` lo scrive gia'
+          # `-w '%{http_code}'` da solo.
+          codice=$(curl --connect-timeout 5 -m 10 --retry 5 --retry-all-errors -sS \
+            -o /dev/null -w '%{http_code}' \
+            "https://hc-ping.com/${PING_KEY}/${slug}${coda}" || true)
+          echo "$slug$coda -> HTTP $codice"
+
+          # Il 404 va detto. Significa che il check non esiste ancora, cioe' che
+          # `--apply` non e' mai stato lanciato: senza questo avviso ogni battito
+          # cadrebbe nel vuoto e il sistema resterebbe verde e inerte — il modo di
+          # fallire peggiore per un dead man's switch, perche' non si vede.
+          case "$codice" in
+            2*) ;;
+            404) echo "::warning::$slug: il check non esiste su healthchecks.io, lancia scripts/healthchecks.py --apply" ;;
+            409) echo "::warning::$slug: slug ambiguo su healthchecks.io, due check rispondono allo stesso nome" ;;
+            *) echo "::warning::$slug: battito non recapitato (HTTP $codice)" ;;
+          esac

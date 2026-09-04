@@ -106,6 +106,20 @@ cartelle si vedono; il fatto che `docker/` sia l'UNICA copia no.
   runs it daily at 05:23 UTC, its three secrets existing since 2026-08-20, so "manual"
   stopped meaning "nothing else runs it".
 
+## What watches the watchers
+
+Since 2026-09-04 the five scheduled workflows send a heartbeat to **healthchecks.io**
+(`.github/workflows/healthchecks.yml`, one `workflow_run` watcher, filtered to
+`workflow_run.event == 'schedule'`). It is the only control here that lives **outside**
+GitHub, and it closes the two gaps `notifica.yml` had declared and could not close from
+inside: a cron that never starts produces no event to notify on, and a notifier cannot
+notify its own death. Windows are sized on the **measured** gap between consecutive
+scheduled runs, never on the cron expression — `smoke` is written `*/10` and has a
+measured median of 1.3h and a maximum of 12.3h. Production itself stays covered by
+composition, not by a second clock: healthchecks watches `smoke`, `smoke` watches
+production. **Deliberately no production-side heartbeat** — `status-api` has no
+scheduler and giving it one would be the second clock `main.py` argues against.
+
 ## What watches production
 
 - `.github/workflows/smoke.yml` — the automatic half beside `sorveglianza.yml`, and no
@@ -141,6 +155,9 @@ bash scripts/prova-allarmi.sh                                  # gate: rules loa
 python3 scripts/prova-gate-workflow.py                         # gate: the two lint.yml workflow gates, 7 cases + 3 mutants + both gates' declared-inspection check, ~4s (measured), python3 con PyYAML
 python3 scripts/prova-sonda-consumo.py                         # gate: the Railway consumption probe on fixture responses — no token, no network, ~0.26s (measured)
 python3 scripts/prova-prezzario-allineato.py [--prova]         # gate: model names AND each (model, type) rate identical in main.py, both Grafana panels and the promtool test; `--prova` asserts the gate goes red on 11 mutants. Both, ~1.8s (measured)
+python3 scripts/healthchecks.py --self-check                   # gate: every scheduled workflow has a healthchecks.io check, slugs match filenames, windows exceed the measured GitHub delay, and the workflow_run watcher still has the shape its zizmor suppression claims. No network, no secrets, ~0.27s (measured)
+python3 scripts/prova-healthchecks.py                          # gate: the bench of that self-check — 12 cases on a deliberately broken copy of .github/workflows, plus a mutation that demands the green back when the control is off, ~1.45s (measured)
+doppler run -p agentic-os -c prd -- python3 scripts/healthchecks.py --apply   # NOT a gate and NOT in CI: creates/updates the five checks. The API key lives only in Doppler, on purpose
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
 zizmor --min-severity=high .github/workflows/                  # gate: blocks on HIGH

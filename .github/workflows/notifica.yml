@@ -11,7 +11,7 @@ name: notifica
 # Era vero per la produzione e falso per i gate che la sorvegliano — cioe' il
 # guasto silenzioso spostato di un piano.
 #
-# UN SOLO file invece di uno step `if: failure()` in ognuno dei dieci: dieci copie
+# UN SOLO file invece di uno step `if: failure()` in ognuno degli undici: undici copie
 # della stessa logica divergono, ed e' esattamente il difetto che questo
 # repository si e' gia' fatto due volte (la seconda lista accanto a
 # `source_paths`, il pin copiato dentro le prove). `workflow_run` guarda gli altri
@@ -27,36 +27,43 @@ name: notifica
 # affermava.
 #
 # La lista dei workflow e' esplicita perche' `workflow_run` non accetta jolly, ed
-# e' per costruzione una SECONDA lista accanto ai dieci file. Quindi un gate in
+# e' per costruzione una SECONDA lista accanto agli undici file. Quindi un gate in
 # lint.yml (`workflow-lint`) pretende che le due coincidano: un workflow nuovo che
 # non finisce qui dentro fa rosso subito, invece di tacere la notte che serve.
 #
-# Cosa NON copre, dichiarato invece che scoperto — tre cose, e in questo
-# repository un'assenza taciuta conta come un controllo affermato che non esiste:
+# Cosa NON copre, dichiarato invece che scoperto — e in questo repository
+# un'assenza taciuta conta come un controllo affermato che non esiste. I primi due
+# punti sono stati CHIUSI il 04/09/2026 da `healthchecks.yml`, e restano scritti
+# perche' dicono che cosa quel file e' venuto a fare:
 #
-# 1. Un cron che non parte affatto. `workflow_run` scatta quando un run FINISCE,
-#    quindi uno schedule morto — GitHub che disabilita i cron su un repository
-#    fermo da 60 giorni, un file che smette di stare sul ramo di default — resta
-#    invisibile. Serve un dead man's switch, che e' un'altra cosa e va decisa a
-#    parte. Vale gia' oggi: `codeql` e `telemetry-baseline` hanno un cron settimanale
-#    di lunedi', sono nati giovedi' 20/08, e al 23/08 quel cron non e' MAI scattato —
-#    girano su push e su PR, quindi "non sono mai partiti" sarebbe falso come frase
-#    intera: e' lo SCHEDULE che non ha ancora incontrato un lunedi'.
+# 1. CHIUSO. Un cron che non parte affatto. `workflow_run` scatta quando un run
+#    FINISCE, quindi uno schedule morto — GitHub che disabilita i cron su un
+#    repository fermo da 60 giorni, un file che smette di stare sul ramo di default —
+#    resta invisibile da qui. Serviva un dead man's switch, e ora esiste: i cinque
+#    workflow schedulati mandano un battito a healthchecks.io tramite
+#    `healthchecks.yml`, e se il battito non arriva entro la finestra e' il servizio
+#    esterno a parlare. Il primo motivo per cui contava vale ancora come esempio:
+#    `codeql` e `telemetry-baseline` hanno un cron settimanale di lunedi', sono nati
+#    giovedi' 20/08, e al 23/08 quel cron non era MAI scattato.
 #
-# 2. Chi notifica il notificatore. `notifica` non e' nella propria lista, e
-#    metterlo non servirebbe: i suoi due modi di fallire sono "il segreto non c'e'
-#    piu'" e "il webhook risponde 403", cioe' le condizioni in cui il secondo
-#    tentativo fallisce identico. Un notificatore non puo' notificare la propria
-#    morte; solo qualcosa FUORI da qui puo', ed e' di nuovo il dead man's switch
-#    del punto 1. Nel frattempo resta la mail di GitHub, cioe' il canale gia'
-#    dimostrato insufficiente — tre notti di `mutation` rosso e nessuno se n'e'
-#    accorto. E' il buco piu' scomodo di questo file, e sta scritto qui invece che
-#    da nessuna parte.
+# 2. CHIUSO, e da un canale diverso. Chi notifica il notificatore. `notifica` non e'
+#    nella propria lista, e metterlo non servirebbe: i suoi due modi di fallire sono
+#    "il segreto non c'e' piu'" e "il webhook risponde 403", cioe' le condizioni in
+#    cui il secondo tentativo fallisce identico. Un notificatore non puo' notificare
+#    la propria morte; solo qualcosa FUORI da qui puo'. Adesso quel qualcosa c'e', e
+#    la ridondanza e' reale perche' NON passa dallo stesso canale: healthchecks.io
+#    consegna su email e su Slack, quindi un `SLACK_WEBHOOK_URL` scaduto — il modo di
+#    morire di questo file — non zittisce anche l'allarme di riserva.
 #
-# 3. Il rumore. `workflow_run` scatta su OGNI run completato dei dieci, verdi e
-#    PR compresi: nella tab Actions compaiono run di `notifica` con il job
-#    saltato, fino a dieci per PR. E' il prezzo di guardare da fuori invece che da
-#    dentro, ed e' preferito a dieci copie di uno step `if: failure()`.
+# 3. APERTO. Il rumore. `workflow_run` scatta su OGNI run completato degli undici,
+#    verdi e PR compresi: nella tab Actions compaiono run di `notifica` con il job
+#    saltato, fino a undici per PR. E' il prezzo di guardare da fuori invece che da
+#    dentro, ed e' preferito a undici copie di uno step `if: failure()`. Dal
+#    04/09/2026 `battito` e' l'undicesimo, e aggiunge run saltate anche fuori dalle
+#    PR: la sua condizione ammette solo schedule/push/workflow_dispatch, mentre
+#    `battito` gira su `workflow_run`. Cioe' un `battito` fallito NON arriva su
+#    Slack — ed e' voluto: un battito fallito e' un battito che non arriva, e un
+#    battito che non arriva lo dice healthchecks.io, che e' il punto.
 #
 # zizmor marca `workflow_run` HIGH (`dangerous-triggers`), e va argomentato invece
 # che spento: un'eccezione silenziosa e' `continue-on-error` con altre parole.
@@ -75,6 +82,7 @@ name: notifica
 on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows:
+      - battito
       - codeql
       - immagini
       - lint
