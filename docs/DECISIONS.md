@@ -1377,13 +1377,14 @@ traffic carries, in plaintext at that point, the Worker's `CF-Access-Client-Secr
 the status API's bearer, and `OTLP_INGEST_TOKEN` on the `otel.` path. **One token
 yields three of the other five.** It is also the cheapest rotation in the table —
 one variable, one service, no client anywhere to update — which is the exact inverse
-of `OTLP_INGEST_TOKEN`, whose three-place rotation the table does warn about.
+of `OTLP_INGEST_TOKEN`, whose **four**-place rotation the table warns about below.
 
 ## Where each secret lives, and what rotating one costs
 
 Doppler is the source of truth. Railway service variables are the runtime copy. A
-workstation keeps exactly one, because a shell reads it on every terminal and a network
-call there fails offline. **There are two workstations since 2026-09-04** — the Mac and
+workstation keeps only what a shell has to read on every terminal, where a network call
+to Doppler would fail offline: the ingest token on both machines, and on the Mac the
+Access service token that `verify-hub.sh` uses. **There are two workstations since 2026-09-04** — the Mac and
 a Linux VM — so the column below is no longer "Laptop": a producer whose copy of a
 secret is not in this table is a rotation that reads as complete and is not.
 
