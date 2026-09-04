@@ -68,6 +68,11 @@ BASELINE = {
     "misurato_il": "2026-09-01",
     "osservato_al_giorno": {"CPU_USAGE": 30.0, "MEMORY_USAGE_GB": 900.0},
     "tetti_al_giorno": {"CPU_USAGE": 90, "MEMORY_USAGE_GB": 2700},
+    # Il per-servizio: il tetto di ciascuno e' cinque volte il suo valore qui.
+    "osservato_per_servizio": {
+        "CPU_USAGE": {"loki": 12.0, "grafana": 18.0},
+        "MEMORY_USAGE_GB": {"loki": 400.0, "grafana": 500.0},
+    },
 }
 
 
@@ -104,12 +109,12 @@ CASI = [
         "loki",
     ),
     (
-        "tetti non ancora tarati: rosso, non verde per dizionario vuoto",
+        "tetti non tarati: rosso, E stampa gia' il blocco da incollare",
         _senza(BASELINE, tetti_al_giorno={}),
         _risposta(SANA),
         "",
         1,
-        "NON ha verificato niente",
+        '"tetti_al_giorno": {',
     ),
     (
         "un solo servizio nella risposta: estrazione mutila, non consumo basso",
@@ -174,6 +179,40 @@ CASI = [
         "",
         1,
         "nessun valore osservato",
+    ),
+    (
+        # IL BUCO DEL TETTO SUL TOTALE, trovato il 03/09/2026 provando la taratura vera.
+        # loki da 12 a 70 sono quasi sei volte il suo osservato, ma il totale resta 88 —
+        # sotto il tetto di 90 — quindi il controllo sul totale tace. Un solo servizio che
+        # scappa e' la forma piu' probabile di fuga, ed e' quella che si nascondeva.
+        "un SOLO servizio oltre il suo tetto, col totale ancora sotto il suo",
+        BASELINE,
+        _risposta([("CPU_USAGE", LOKI, 70.0), ("CPU_USAGE", GRAFANA, 18.0)] + SANA[2:]),
+        "",
+        1,
+        "il servizio loki",
+    ),
+    (
+        # Il verso opposto: sotto il proprio tetto non deve suonare, o il controllo
+        # nuovo sarebbe solo un modo diverso di essere sempre rossi.
+        "lo stesso servizio a quattro volte il suo osservato resta verde",
+        BASELINE,
+        _risposta([("CPU_USAGE", LOKI, 48.0), ("CPU_USAGE", GRAFANA, 18.0)] + SANA[2:]),
+        "",
+        0,
+        "loki",
+    ),
+    (
+        # Un servizio che la baseline non conosce non ha un tetto suo: contribuisce al
+        # totale e lo dichiara, invece di far esplodere la sonda o di passare in silenzio.
+        "un servizio nuovo non ha un tetto suo, e lo dice",
+        _senza(
+            BASELINE, osservato_per_servizio={"CPU_USAGE": {"loki": 12.0}, "MEMORY_USAGE_GB": {"loki": 400.0}}
+        ),
+        _risposta(SANA),
+        "",
+        0,
+        "nuovo: nessun tetto suo",
     ),
     (
         "--taratura stampa i tetti a 3x senza verificarne nessuno",

@@ -67,6 +67,24 @@ SERVIZI_MINIMI = 2
 # vuota, una query che cambia semantica sotto di noi, l'hub fermo.
 PAVIMENTO_BASSO = 10
 
+# E un tetto PER SERVIZIO, oltre a quello sul totale. Trovato il 03/09/2026 provando la
+# taratura appena scritta: col tetto sul solo totale a 150, grafana che passa da 10.3 a
+# 103 — dieci volte — porta la somma a 124 e non suona niente. Ed e' la forma PIU'
+# probabile di fuga: un container in crash loop, una query scappata, un volume che si
+# riempie. Sei servizi che esplodono insieme sono lo scenario raro; uno solo e' quello
+# normale, e da una base piccola si nasconde sotto un totale generoso.
+#
+# Cinque volte, e non tre come il totale: il tetto sul totale assorbe la varianza di sei
+# servizi che si compensano, quello per servizio no — un singolo servizio oscilla molto
+# di piu' in proporzione, e tre volte griderebbe su una giornata storta. Cinque volte una
+# base piccola resta comunque molto sotto il tetto del totale, quindi le due domande sono
+# davvero diverse e non una la copia stretta dell'altra.
+#
+# Un servizio NUOVO non ha un osservato e quindi non ha un tetto suo: contribuisce al
+# totale e basta, finche' non si ri-tara. Assenza dichiarata — la si chiude ri-tarando,
+# non fingendo che il controllo ci sia.
+PER_SERVIZIO = 5
+
 
 def _nome(servizio: str | None, nomi: dict[str, str]) -> str:
     """Il nome stampabile di un servizio. Mai una stringa arbitraria dell'API.
@@ -118,9 +136,36 @@ def taratura(letti: dict[str, dict[str, float]], oggi: str) -> str:
             "misurato_il": oggi,
             "osservato_al_giorno": osservato,
             "tetti_al_giorno": {misura: round(valore * 3) for misura, valore in osservato.items()},
+            # Il per-servizio esce INSIEME al totale, non a parte: e' cio' da cui nasce il
+            # tetto di ciascun servizio, e una taratura che lo dimenticasse produrrebbe un
+            # controllo che esiste nel codice e non ha dati su cui girare — sei righe
+            # "nuovo: nessun tetto suo" e nessun allarme possibile.
+            "osservato_per_servizio": {
+                misura: {nome: round(valore, 2) for nome, valore in sorted(per.items())}
+                for misura, per in sorted(letti.items())
+            },
         },
         indent=2,
     )
+
+
+def _stampa_taratura(letti: dict[str, dict[str, float]]) -> None:
+    """La ripartizione per servizio e il blocco JSON, in un posto solo.
+
+    Due chiamanti: il modo `--taratura`, per chi ha gia' una risposta sul disco, e il
+    ramo dei tetti non tarati, che e' la strada vera — la CI ha il token, ha appena
+    letto la risposta, e chi tara legge il log. Una seconda copia di queste righe
+    diverge, ed e' la regola di casa su ogni configurazione applicata alla stampa.
+    """
+    from datetime import UTC, datetime
+
+    print("TARATURA — nessun tetto verificato. Da incollare in docs/sorveglianza-baseline.json:")
+    for misura, per_servizio in sorted(letti.items()):
+        print(f"\n{misura}: {sum(per_servizio.values()):.1f} al giorno")
+        for nome, valore in sorted(per_servizio.items(), key=lambda kv: -kv[1]):
+            print(f"    {valore:9.2f}  {nome}")
+    print()
+    print(taratura(letti, datetime.now(UTC).date().isoformat()))
 
 
 def main(percorso_risposta: str, modo: str = "") -> int:
@@ -147,26 +192,35 @@ def main(percorso_risposta: str, modo: str = "") -> int:
         return 1
 
     if modo == "--taratura":
-        from datetime import UTC, datetime
-
-        print("TARATURA — nessun tetto verificato. Da incollare in docs/sorveglianza-baseline.json:")
-        for misura, per_servizio in sorted(letti.items()):
-            print(f"\n{misura}: {sum(per_servizio.values()):.1f} al giorno")
-            for nome, valore in sorted(per_servizio.items(), key=lambda kv: -kv[1]):
-                print(f"    {valore:9.2f}  {nome}")
-        print()
-        print(taratura(letti, datetime.now(UTC).date().isoformat()))
+        _stampa_taratura(letti)
         return 0
 
     # I tetti non tarati NON passano per "nessuno sforamento". Un dizionario vuoto qui
     # renderebbe il ciclo qui sotto una passeggiata a vuoto e il job verde: la forma
     # esatta del guasto silenzioso che questa sonda esiste per impedire.
+    #
+    # E si stampa il blocco DA INCOLLARE, non solo l'istruzione per ottenerlo. La misura
+    # e' gia' in mano: la risposta e' li' sopra, letta un attimo fa con una credenziale
+    # che vive nella CI e che non deve uscirne. Un messaggio che dice "tarali" costringe
+    # chi legge a rifare a mano la stessa chiamata da una shell — cioe' a far passare il
+    # token da un terminale e da una history — per ottenere numeri che questo processo ha
+    # gia' davanti. Il primo tentativo, il 03/09/2026, e' fallito esattamente li': la
+    # variabile in locale non era impostata e Railway ha risposto `Not Authorized`.
+    #
+    # Perche' QUI e non dietro un input di `workflow_dispatch`, che era la prima idea:
+    # `CKV_GHA_7` la boccia — "workflow_dispatch inputs MUST be empty" — e ha ragione
+    # per la sua classe, anche se qui non c'e' nessuna build da influenzare. Ma il gate
+    # ha fatto trovare un disegno migliore invece di un'eccezione da argomentare: senza
+    # input non c'e' nemmeno il rischio che un default invertito spenga la verifica
+    # notturna, e chi tara clicca "Run workflow" e basta.
     if not base.get("tetti_al_giorno"):
         print(
             "::error::docs/sorveglianza-baseline.json non ha `tetti_al_giorno`: "
             "questo job NON ha verificato niente."
         )
-        print("::error::Si tarano una volta con `--taratura` e si incolla il blocco che stampa.")
+        print("::error::Il blocco da incollare e' qui sotto: e' la misura di adesso.")
+        print()
+        _stampa_taratura(letti)
         return 1
 
     sforati = []
@@ -196,8 +250,20 @@ def main(percorso_risposta: str, modo: str = "") -> int:
         )
         # SEMPRE, non solo quando sfora: e' la riga su cui si vede una crescita mentre
         # e' ancora sotto il tetto, cioe' finche' costa poco guardarla.
+        atteso = (base.get("osservato_per_servizio") or {}).get(misura) or {}
         for nome, valore in sorted(per_servizio.items(), key=lambda kv: -kv[1]):
-            print(f"    {valore:9.2f}  {nome}")
+            suo = atteso.get(nome)
+            # Il tetto del singolo servizio si stampa accanto al suo valore, cosi' la
+            # riga dice da sola quanto margine resta invece di far fare il conto.
+            coda = f"   (suo tetto {suo * PER_SERVIZIO:.1f})" if suo else "   (nuovo: nessun tetto suo)"
+            print(f"    {valore:9.2f}  {nome}{coda}")
+            if suo and valore > suo * PER_SERVIZIO:
+                sforati.append(
+                    f"{misura}: il servizio {nome} e' a {valore:.1f} al giorno, oltre "
+                    f"{PER_SERVIZIO} volte il suo osservato ({suo}). Un solo servizio che "
+                    "scappa e' la forma piu' probabile di fuga, e da una base piccola "
+                    "resta sotto il tetto del TOTALE senza farsi vedere."
+                )
         if totale > tetto:
             sforati.append(f"{misura} = {totale:.1f} al giorno, sopra il tetto di {tetto}.")
         # E il PAVIMENTO SUL BASSO, che e' l'altra meta' e mancava. `SERVIZI_MINIMI`
