@@ -1,7 +1,9 @@
 # Enabling Claude Code telemetry toward the hub
 
-Set these in your shell profile, or in Claude Code's `settings.json` `env` block,
-on any machine you want observed:
+Set these in your shell profile on any machine you want observed. Claude Code's
+`settings.json` `env` block also works for every line except the header. Keep the ingest
+bearer in the machine's own secret store and let the profile reference it: the Keychain
+on macOS, a `0600` file on Linux. Both are below.
 
 ```bash
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
@@ -74,8 +76,40 @@ Three of these are easy to get subtly wrong:
 
 This cost an hour on 2026-07-29. If `OTEL_EXPORTER_OTLP_HEADERS` is empty or
 malformed, Claude Code does not warn, does not retry visibly, and does not log
-anything: the Collector answers 401 and the export disappears. Nothing anywhere says
-so — not the shell, not Grafana, not the Collector's own logs at info level.
+anything: the Collector answers 401 and the export disappears. Not the shell, not
+Grafana, not the Collector's own logs at info level.
+
+**There is one witness, found 2026-09-04, and this file used to say there was none.**
+`claude --debug` writes a `[3P telemetry]` channel into `~/.claude/debug/<uuid>.txt`,
+and it answers the questions that cost that hour — whether telemetry initialised at all,
+against which endpoint, and whether the *first* export succeeded:
+
+```bash
+grep -ah -oE '\[3P telemetry\][^\r\n]{0,200}' ~/.claude/debug/*.txt | sort -u
+```
+
+```
+[3P telemetry] isTelemetryEnabled=true (CLAUDE_CODE_ENABLE_TELEMETRY=1)
+[3P telemetry] getOtlpReaders: types=["otlp"], interval=60000, protocol=http/protobuf, endpoint=https://otel.marcobellingeri.dev
+[3P telemetry] First metrics export: SUCCESS
+[3P telemetry] First logs export: SUCCESS
+```
+
+`interval=60000` is the **metrics** export period and covers nothing else. No metric
+reaches the hub in the first minute of a session, so a check made sooner proves nothing:
+add the Prometheus scrape (15s) and the status API's `STATUS_CACHE_TTL_S` (60s) and the
+three public numbers can trail a real export by more than two minutes. Logs run on a
+separate exporter with its own schedule (`OTEL_LOGS_EXPORT_INTERVAL`, whose default is
+not measured here) and the debug channel reports their first export on a line of its
+own. Reading an empty Loki as "covered by the metrics interval" is how this project
+diagnoses "Loki is broken" a second time.
+
+The channel is per *process*. It says whether **that** session initialised telemetry,
+which is the one thing the environment cannot tell you. Measured the same day: a session
+holding all seven variables had never exported after twenty minutes, while one started
+later from the same profile was counted within ~110 seconds. Telemetry initialises once,
+at startup, and a session that failed looks exactly like an idle one. If a session is
+missing from the hub and its environment is right, restart it before debugging the hub.
 
 So verify it, every time you change it and the first time after a reboot:
 
@@ -98,6 +132,66 @@ source of truth, the Keychain is the operational copy.
 
 Variables are read **when the process starts**: a Claude Code session opened before
 you edited the profile will never export, and will not say so either.
+
+### On Linux: a `0600` file, not the Keychain and not `settings.json`
+
+Set up on the VM on 2026-09-04. There is no Keychain here, and `~/.claude/settings.json`
+is the wrong substitute: Claude Code rewrites that file, its mode is `0644` and not ours
+to choose, and it is the kind of file that gets copied or synced. Who can actually read
+it today depends on the home directory above it, which on this VM is `/root` at `0700` —
+so the honest statement is that the token would be protected by a directory mode nobody
+chose for that purpose, rather than by anything the secret's own file says. The profile
+keeps a reference and a file we do control keeps the value:
+
+```bash
+install -d -m 0700 ~/.config/agentic-os
+install -m 0600 /dev/null ~/.config/agentic-os/otlp-ingest
+printf %s "$OTLP_INGEST_TOKEN" > ~/.config/agentic-os/otlp-ingest   # no trailing newline
+```
+
+`install -m 0600` rather than a `umask`: on a **rotation** the file already exists, `>`
+truncates it in place and a `umask` touches nothing, so a mode that was once wrong stays
+wrong while this page asserts `0600`. A `umask` also outlives the command and hands
+`0600` to every other file that terminal creates.
+
+The profile block reads that file and **exports nothing at all when it is missing or
+empty**, instead of exporting an empty header. An empty header is not a loud error, it
+is a 401 the client never prints: the failure that cost an hour on 2026-07-29. Any
+profile block written for another machine should keep that guard.
+
+```bash
+if [ -r ~/.config/agentic-os/otlp-ingest ]; then
+  _otlp_token="$(tr -d '\n' < ~/.config/agentic-os/otlp-ingest)"
+  if [ -n "$_otlp_token" ]; then
+    export CLAUDE_CODE_ENABLE_TELEMETRY=1
+    # ... the five other OTEL_* lines from the top of this file, header excluded ...
+    export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $_otlp_token"
+  fi
+  unset _otlp_token
+fi
+```
+
+**The block lives in `~/.bashrc`, which returns early for non-interactive shells.** This
+VM's root profile spells that guard `[ -z "$PS1" ] && return`, on line 6; Ubuntu's
+`/etc/skel/.bashrc` spells the same idea `case $- in *i*) ;; *) return;; esac`, so grep
+for the early `return` rather than for `PS1` and do not conclude the guard is absent.
+Either form means cron jobs, systemd units and plain `bash -lc` never inherit these
+variables, so anything launched that way exports nothing and says nothing. Use an
+*interactive* login shell to exercise the real environment: `bash -lic`, not `bash -lc`.
+A session started under a service manager is the first thing to suspect when a machine
+that is "configured" has never appeared in the hub.
+
+Two further traps measured the same day:
+
+- `OTEL_EXPORTER_OTLP_HEADERS` uses the OTEL `key=value` form; `curl -H` wants
+  `key: value`. Passing the variable straight to `curl` sends a malformed header and
+  earns a `403` that reads like a permissions problem. Convert it:
+  `h="${OTEL_EXPORTER_OTLP_HEADERS/=/: }"`.
+- The header is 85 characters — 21 for `Authorization=Bearer ` plus 64 hex — and
+  `printf %s "$OTEL_EXPORTER_OTLP_HEADERS" | wc -c` is the whole check.
+
+Rotating this token now means **four** places, not three; `docs/DECISIONS.md` has the
+table and what a missed one costs.
 
 ## Metric names
 
