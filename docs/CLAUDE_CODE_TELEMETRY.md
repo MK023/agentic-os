@@ -105,11 +105,29 @@ own. Reading an empty Loki as "covered by the metrics interval" is how this proj
 diagnoses "Loki is broken" a second time.
 
 The channel is per *process*. It says whether **that** session initialised telemetry,
-which is the one thing the environment cannot tell you. Measured the same day: a session
-holding all seven variables had never exported after twenty minutes, while one started
-later from the same profile was counted within ~110 seconds. Telemetry initialises once,
-at startup, and a session that failed looks exactly like an idle one. If a session is
-missing from the hub and its environment is right, restart it before debugging the hub.
+which is the one thing the environment cannot tell you.
+
+**Initialisation can be deferred, and the delay is not small.** Measured 2026-09-04 on one
+session: all seven variables present in `/proc/<pid>/environ`, no connection to the ingest
+host and nothing in the hub after twenty minutes, while a session started later from the
+same profile was counted within ~110 seconds. That first session then began exporting on
+its own, with **no restart**, somewhere between minute 20 and minute 50 — a bound, not a
+figure, because nothing here timestamps the first export of a session started without
+`--debug`. The client's bundle carries a `Waiting for remote managed settings fetch before
+telemetry init` path, which fits the shape; that is a hypothesis and it was not confirmed.
+
+So a session missing from the hub is **not** evidence of a broken session, and the useful
+check is the process's own sockets rather than a restart:
+
+```bash
+# does this session have a connection to the ingest host?
+getent ahosts otel.marcobellingeri.dev | awk '{print $1}' | sort -u   # resolve first
+ss -tnp | grep "pid=<PID>"                                            # then look for those addresses
+```
+
+No connection and no export means "not yet", not "never". Give it longer than the export
+interval suggests before concluding anything, and prefer waiting to restarting: a restart
+destroys the evidence and costs the session.
 
 So verify it, every time you change it and the first time after a reboot:
 
