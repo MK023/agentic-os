@@ -436,3 +436,19 @@ jobs:
       # una volta l'anno (token revocato, misura assente, risposta mutila).
       - name: il banco della sonda sul consumo Railway
         run: python3 scripts/prova-sonda-consumo.py
+
+      # Il dead man's switch e' l'unico gate che vive FUORI da GitHub, quindi l'unico
+      # che nessun altro gate qui dentro puo' vedere rompersi. Il self-check e' cio'
+      # che lo tiene attaccato alla realta' del repository: pretende che ogni cron
+      # abbia il suo check, che gli slug corrispondano ai nomi dei file, che i `name:`
+      # sorvegliati esistano ancora, e che il watcher non abbia acquistato le
+      # proprieta' che la sua soppressione zizmor dichiara impossibili. Niente rete,
+      # niente segreti: la API key di healthchecks.io non entra in questo repository.
+      - name: i check di healthchecks.io corrispondono ai cron
+        run: python3 scripts/healthchecks.py --self-check
+
+      # E il banco del self-check: ogni suo controllo esercitato su una realta' rotta
+      # apposta, piu' due mutazioni che pretendono il verde quando il controllo e'
+      # spento. Un gate che non e' mai stato visto rosso non e' un gate.
+      - name: il banco del self-check di healthchecks
+        run: python3 scripts/prova-healthchecks.py

@@ -1073,6 +1073,61 @@ receiver and waits for the POST instead. Measured: fires after 18s, notification
 39s later, and the receiver sees the rule's name.
 ## Observability of this project itself
 
+**The dead man's switch exists since 2026-09-04, and it is deliberately small.**
+`notifica.yml` had declared two gaps it could not close from inside GitHub: a cron that
+never starts produces no `workflow_run` event to notify on, and a notifier cannot
+notify its own death. Both need something *outside*, and that is now healthchecks.io —
+five checks, one per scheduled workflow, fed by a single `workflow_run` watcher
+(`.github/workflows/healthchecks.yml`) filtered to `workflow_run.event == 'schedule'`.
+Without that filter a manual `workflow_dispatch` would send a heartbeat and the monitor
+would read "alive" for a cron that no longer starts on its own: the failure mode that
+leaves the green.
+
+**What was NOT moved there, and why.** The five Grafana rules stay in Grafana. They read
+Prometheus metrics with thresholds and `for:` windows — healthchecks.io only knows
+whether a ping arrived by a deadline, so migrating them would trade a working instrument
+for a blind one. `notifica.yml` stays too: it names *which* gate is red, which a missing
+heartbeat cannot. This is an added layer, not a migration, and the word matters because
+"move the alerting to healthchecks" was the shape the request first took.
+
+**Every heartbeat is sent, on every conclusion, and only a real failure goes to
+`/fail`.** `cancelled` and `skipped` look like reasonable candidates for "send nothing"
+and are not: healthchecks measures the gap between two PINGS while the windows are sized
+on the gap between two RUNS, so one skipped heartbeat doubles the observed gap and rings
+a false alarm. With `cancel-in-progress: false` a queued run still gets cancelled when a
+newer one arrives, so the case is reachable, not theoretical.
+
+**Windows come from measurement, never from the cron expression.** Read from the GitHub
+API on 2026-09-04, maximum gap between consecutive *scheduled* runs: `smoke` 12.3h over
+100 samples (median 1.3h, against a `*/10` schedule), `mutation` 33.9h over 38,
+`sorveglianza` 34.7h over 14, `codeql` 173.7h and `telemetry-baseline` 174.5h over **2
+samples each** — one interval, not a distribution, and recorded as such in the table in
+`scripts/healthchecks.py` so nobody tightens a grace on that basis. The self-check
+enforces a 4h minimum margin over the measured gap: below it the first slightly-worse
+delay produces a false alarm, and a dead man's switch that cries wolf teaches people to
+stop looking at it.
+
+**No production-side heartbeat, and that is a decision.** The only process in production
+that could make an outbound call on its own initiative is `status-api`, which has no
+clock: its probes ride the `/status` request path once per cache pass, and `main.py`
+argues explicitly against giving it a second one, since two clocks for the same cadence
+drift apart. Production stays covered by composition instead — healthchecks watches
+`smoke`, `smoke` watches production every ~1.3h, `sorveglianza` watches Grafana behind
+Access daily. If per-minute production coverage is ever wanted, the honest route is a
+sixth Railway cron service, which is a cost decision, not a monitoring one.
+
+**Who watches the watcher.** Nobody here, by construction, and the regress ends on
+purpose: the value of a dead man's switch is being outside the system it watches. A
+failed `battito` job is a heartbeat that does not arrive, and a heartbeat that does not
+arrive is exactly what healthchecks.io turns into an alert — on *two* channels, email
+and Slack, so an expired `SLACK_WEBHOOK_URL` (the way `notifica.yml` dies) does not also
+silence the backup. That redundancy is **checked, not merely asserted**: `--apply`
+refuses to run unless the project has integrations of at least two different kinds. An
+adversarial review on 2026-09-04 pointed out that the original precheck asked only for
+"at least one channel", so the property this whole paragraph argues could have quietly
+ceased to hold with nothing to notice — a control asserted and absent, which this
+repository treats as worse than a declared gap.
+
 **The alerting chain is closed end to end, confirmed 2026-08-22.** Five rules in
 `docker/grafana/provisioning/alerting/regole.yaml`, a Slack contact point and a
 notification policy, all provisioned from files. `scripts/prova-allarmi.sh` makes
@@ -1340,6 +1395,17 @@ call there fails offline.
 | Access service token (ID + secret) | yes | **never** | for `verify-hub.sh` | `AGENTIC_OS_ACCESS_CLIENT_*` | yes (`CF_ACCESS_CLIENT_*`) |
 | the four `LOKI_R2_*` (bucket, endpoint, key id, secret) | yes | `loki` | — | — | — |
 | `SLACK_WEBHOOK_URL` | yes | `grafana` | — | — | yes (`notifica.yml`, since 2026-08-23) |
+| `HEALTHCHECKS_PING_KEY` | yes | — | — | — | yes (`healthchecks.yml`, since 2026-09-04) |
+| `HEALTHCHECKS_API_KEY` | yes | — | — | — | **never** (see below) |
+
+**`HEALTHCHECKS_API_KEY` is the one row whose GitHub cell is a decision, not an
+omission.** The two healthchecks.io keys are not two copies of the same secret: the ping
+key can say "alive" and nothing else, while the API key can widen a `grace` until the
+alarm is structurally blind. Putting it in GitHub would let the CI these checks watch
+reconfigure its own watchers, so `--apply` is run by a person from Doppler and this
+repository has no step that calls it. The reference implementation in
+`marcobellingeri.dev` keeps an apply step that stays inert until the secret exists; that
+is a legitimate trade, and it was declined here rather than copied.
 
 The **GitHub column did not exist until 2026-08-23**, and it was wrong by omission for
 three days before that: `STATUS_API_TOKEN` and the Access pair had been repo secrets
