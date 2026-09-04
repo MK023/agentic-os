@@ -83,6 +83,19 @@ itself later the same day, once sessions were relaunched with `OTEL_LOGS_EXPORTE
 — that switch is on the **client**, so on a machine without it the store stays empty,
 and an empty store looks exactly like a broken one.
 
+**Two producers since 2026-09-04**, the Mac and a Linux VM, and neither lives in this
+repo — which is why all three consequences bite only from outside it. Rotating
+`OTLP_INGEST_TOKEN` now touches **four** places, not three (`docs/DECISIONS.md` has the
+table). The three numbers are a deliberate unfiltered sum, so a producer that stops
+**lowers** them instead of stopping them: `_check_zero_volume` catches total silence and
+structurally cannot catch this, and numbers that merely look low are the symptom to
+chase. And telemetry initialises **per process, possibly late** — a session holding all
+seven variables exported nothing for twenty minutes, then started on its own with no
+restart — so "missing from the hub" is not "broken", and restarting it destroys the
+evidence. `claude --debug` writes the only witness, `[3P telemetry]` into
+`~/.claude/debug/<uuid>.txt`; `docs/CLAUDE_CODE_TELEMETRY.md` has the Linux path and the
+measured latencies.
+
 The priority here is **the public/private boundary**: three aggregate numbers are
 public, everything else stays inside the project.
 
