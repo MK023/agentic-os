@@ -40,6 +40,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -50,7 +51,15 @@ import yaml
 RADICE = Path(__file__).resolve().parent.parent
 WORKFLOWS = RADICE / ".github" / "workflows"
 WATCHER = WORKFLOWS / "healthchecks.yml"
-API = "https://healthchecks.io/api/v3/checks/"
+
+# La RADICE dell'API, non la collezione: comporre `checks/../channels/` funzionava solo
+# finche' il proxy davanti a healthchecks.io normalizza i dot-segment — urllib non lo fa
+# e manda il path cosi' com'e'. Il giorno che smettesse, `--apply` morirebbe sul
+# controllo dei canali con un 404 e nessun check verrebbe piu' creato.
+API = "https://healthchecks.io/api/v3/"
+
+# La condizione che il job `battito` DEVE avere, per intero. Vedi forma_watcher().
+CONDIZIONE_ATTESA = "github.event.workflow_run.event == 'schedule'"
 
 ORA = 3600
 GIORNO = 24 * ORA
@@ -192,18 +201,56 @@ def forma_watcher() -> list[str]:
     # filtro un `workflow_dispatch` manuale manderebbe un battito e il monitor direbbe
     # "vivo" per un cron che non parte piu' da solo. E' il modo di fallire piu'
     # insidioso, perche' lascia il verde.
-    condizione = str(battito.get("if") or "")
-    if "workflow_run.event == 'schedule'" not in condizione:
-        errori.append("battito: manca il filtro `workflow_run.event == 'schedule'` nella condizione del job")
+    #
+    # L'ORACOLO STA QUI, NON NEL FILE SOTTO ESAME, e non e' pignoleria: cercare la
+    # sottostringa accettava `if: always() || github.event.workflow_run.event ==
+    # 'schedule'`, che contiene il filtro e non filtra niente. E' lo stesso difetto che
+    # il gate su notifica.yml in lint.yml documenta di essersi gia' fatto, e la sua
+    # correzione fu la stessa: scrivere per intero la condizione attesa.
+    condizione = str(battito.get("if") or "").strip()
+    if condizione != CONDIZIONE_ATTESA:
+        errori.append("battito: la condizione del job non e' piu' quella attesa")
+        errori.append(f"  attesa:  {CONDIZIONE_ATTESA}")
+        errori.append(f"  trovata: {condizione or '(nessuna)'}")
 
+    # QUATTRO PORTE, NON UNA. Il commento in healthchecks.yml promette "niente `uses:`
+    # di nessun tipo", e guardare solo gli step ne teneva aperte tre:
+    #   - `jobs.battito.uses` e' una reusable workflow: non ha `steps` da ispezionare, e
+    #     con `secrets: inherit` riceve ogni segreto del repository;
+    #   - `container:` e `services:` fanno girare un'immagine di terzi CON l'ambiente
+    #     del job dentro.
+    # Il gate su notifica.yml in lint.yml le chiude tutte e quattro; questo le chiudeva
+    # per un quarto mentre il suo messaggio dichiarava di chiuderle tutte.
+    if "uses" in battito:
+        errori.append(
+            f"battito: E' una reusable workflow (`{battito['uses']}`): con `secrets: inherit` "
+            "riceve tutti i segreti del repository"
+        )
+    for chiave in ("container", "services"):
+        if chiave in battito:
+            errori.append(
+                f"battito: dichiara `{chiave}:`: e' un'immagine di terzi con l'ambiente del job dentro"
+            )
     for passo in battito.get("steps") or []:
         passo = passo or {}
         if "uses" in passo:
             errori.append(f"battito: usa `{passo['uses']}`: qui dentro non gira codice di nessun altro")
 
-    grezzo = testo
-    if "download-artifact" in grezzo or "gh run download" in grezzo:
+    if "download-artifact" in testo or "gh run download" in testo:
         errori.append("battito: scaricare artefatti e' il vettore dell'exploit workflow_run")
+
+    # ENTRAMBE le estensioni. GitHub accetta `.yml` e `.yaml`, e questo file le accetta
+    # entrambe ovunque tranne che nel punto che conta: se il watcher togliesse solo
+    # `.yml`, un cron chiamato `backup.yaml` pingherebbe lo slug `backup.yaml` per un
+    # check di nome `backup`. Risposta 404, cioe' un ::warning:: e il job VERDE, mentre
+    # il check non riceve mai un battito e allarma per sempre. Questo repository ha gia'
+    # pagato due volte per la stessa asimmetria, quindi qui e' sorvegliata.
+    for suffisso in ("%.yml", "%.yaml"):
+        if suffisso not in testo:
+            errori.append(
+                f"battito: lo slug non toglie `{suffisso[1:]}` dal nome del file: "
+                "un cron con l'altra estensione pingherebbe uno slug inesistente"
+            )
 
     return errori
 
@@ -224,7 +271,13 @@ def verifica() -> int:
 
     for c in CHECKS:
         slug = c["slug"]
-        if not all(ch.isalnum() and ch.islower() or ch in "-_" for ch in slug):
+        # `re` e non una comprensione a mano: la prima stesura era
+        # `ch.isalnum() and ch.islower() or ch in "-_"`, che lega come
+        # `(isalnum and islower) or in "-_"` — e `"2".islower()` e' False. Cioe'
+        # bocciava le cifre dicendo nel messaggio che erano ammesse, e siccome lo slug
+        # deve coincidere col nome del file, il primo workflow schedulato con un numero
+        # nel nome avrebbe reso lint.yml rosso su ogni PR con una diagnosi falsa.
+        if not re.fullmatch(r"[a-z0-9_-]+", slug):
             errori.append(f"{slug}: slug non valido (ammessi a-z 0-9 - _)")
         if slug in visti:
             errori.append(f"{slug}: slug duplicato")
@@ -297,8 +350,9 @@ def verifica() -> int:
 def _chiama(percorso: str, chiave: str, corpo: dict | None = None) -> tuple[int, object]:
     """Una sola porta verso healthchecks.io, cosi' l'URL non si compone altrove.
 
-    L'URL nasce da una costante con schema https gia' dentro: non c'e' nessun punto in
-    cui uno schema arrivi da fuori.
+    `percorso` e' un suffisso costante scritto qui dentro (`checks/`, `channels/`):
+    nessun valore che arrivi da fuori raggiunge questa stringa, e `API` porta schema e
+    host gia' dentro, quindi non c'e' nessun punto in cui uno dei due arrivi da fuori.
     """
     dati = json.dumps(corpo).encode("utf-8") if corpo is not None else None
     richiesta = urllib.request.Request(  # noqa: S310 - URL costante, schema https letterale in API
@@ -312,6 +366,12 @@ def _chiama(percorso: str, chiave: str, corpo: dict | None = None) -> tuple[int,
             return risposta.status, json.load(risposta)
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", "replace")[:300]
+    except urllib.error.URLError as e:
+        # DNS giu', TLS rotto, healthchecks.io irraggiungibile. Senza questo ramo il
+        # comando moriva con un traceback invece della diagnosi che stampa ogni altro
+        # percorso di errore, e chi lo lancia deve capire in un secondo se il problema
+        # e' la rete o la configurazione.
+        return 0, f"connessione fallita: {e.reason}"
 
 
 def applica(dry_run: bool) -> int:
@@ -324,7 +384,7 @@ def applica(dry_run: bool) -> int:
 
     # I check nascerebbero senza destinatario se non ci fosse nessuna integrazione, e
     # un allarme che non raggiunge nessuno e' indistinguibile da nessun allarme.
-    codice, canali = _chiama("../channels/", chiave)
+    codice, canali = _chiama("channels/", chiave)
     if codice != 200 or not isinstance(canali, dict):
         print(f"::error::lettura dei canali fallita (HTTP {codice}): {canali}")
         return 1
@@ -332,7 +392,22 @@ def applica(dry_run: bool) -> int:
     if not elenco:
         print("::error::nessuna integrazione su healthchecks.io: i check nascerebbero senza destinatario")
         return 1
-    print(f"canali: {', '.join(repr(c.get('name')) for c in elenco)}")
+
+    # DUE GENERI, non due canali qualsiasi, e non "almeno uno". La ragione per cui
+    # questo dead man's switch esiste e' scritta in docs/DECISIONS.md: un
+    # `SLACK_WEBHOOK_URL` scaduto e' il modo in cui muore `notifica.yml`, quindi un
+    # allarme di riserva che passasse solo da Slack morirebbe della stessa morte. Con un
+    # controllo su "almeno un canale" quella ridondanza poteva sparire senza che niente
+    # se ne accorgesse, mentre il documento continuava ad affermarla.
+    generi = {c.get("kind") for c in elenco}
+    if len(generi) < 2:
+        print(
+            f"::error::healthchecks.io ha un genere solo di integrazione ({sorted(generi)}): "
+            "la ridondanza dichiarata in docs/DECISIONS.md non esiste. Aggiungine una di "
+            "un genere diverso — un allarme che passa solo da Slack muore col webhook Slack"
+        )
+        return 1
+    print(f"canali: {', '.join(repr(c.get('name')) for c in elenco)} (generi: {', '.join(sorted(generi))})")
 
     problemi = 0
     for c in CHECKS:
@@ -355,7 +430,7 @@ def applica(dry_run: bool) -> int:
         if dry_run:
             print(f"[dry-run] {c['slug']}: timeout={c['timeout']}s grace={c['grace']}s")
             continue
-        codice, risposta = _chiama("", chiave, corpo)
+        codice, risposta = _chiama("checks/", chiave, corpo)
         if codice == 201:
             print(f"creato    {c['slug']}")
         elif codice == 200:

@@ -7,10 +7,16 @@
 # passa. Qui ogni controllo viene esercitato su una realta' rotta apposta, in una
 # copia usa-e-getta dei workflow, e si pretende il rosso.
 #
-# E NON BASTA IL ROSSO. Due casi — il margine della finestra e il filtro sullo
-# schedule — vengono provati anche al contrario: si spegne il controllo e si pretende
+# E NON BASTA IL ROSSO. Due casi — il filtro sullo schedule e il margine della
+# finestra — vengono provati anche al contrario: si spegne il controllo e si pretende
 # che il caso torni VERDE. Un caso che resta rosso anche senza il controllo che
 # dovrebbe esercitarlo sta misurando qualcos'altro, e non se ne accorgerebbe nessuno.
+#
+# Cinque casi qui dentro nascono da una revisione avversaria del 04/09/2026, e sono i
+# piu' importanti perche' il gate li passava tutti: la condizione NEUTRALIZZATA
+# (`always() || ...` contiene il filtro e non filtra), le tre porte per far girare
+# codice di terzi che non sono uno step (`uses:` di job, `container:`, `services:`) e
+# lo slug con una cifra, che il validatore bocciava dicendo che era ammesso.
 #
 # Niente rete, niente segreti: gira su ogni PR dentro lint.yml.
 #
@@ -159,8 +165,29 @@ def main() -> int:
         esito, uscita = esegui(modulo, wf, copy.deepcopy(originali))
         caso(
             "il watcher senza filtro sullo schedule e' una bocciatura",
-            esito == 1 and "manca il filtro" in uscita,
+            esito == 1 and "non e' piu' quella attesa" in uscita,
         )
+        (wf / "healthchecks.yml").write_text(watcher, encoding="utf-8")
+
+        # --- il filtro NEUTRALIZZATO, che e' peggio del filtro assente ------------
+        # Una revisione avversaria ha trovato che il controllo cercava la sottostringa:
+        # `always() || ...event == 'schedule'` la CONTIENE e non filtra niente. Un
+        # `workflow_dispatch` manderebbe un battito e il monitor direbbe "vivo" per un
+        # cron morto. Questo caso resta qui per sempre: e' il modo di fallire che
+        # lascia il verde su entrambi i lati.
+        neutralizzato = watcher.replace(
+            "if: github.event.workflow_run.event == 'schedule'",
+            "if: always() || github.event.workflow_run.event == 'schedule'",
+            1,
+        )
+        pretendi(neutralizzato != watcher, "il banco non ha trovato la condizione da neutralizzare")
+        (wf / "healthchecks.yml").write_text(neutralizzato, encoding="utf-8")
+        esito, uscita = esegui(modulo, wf, copy.deepcopy(originali))
+        caso(
+            "una condizione che CONTIENE il filtro senza filtrare e' una bocciatura",
+            esito == 1 and "non e' piu' quella attesa" in uscita,
+        )
+        (wf / "healthchecks.yml").write_text(rotto, encoding="utf-8")
 
         # --- MUTAZIONE: spento il controllo, quel caso deve tornare verde ---------
         # Se restasse rosso, il caso qui sopra starebbe misurando qualcos'altro.
@@ -190,6 +217,40 @@ def main() -> int:
         )
         (wf / "healthchecks.yml").write_text(watcher, encoding="utf-8")
 
+        # --- le altre tre porte per far girare codice di terzi --------------------
+        # Guardare solo gli step ne lasciava aperte tre, e la piu' grave non ha nemmeno
+        # degli step da guardare: una reusable workflow con `secrets: inherit` riceve
+        # OGNI segreto del repository. `container:` e `services:` fanno girare
+        # un'immagine di terzi con l'ambiente del job dentro.
+        reusable = watcher.replace(
+            "  battito:\n    name: Battito del cron\n",
+            "  battito:\n    name: Battito del cron\n"
+            "    uses: attaccante/repo/.github/workflows/x.yml@main\n",
+            1,
+        )
+        pretendi(reusable != watcher, "il banco non ha trovato l'intestazione del job")
+        (wf / "healthchecks.yml").write_text(reusable, encoding="utf-8")
+        esito, uscita = esegui(modulo, wf, copy.deepcopy(originali))
+        caso(
+            "il job trasformato in reusable workflow e' una bocciatura",
+            esito == 1 and "reusable workflow" in uscita,
+        )
+
+        for chiave in ("container", "services"):
+            iniettato = watcher.replace(
+                "    timeout-minutes: 5\n",
+                f"    timeout-minutes: 5\n    {chiave}: {{image: attaccante/x}}\n",
+                1,
+            )
+            pretendi(iniettato != watcher, f"il banco non ha trovato dove iniettare `{chiave}`")
+            (wf / "healthchecks.yml").write_text(iniettato, encoding="utf-8")
+            esito, uscita = esegui(modulo, wf, copy.deepcopy(originali))
+            caso(
+                f"un `{chiave}:` sul job e' una bocciatura",
+                esito == 1 and f"dichiara `{chiave}:`" in uscita,
+            )
+        (wf / "healthchecks.yml").write_text(watcher, encoding="utf-8")
+
         # --- il watcher perde `permissions: {}` sul job --------------------------
         senza_perm = watcher.replace(
             "    timeout-minutes: 5\n    permissions: {}\n", "    timeout-minutes: 5\n", 1
@@ -213,6 +274,64 @@ def main() -> int:
             esito == 1 and "che non ha nessun check nella tabella" in uscita,
         )
         (wf / "healthchecks.yml").write_text(watcher, encoding="utf-8")
+
+        # --- il watcher torna a togliere una sola estensione ----------------------
+        # Il ping vive nella shell, che il self-check non esegue: qui si sorveglia il
+        # testo. Con `.yaml` non tolto, un cron chiamato `backup.yaml` pinga lo slug
+        # `backup.yaml` per un check di nome `backup` — 404, quindi ::warning:: e job
+        # verde, mentre il check non riceve mai niente e allarma per sempre.
+        una_sola = watcher.replace("        slug=${slug%.yaml}\n", "", 1)
+        pretendi(una_sola != watcher, "il banco non ha trovato la riga che toglie .yaml")
+        (wf / "healthchecks.yml").write_text(una_sola, encoding="utf-8")
+        esito, uscita = esegui(modulo, wf, copy.deepcopy(originali))
+        caso(
+            "il watcher che toglie solo `.yml` e' una bocciatura",
+            esito == 1 and "pingherebbe uno slug inesistente" in uscita,
+        )
+        (wf / "healthchecks.yml").write_text(watcher, encoding="utf-8")
+
+        # --- uno slug con una cifra deve PASSARE ---------------------------------
+        # Caso positivo, e serve: la prima stesura del validatore era
+        # `ch.isalnum() and ch.islower() or ch in "-_"`, che lega come
+        # `(isalnum and islower) or in "-_"` — e `"2".islower()` e' False. Bocciava le
+        # cifre dicendo nel messaggio che erano ammesse. Siccome lo slug deve coincidere
+        # col nome del file, il primo cron con un numero nel nome avrebbe reso lint.yml
+        # rosso su ogni PR con una diagnosi falsa.
+        (wf / "cron2.yml").write_text(
+            'name: cron2\non:\n  schedule:\n    - cron: "0 1 * * *"\njobs:\n'
+            "  fai:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n"
+            "      - run: 'true'\n",
+            encoding="utf-8",
+        )
+        con_cifra = copy.deepcopy(originali)
+        con_cifra.append(
+            {
+                "slug": "cron2",
+                "workflow": "cron2.yml",
+                "timeout": modulo.GIORNO,
+                "grace": 18 * modulo.ORA,
+                "gap_h": 30.0,
+                "campioni": 10,
+                "desc": "finto",
+            }
+        )
+        vigilato = watcher.replace("      - smoke\n", "      - smoke\n      - cron2\n", 1)
+        pretendi(vigilato != watcher, "il banco non ha trovato l'elenco workflow_run")
+        (wf / "healthchecks.yml").write_text(vigilato, encoding="utf-8")
+        esito, uscita = esegui(modulo, wf, con_cifra)
+        caso("uno slug con una cifra passa il validatore", esito == 0 and "slug non valido" not in uscita)
+        (wf / "healthchecks.yml").write_text(watcher, encoding="utf-8")
+        (wf / "cron2.yml").unlink()
+
+        # --- MUTAZIONE 2: spento il margine minimo, quel caso deve tornare verde ---
+        sorgente_margine = modulo.MARGINE_MINIMO_H
+        modulo.MARGINE_MINIMO_H = 0
+        esito, _ = esegui(modulo, wf, sottili)
+        caso(
+            "spento MARGINE_MINIMO_H, il caso del margine torna verde (il banco misura QUEL controllo)",
+            esito == 0,
+        )
+        modulo.MARGINE_MINIMO_H = sorgente_margine
 
         # --- il watcher sparisce del tutto ---------------------------------------
         (wf / "healthchecks.yml").unlink()

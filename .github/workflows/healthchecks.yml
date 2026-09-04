@@ -87,7 +87,15 @@ jobs:
           PING_KEY: ${{ secrets.HEALTHCHECKS_PING_KEY }}
         run: |
           set -euo pipefail
-          slug=$(basename "$PERCORSO" .yml)
+          # ENTRAMBE le estensioni, e non e' pedanteria: GitHub accetta `.yml` e
+          # `.yaml`, il self-check le accetta entrambe, e togliere solo `.yml` avrebbe
+          # fatto pingare `hc-ping.com/<key>/backup.yaml` per un check di nome
+          # `backup`. Risposta 404 — cioe' un ::warning:: e il job VERDE — mentre il
+          # check non riceve mai un battito e allarma per sempre. Questo repository ha
+          # gia' pagato due volte per la stessa asimmetria (i due gate in lint.yml).
+          slug=$(basename "$PERCORSO")
+          slug=${slug%.yml}
+          slug=${slug%.yaml}
 
           # `set -u` NON intercetta una variabile definita ma vuota, ed e' proprio il
           # caso di un secret assente: l'URL diventerebbe `hc-ping.com//<slug>` e

@@ -1121,7 +1121,12 @@ purpose: the value of a dead man's switch is being outside the system it watches
 failed `battito` job is a heartbeat that does not arrive, and a heartbeat that does not
 arrive is exactly what healthchecks.io turns into an alert — on *two* channels, email
 and Slack, so an expired `SLACK_WEBHOOK_URL` (the way `notifica.yml` dies) does not also
-silence the backup.
+silence the backup. That redundancy is **checked, not merely asserted**: `--apply`
+refuses to run unless the project has integrations of at least two different kinds. An
+adversarial review on 2026-09-04 pointed out that the original precheck asked only for
+"at least one channel", so the property this whole paragraph argues could have quietly
+ceased to hold with nothing to notice — a control asserted and absent, which this
+repository treats as worse than a declared gap.
 
 **The alerting chain is closed end to end, confirmed 2026-08-22.** Five rules in
 `docker/grafana/provisioning/alerting/regole.yaml`, a Slack contact point and a

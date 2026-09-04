@@ -156,7 +156,7 @@ python3 scripts/prova-gate-workflow.py                         # gate: the two l
 python3 scripts/prova-sonda-consumo.py                         # gate: the Railway consumption probe on fixture responses — no token, no network, ~0.26s (measured)
 python3 scripts/prova-prezzario-allineato.py [--prova]         # gate: model names AND each (model, type) rate identical in main.py, both Grafana panels and the promtool test; `--prova` asserts the gate goes red on 11 mutants. Both, ~1.8s (measured)
 python3 scripts/healthchecks.py --self-check                   # gate: every scheduled workflow has a healthchecks.io check, slugs match filenames, windows exceed the measured GitHub delay, and the workflow_run watcher still has the shape its zizmor suppression claims. No network, no secrets, ~0.27s (measured)
-python3 scripts/prova-healthchecks.py                          # gate: the bench of that self-check — 12 cases on a deliberately broken copy of .github/workflows, plus a mutation that demands the green back when the control is off, ~1.45s (measured)
+python3 scripts/prova-healthchecks.py                          # gate: the bench of that self-check — 19 cases on a deliberately broken copy of .github/workflows, two of them mutations that demand the green back when the control is off, ~1.6s (measured)
 doppler run -p agentic-os -c prd -- python3 scripts/healthchecks.py --apply   # NOT a gate and NOT in CI: creates/updates the five checks. The API key lives only in Doppler, on purpose
 cd services/public-status-api && pytest test_main.py -q --cov=. --cov-report=term
 pip-audit -r services/public-status-api/requirements.txt       # gate: any advisory fails
