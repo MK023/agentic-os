@@ -1,6 +1,6 @@
 # What is not done yet
 
-Current as of 2026-09-03. The last tag is **v1.1.0** (2026-08-16) and `main` is
+Current as of 2026-09-04. The last tag is **v1.1.0** (2026-08-16) and `main` is
 ahead of it: the six services run — `loki` since 2026-08-21 — the Tunnel serves its
 three hostnames, the
 public endpoint answers with real numbers, and `smoke.yml` watches it from
@@ -35,6 +35,23 @@ sessions produced **two distinct `session_id` values**, which is the half that m
 and the half production cannot self-check: a renamed `session.id` would collapse
 concurrent sessions into one series and the numbers would simply read *lower*, with no
 error anywhere.
+
+**Re-run 2026-09-04 against v2.1.260**, on the Linux VM, with the full local stack from
+`LOCAL_DRY_RUN.md` and torn down afterwards with `down -v`. Nothing moved here either:
+`claude_code_cost_usage`, `claude_code_session_count` and `claude_code_token_usage` are
+spelled exactly as `QUERIES` in `main.py` and `docker/grafana/dashboards/claude-code.json`
+expect them, and the labels that survived are `job`, `model`, `query_source`, `session_id`,
+`start_type`, `type` — no identifying attribute, with `user_email` and `user_name` at zero
+in the same reading that put `session_id` at six, which is what makes those zeroes mean
+something rather than mean nothing.
+
+Two metrics were **absent, and neither absence is a rename** — the distinction this dry
+run exists to make. `terminal_type` did not appear, but a synthetic payload carrying it
+still crosses the allow-list, so the Collector has not stopped keeping it: it is the
+client in `-p` mode, with no terminal, that never emits it.
+`claude_code_lines_of_code_count` did not appear because a session answering `ok` has no
+lines to count, and neither the dashboard nor `QUERIES` reads it. Cost of the run: one
+Haiku session, 40.791 tokens, ~$0,06.
 
 The other half checks itself for free, and is worth knowing so this dry run is not run
 out of habit: the three public numbers are non-zero, which is only possible if
