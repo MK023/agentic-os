@@ -17,7 +17,7 @@
 # e' rimasta sopra un pin 3.7.7 finche' una revisione avversaria non l'ha vista: un
 # commento ancorato a una versione diventa falso al primo bump e non lo dice nessuno.
 # Percio' adesso l'ancora e' la MISURA (data + digest verificato), non la classifica.
-FROM grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
+FROM grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
 
 # 10001 e' l'utente che l'immagine di Loki usa gia' (letto con `docker inspect`,
 # non assunto).
