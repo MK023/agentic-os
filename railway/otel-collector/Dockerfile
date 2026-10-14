@@ -23,7 +23,7 @@
 # Adesso e' pinnato il digest della MANIFEST LIST, non quello di una piattaforma:
 # in locale su Mac risolve arm64, su Railway amd64, e resta un solo digest scritto
 # in un solo posto.
-FROM otel/opentelemetry-collector-contrib:0.159.0@sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc
+FROM otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
 
 # The base image already runs as 10001; stated explicitly so it is visible here and
 # survives a base-image change that silently drops it.
