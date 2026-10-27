@@ -3,7 +3,7 @@
 # anyway. What actually verifies the hub after a deploy is scripts/verify-hub.sh.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
-FROM prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+FROM prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
 
 # nobody (65534), which is what the base image already uses — and what makes the
 # volume-ownership question in railway/README.md worth checking on first deploy.
