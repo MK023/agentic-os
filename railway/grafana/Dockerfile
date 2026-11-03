@@ -10,7 +10,7 @@
 # scripts/verify-hub.sh.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
-FROM grafana/grafana:13.1.4@sha256:9be3a3ccdb06bcbb127f888b0c4c1d151837443e478887897a63a27d7b348043
+FROM grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
 
 # 472 is Grafana's own uid in this image.
 USER 472:472
