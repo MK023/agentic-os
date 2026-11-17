@@ -7,7 +7,7 @@
 # anyway. What actually verifies the hub after a deploy is scripts/verify-hub.sh.
 # Pinnata per DIGEST oltre che per tag: un tag e' un'etichetta e si puo' ripuntare
 # sotto lo stesso nome. Il ragionamento per esteso sta in docs/DECISIONS.md.
-FROM cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339
+FROM cloudflare/cloudflared:2026.11.0@sha256:b94b96edf2c9c4360f8879c8580cfaa99077f19c849ec595ca2f711b27d4f344
 
 # Questa riga non corregge niente, e la ragione scritta prima era falsa: l'immagine
 # pubblicata dichiara gia' `USER 65532:65532` — misurato con `docker image inspect`
