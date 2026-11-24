@@ -164,7 +164,7 @@ jobs:
                        "meno di quanti ne ha questo repo, quindi lo scan sta guardando altrove")
           print(f"pavimento ok: {len(dockerfile)} Dockerfile e {len(workflow)} workflow sotto i framework dichiarati")
           PY
-      - uses: bridgecrewio/checkov-action@5659ddea96102e16d8f221b3d8402453c0b1c150 # v12.3121.0
+      - uses: bridgecrewio/checkov-action@b17b606d6ec72bb8ba5721ad5b7e340b80a9fc39 # v12.3142.0
         with:
           directory: .
           config_file: .checkov.yml
